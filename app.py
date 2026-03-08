@@ -13,91 +13,316 @@
 
 import streamlit as st
 from datetime import date
-from database import init_db, add_tenant, get_tenants
-from invoice import create_invoice
+import pandas as pd
+
+from db import *
+from logic import *
+from pdfgen import *
 
 init_db()
 
-st.title("Landlord Management Tool")
+st.title("Landlord Management System")
 
 menu = st.sidebar.selectbox(
-    "Menu",
-    ["Add Tenant","Generate Abrechnung"]
+
+"Menu",
+
+[
+"Dashboard",
+"Properties",
+"Apartments",
+"Tenants",
+"Contracts",
+"Rent Tracking",
+"Nebenkostenabrechnung",
+"Mahnung Generator"
+]
+
 )
 
-if menu == "Add Tenant":
+st.set_page_config(
+page_title="Landlord Management System",
+layout="wide"
+)
 
-    st.header("Add Tenant")
+if menu == "Dashboard":
 
-    name = st.text_input("Tenant Name")
+    st.header("Property Dashboard")
+
+    properties = fetch("SELECT * FROM properties")
+    tenants = fetch("SELECT * FROM tenants")
+
+    st.metric("Properties",len(properties))
+    st.metric("Tenants",len(tenants))
+
+
+if menu == "Properties":
+
+    st.header("Properties")
+
+    name = st.text_input("Property name")
     address = st.text_input("Address")
-    tenants = st.number_input("Tenants in flat",value=3)
 
-    if st.button("Save"):
+    if st.button("Add Property"):
 
-        add_tenant(name,address,tenants)
+        insert(
+            "properties",
+            (name, address)
+        )
 
-        st.success("Tenant saved")
+        st.success("Property added")
+
+    st.divider()
+
+    st.subheader("Property List")
+
+    data = fetch("SELECT id, name, address FROM properties")
+
+    if len(data) == 0:
+        st.info("No properties yet")
+
+    else:
+
+        df = pd.DataFrame(
+            data,
+            columns=["ID", "Property Name", "Address"]
+        )
+
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True
+        )
 
 
-if menu == "Generate Abrechnung":
+if menu == "Apartments":
 
-    tenants = get_tenants()
+    st.header("Apartments")
 
-    tenant_names = {f"{t[1]} ({t[2]})":t for t in tenants}
+    properties = fetch("SELECT id,name FROM properties")
 
-    selected = st.selectbox("Select Tenant",list(tenant_names.keys()))
+    if len(properties) == 0:
+        st.warning("Please create a property first")
+    else:
 
-    tenant = tenant_names[selected]
+        property_choice = st.selectbox(
+            "Property",
+            properties,
+            format_func=lambda x: x[1]
+        )
 
-    tenant_name = tenant[1]
-    address = tenant[2]
-    tenant_count = tenant[3]
+        apartment_name = st.text_input("Apartment name (e.g. Wohnung 1 / WG Zimmer A)")
 
-    st.subheader("Electricity")
+        if st.button("Add Apartment"):
 
-    strom_start = st.date_input("Start")
-    strom_end = st.date_input("End")
+            insert(
+                "apartments",
+                (property_choice[0], apartment_name)
+            )
 
-    strom_cost = st.number_input("Total electricity cost (€)",value=1000.0)
+            st.success("Apartment added")
 
-    strom_days = (strom_end - strom_start).days
+    st.subheader("Existing Apartments")
 
-    st.subheader("Betriebskosten")
+    data = fetch("SELECT * FROM apartments")
+    df = pd.DataFrame(data, columns=["ID","Property","Apartment"])
+    st.dataframe(df)
 
-    betriebskosten_start = st.date_input("Start BK")
-    betriebskosten_end = st.date_input("End BK")
 
-    betriebskosten_flat = st.number_input("Total Betriebskosten (€)",value=3000.0)
+if menu == "Tenants":
 
-    betriebskosten_months = st.number_input("Months tenant lived",value=3)
+    st.header("Tenants")
+
+    name = st.text_input("Tenant name")
+    email = st.text_input("Email")
+
+    if st.button("Add Tenant"):
+
+        insert(
+            "tenants",
+            (name, email)
+        )
+
+        st.success("Tenant added")
+
+    st.divider()
+
+    st.subheader("Tenant List")
+
+    data = fetch("SELECT id, name, email FROM tenants")
+
+    if len(data) == 0:
+        st.info("No tenants yet")
+
+    else:
+
+        df = pd.DataFrame(
+            data,
+            columns=["ID", "Tenant Name", "Email"]
+        )
+
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        sort_col = st.selectbox(
+        "Sort by",
+        ["Tenant Name", "Email"]
+        )
+
+        df = df.sort_values(by=sort_col)        
+
+
+if menu == "Contracts":
+
+    st.header("Tenant Contracts")
+
+    tenants = fetch("SELECT id,name FROM tenants")
+    apartments = fetch("SELECT id,name FROM apartments")
+
+    if len(tenants) == 0 or len(apartments) == 0:
+        st.warning("Please create tenants and apartments first")
+
+    else:
+
+        tenant_choice = st.selectbox(
+            "Tenant",
+            tenants,
+            format_func=lambda x: x[1]
+        )
+
+        apartment_choice = st.selectbox(
+            "Apartment",
+            apartments,
+            format_func=lambda x: x[1]
+        )
+
+        rent = st.number_input("Monthly Rent", value=650.0)
+
+        move_in = st.date_input("Move in date")
+
+        if st.button("Create Contract"):
+
+            insert(
+                "contracts",
+                (
+                    tenant_choice[0],
+                    apartment_choice[0],
+                    rent,
+                    move_in,
+                    None
+                )
+            )
+
+            st.success("Contract created")
+
+
+if menu == "Rent Tracking":
+
+    st.header("Rent Payments")
+
+    contracts = fetch("""
+    SELECT contracts.id, tenants.name, apartments.name
+    FROM contracts
+    JOIN tenants ON contracts.tenant_id = tenants.id
+    JOIN apartments ON contracts.apartment_id = apartments.id
+    """)
+
+    if len(contracts) == 0:
+        st.warning("No contracts found")
+
+    else:
+
+        contract_choice = st.selectbox(
+            "Contract",
+            contracts,
+            format_func=lambda x: f"{x[1]} - {x[2]}"
+        )
+
+        amount = st.number_input("Payment amount", value=650.0)
+
+        pay_date = st.date_input("Payment date")
+
+        if st.button("Add Payment"):
+
+            insert(
+                "rent_payments",
+                (
+                    contract_choice[0],
+                    amount,
+                    pay_date
+                )
+            )
+
+            st.success("Payment recorded")
+
+
+if menu == "Nebenkostenabrechnung":
+
+    st.header("Generate Abrechnung")
+
+    tenant=st.text_input("Tenant")
+
+    address=st.text_input("Address")
+
+    strom_start=st.date_input("Strom Start")
+    strom_end=st.date_input("Strom End")
+
+    strom_cost=st.number_input("Electricity cost")
+
+    days=(strom_end-strom_start).days
+
+    tenants=st.number_input("Tenants in flat",value=3)
+
+    strom_cost_tenant,strom_limit,strom_nach = strom_calc(strom_cost,tenants,days)
+
+    bk_start=st.date_input("BK Start")
+    bk_end=st.date_input("BK End")
+
+    months=st.number_input("Months",value=3)
+
+    bk_cost=st.number_input("Total Betriebskosten")
+
+    bk_tenant,bk_period,bk_limit,bk_nach = betriebskosten_calc(bk_cost,tenants,months)
 
     if st.button("Generate PDF"):
 
-        pdf = create_invoice(
+        file = invoice_pdf(
 
-            tenant_name,
-            address,
+        tenant,
+        address,
 
-            strom_start,
-            strom_end,
-            strom_days,
-            strom_cost,
+        f"{strom_start} - {strom_end}",
+        days,
+        strom_cost,
+        strom_limit,
+        strom_nach,
 
-            betriebskosten_start,
-            betriebskosten_end,
-            betriebskosten_months,
-            betriebskosten_flat,
-
-            tenant_count
+        f"{bk_start} - {bk_end}",
+        months,
+        bk_period,
+        bk_limit,
+        bk_nach
 
         )
 
-        with open(pdf,"rb") as f:
+        with open(file,"rb") as f:
 
-            st.download_button(
+            st.download_button("Download",f,file_name=file)
 
-                "Download Abrechnung",
-                f,
-                file_name=f"Abrechnung_{tenant_name}.pdf"
-            )
+
+if menu == "Mahnung Generator":
+
+    tenant=st.text_input("Tenant")
+
+    amount=st.number_input("Open amount")
+
+    if st.button("Generate Mahnung"):
+
+        file=mahnung_pdf(tenant,amount)
+
+        with open(file,"rb") as f:
+
+            st.download_button("Download Mahnung",f,file_name=file)

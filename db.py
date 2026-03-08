@@ -12,16 +12,17 @@
 # ================================================================
 
 import sqlite3
+from pathlib import Path
 
-DB = "data/landlord.db"
+DB_PATH = Path("data/landlord.db")
 
-def connect():
-    return sqlite3.connect(DB)
-
+def get_conn():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    return conn
 
 def init_db():
 
-    conn = connect()
+    conn = get_conn()
     c = conn.cursor()
 
     c.execute("""
@@ -54,17 +55,16 @@ def init_db():
         tenant_id INTEGER,
         apartment_id INTEGER,
         rent REAL,
-        move_in DATE,
-        move_out DATE
+        start_date TEXT
     )
     """)
 
     c.execute("""
-    CREATE TABLE IF NOT EXISTS rent_payments(
+    CREATE TABLE IF NOT EXISTS payments(
         id INTEGER PRIMARY KEY,
         contract_id INTEGER,
         amount REAL,
-        date DATE
+        payment_date TEXT
     )
     """)
 
@@ -74,7 +74,7 @@ def init_db():
 
 def insert(table, values):
 
-    conn = connect()
+    conn = get_conn()
     c = conn.cursor()
 
     placeholders = ",".join(["?"]*len(values))
@@ -88,14 +88,25 @@ def insert(table, values):
     conn.close()
 
 
-def fetch(query):
+def fetch(query, params=()):
 
-    conn = connect()
+    conn = get_conn()
     c = conn.cursor()
 
-    c.execute(query)
+    c.execute(query, params)
     rows = c.fetchall()
 
     conn.close()
 
     return rows
+
+
+def execute(query, params=()):
+
+    conn = get_conn()
+    c = conn.cursor()
+
+    c.execute(query, params)
+    conn.commit()
+
+    conn.close()

@@ -156,23 +156,24 @@ if menu == "Tenants":
 
     else:
 
+        data = fetch("""
+        SELECT
+        tenants.name,
+        tenants.email,
+        apartments.name
+        FROM tenants
+        LEFT JOIN contracts
+        ON tenants.id = contracts.tenant_id
+        LEFT JOIN apartments
+        ON contracts.apartment_id = apartments.id
+        """)
+
         df = pd.DataFrame(
-            data,
-            columns=["ID", "Tenant Name", "Email"]
+        data,
+        columns=["Tenant", "Email", "Apartment"]
         )
 
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        sort_col = st.selectbox(
-        "Sort by",
-        ["Tenant Name", "Email"]
-        )
-
-        df = df.sort_values(by=sort_col)        
+        st.dataframe(df, use_container_width=True)
 
 
 if menu == "Contracts":

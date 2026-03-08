@@ -21,7 +21,10 @@ from pdfgen import *
 
 init_db()
 
-st.title("Landlord Management System")
+st.set_page_config(
+    page_title="Landlord Management System",
+    layout="wide"
+)
 
 menu = st.sidebar.selectbox(
 
@@ -32,17 +35,13 @@ menu = st.sidebar.selectbox(
 "Properties",
 "Apartments",
 "Tenants",
+"Tenant Ledger",
 "Contracts",
 "Rent Tracking",
 "Nebenkostenabrechnung",
 "Mahnung Generator"
 ]
 
-)
-
-st.set_page_config(
-page_title="Landlord Management System",
-layout="wide"
 )
 
 if menu == "Dashboard":
@@ -176,6 +175,26 @@ if menu == "Tenants":
         st.dataframe(df, use_container_width=True)
 
 
+if menu == "Tenant Ledger":
+
+    tenants = fetch("SELECT id,name FROM tenants")
+
+    tenant = st.selectbox(
+        "Tenant",
+        tenants,
+        format_func=lambda x: x[1]
+    )
+
+    ledger = tenant_ledger(tenant[0])
+
+    df = pd.DataFrame(
+        ledger,
+        columns=["Amount","Date"]
+    )
+
+    st.dataframe(df,use_container_width=True)
+
+
 if menu == "Contracts":
 
     st.header("Tenant Contracts")
@@ -249,7 +268,7 @@ if menu == "Rent Tracking":
         if st.button("Add Payment"):
 
             insert(
-                "rent_payments",
+                "payments",
                 (
                     contract_choice[0],
                     amount,
@@ -286,7 +305,7 @@ if menu == "Nebenkostenabrechnung":
 
     bk_cost=st.number_input("Total Betriebskosten")
 
-    bk_tenant,bk_period,bk_limit,bk_nach = betriebskosten_calc(bk_cost,tenants,months)
+    bk_tenant,bk_period,bk_limit,bk_nach = betriebskosten_calc(bk_cost,tenants,months, bk_start, bk_end)
 
     if st.button("Generate PDF"):
 
@@ -322,7 +341,7 @@ if menu == "Mahnung Generator":
 
     if st.button("Generate Mahnung"):
 
-        file=mahnung_pdf(tenant,amount)
+        file=generate_mahnung(tenant,amount)
 
         with open(file,"rb") as f:
 

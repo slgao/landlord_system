@@ -122,7 +122,7 @@ if menu == "Properties":
 
         st.dataframe(
             df,
-            use_container_width=True,
+            width='stretch',
             hide_index=True
         )
         
@@ -168,7 +168,7 @@ if menu == "Apartments":
     apt_data = fetch("SELECT id, property_id, name FROM apartments")
     if apt_data:
         df_apt = pd.DataFrame(apt_data, columns=["ID", "Property ID", "Apartment Name"])
-        st.dataframe(df_apt, use_container_width=True, hide_index=True)
+        st.dataframe(df_apt, width='stretch', hide_index=True)
 
         # Deletion logic
         apt_ids = [row[0] for row in apt_data]
@@ -207,7 +207,7 @@ if menu == "Tenants":
         st.info("No tenants yet")
     else:
         df = pd.DataFrame(data, columns=["ID", "Tenant", "Email", "Apartment"])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width='stretch', hide_index=True)
 
         # Deletion logic
         st.subheader("Remove a Tenant")
@@ -241,7 +241,7 @@ if menu == "Tenant Ledger":
             columns=["Amount","Date"]
         )
 
-        st.dataframe(df,use_container_width=True)
+        st.dataframe(df,width='stretch')
 
 
 if menu == "Contracts":
@@ -297,7 +297,7 @@ if menu == "Contracts":
             contract_data, 
             columns=["ID", "Tenant", "Apartment", "Rent", "Start Date", "End Date"]
         )
-        st.dataframe(df_contracts, use_container_width=True, hide_index=True)
+        st.dataframe(df_contracts, width='stretch', hide_index=True)
 
         # Deletion logic
         st.divider()

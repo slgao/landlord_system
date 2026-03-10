@@ -55,7 +55,8 @@ def init_db():
         tenant_id INTEGER,
         apartment_id INTEGER,
         rent REAL,
-        start_date TEXT
+        start_date TEXT,
+        end_date TEXT
     )
     """)
 
@@ -87,6 +88,14 @@ def insert(table, values):
     conn.commit()
     conn.close()
 
+def delete(table, entry_id):
+    conn = get_conn()
+    c = conn.cursor()
+    
+    c.execute(f"DELETE FROM {table} WHERE id = ?", (entry_id,))
+    
+    conn.commit()
+    conn.close()
 
 def fetch(query, params=()):
 

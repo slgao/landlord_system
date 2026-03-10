@@ -45,14 +45,47 @@ menu = st.sidebar.selectbox(
 )
 
 if menu == "Dashboard":
-
     st.header("Property Dashboard")
 
+    # Basic Metrics
     properties = fetch("SELECT * FROM properties")
     tenants = fetch("SELECT * FROM tenants")
+    st.metric("Properties", len(properties))
+    st.metric("Tenants", len(tenants))
 
-    st.metric("Properties",len(properties))
-    st.metric("Tenants",len(tenants))
+    st.divider()
+    st.subheader("⚠️ Expiring Contracts (Next 90 Days)")
+
+    # Fetch contracts with end dates
+    upcoming_expirations = fetch("""
+        SELECT t.name, a.name, c.end_date 
+        FROM contracts c
+        JOIN tenants t ON c.tenant_id = t.id
+        JOIN apartments a ON c.apartment_id = a.id
+        WHERE c.end_date IS NOT NULL 
+        AND c.end_date != 'None'
+    """)
+
+    alerts_found = False
+    today = date.today()
+
+    for t_name, a_name, end_date_str in upcoming_expirations:
+        try:
+            # Convert stored string back to date object for comparison
+            end_date = date.fromisoformat(end_date_str)
+            days_until = (end_date - today).days
+
+            if 0 <= days_until <= 90:
+                st.warning(f"**{t_name}** ({a_name}) - Ends in {days_until} days ({end_date})")
+                alerts_found = True
+            elif days_until < 0:
+                st.error(f"**{t_name}** ({a_name}) - EXPIRED on {end_date}")
+                alerts_found = True
+        except ValueError:
+            continue
+
+    if not alerts_found:
+        st.success("No contracts expiring in the next 90 days.")
 
 
 if menu == "Properties":
@@ -92,6 +125,15 @@ if menu == "Properties":
             use_container_width=True,
             hide_index=True
         )
+        
+        # Delete Section
+        st.divider()
+        st.subheader("Delete Property")
+        delete_id = st.number_input("Enter Property ID to delete", step=1, min_value=1)
+        if st.button("Delete Property", type="primary"):
+            delete("properties", delete_id)
+            st.success(f"Property {delete_id} deleted!")
+            st.rerun() # Refresh the app to show updated list
 
 
 if menu == "Apartments":
@@ -123,121 +165,150 @@ if menu == "Apartments":
 
     st.subheader("Existing Apartments")
 
-    data = fetch("SELECT * FROM apartments")
-    df = pd.DataFrame(data, columns=["ID","Property","Apartment"])
-    st.dataframe(df)
+    apt_data = fetch("SELECT id, property_id, name FROM apartments")
+    if apt_data:
+        df_apt = pd.DataFrame(apt_data, columns=["ID", "Property ID", "Apartment Name"])
+        st.dataframe(df_apt, use_container_width=True, hide_index=True)
 
+        # Deletion logic
+        apt_ids = [row[0] for row in apt_data]
+        apt_id_to_delete = st.selectbox("Select Apartment ID to delete", apt_ids)
+        
+        if st.button("Delete Apartment", type="primary"):
+            execute("DELETE FROM apartments WHERE id = ?", (apt_id_to_delete,))
+            st.success(f"Apartment {apt_id_to_delete} removed")
+            st.rerun()
+    else:
+        st.info("No apartments found.")
 
 if menu == "Tenants":
-
     st.header("Tenants")
-
+    
+    # Adding a tenant
     name = st.text_input("Tenant name")
     email = st.text_input("Email")
-
     if st.button("Add Tenant"):
-
-        insert(
-            "tenants",
-            (name, email)
-        )
-
+        insert("tenants", (name, email))
         st.success("Tenant added")
+        st.rerun()
 
     st.divider()
-
     st.subheader("Tenant List")
-
-    data = fetch("SELECT id, name, email FROM tenants")
-
-    if len(data) == 0:
-        st.info("No tenants yet")
-
-    else:
-
-        data = fetch("""
-        SELECT
-        tenants.name,
-        tenants.email,
-        apartments.name
+    
+    # Fetching the join data for display
+    data = fetch("""
+        SELECT tenants.id, tenants.name, tenants.email, apartments.name
         FROM tenants
-        LEFT JOIN contracts
-        ON tenants.id = contracts.tenant_id
-        LEFT JOIN apartments
-        ON contracts.apartment_id = apartments.id
-        """)
+        LEFT JOIN contracts ON tenants.id = contracts.tenant_id
+        LEFT JOIN apartments ON contracts.apartment_id = apartments.id
+    """)
 
-        df = pd.DataFrame(
-        data,
-        columns=["Tenant", "Email", "Apartment"]
-        )
+    if not data:
+        st.info("No tenants yet")
+    else:
+        df = pd.DataFrame(data, columns=["ID", "Tenant", "Email", "Apartment"])
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
-        st.dataframe(df, use_container_width=True)
+        # Deletion logic
+        st.subheader("Remove a Tenant")
+        # Extract IDs for the selectbox
+        tenant_ids = [row[0] for row in data]
+        id_to_delete = st.selectbox("Select ID to delete", tenant_ids)
+        
+        if st.button("Delete Tenant", type="primary"):
+            execute("DELETE FROM tenants WHERE id = ?", (id_to_delete,))
+            st.success(f"Tenant {id_to_delete} removed")
+            st.rerun()
 
 
 if menu == "Tenant Ledger":
 
     tenants = fetch("SELECT id,name FROM tenants")
 
-    tenant = st.selectbox(
-        "Tenant",
-        tenants,
-        format_func=lambda x: x[1]
-    )
-
-    ledger = tenant_ledger(tenant[0])
-
-    df = pd.DataFrame(
-        ledger,
-        columns=["Amount","Date"]
-    )
-
-    st.dataframe(df,use_container_width=True)
-
-
-if menu == "Contracts":
-
-    st.header("Tenant Contracts")
-
-    tenants = fetch("SELECT id,name FROM tenants")
-    apartments = fetch("SELECT id,name FROM apartments")
-
-    if len(tenants) == 0 or len(apartments) == 0:
-        st.warning("Please create tenants and apartments first")
-
+    if not tenants:
+        st.info("No tenants found. Please add tenants first.")
     else:
-
-        tenant_choice = st.selectbox(
+        tenant = st.selectbox(
             "Tenant",
             tenants,
             format_func=lambda x: x[1]
         )
 
-        apartment_choice = st.selectbox(
-            "Apartment",
-            apartments,
-            format_func=lambda x: x[1]
+        ledger = tenant_ledger(tenant[0])
+
+        df = pd.DataFrame(
+            ledger,
+            columns=["Amount","Date"]
         )
 
+        st.dataframe(df,use_container_width=True)
+
+
+if menu == "Contracts":
+    st.header("Tenant Contracts")
+
+    tenants = fetch("SELECT id, name FROM tenants")
+    apartments = fetch("SELECT id, name FROM apartments")
+
+    if len(tenants) == 0 or len(apartments) == 0:
+        st.warning("Please create tenants and apartments first")
+    else:
+        tenant_choice = st.selectbox("Tenant", tenants, format_func=lambda x: x[1])
+        apartment_choice = st.selectbox("Apartment", apartments, format_func=lambda x: x[1])
         rent = st.number_input("Monthly Rent", value=650.0)
 
-        move_in = st.date_input("Move in date")
+        col1, col2 = st.columns(2)
+        with col1:
+            move_in = st.date_input("Move in date")
+        
+        # Logic for limited contracts
+        is_limited = st.checkbox("Limited Contract (Fixed Term)")
+        move_out = None
+        
+        if is_limited:
+            with col2:
+                move_out = st.date_input("Move out date")
 
         if st.button("Create Contract"):
-
             insert(
                 "contracts",
                 (
                     tenant_choice[0],
                     apartment_choice[0],
                     rent,
-                    move_in,
-                    None
+                    str(move_in),
+                    str(move_out) if move_out else None
                 )
             )
-
             st.success("Contract created")
+            st.rerun()
 
+    # Display existing contracts with the end date
+    st.divider()
+    st.subheader("Existing Contracts")
+    contract_data = fetch("""
+        SELECT c.id, t.name, a.name, c.rent, c.start_date, c.end_date 
+        FROM contracts c
+        JOIN tenants t ON c.tenant_id = t.id
+        JOIN apartments a ON c.apartment_id = a.id
+    """)
+    if contract_data:
+        df_contracts = pd.DataFrame(
+            contract_data, 
+            columns=["ID", "Tenant", "Apartment", "Rent", "Start Date", "End Date"]
+        )
+        st.dataframe(df_contracts, use_container_width=True, hide_index=True)
+
+        # Deletion logic
+        st.divider()
+        st.subheader("Terminate / Delete Contract")
+        contract_ids = [row[0] for row in contract_data]
+        contract_to_delete = st.selectbox("Select Contract ID to remove", contract_ids)
+        
+        if st.button("Delete Contract", type="primary"):
+            execute("DELETE FROM contracts WHERE id = ?", (contract_to_delete,))
+            st.success(f"Contract {contract_to_delete} deleted.")
+            st.rerun()
 
 if menu == "Rent Tracking":
 

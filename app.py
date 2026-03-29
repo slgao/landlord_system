@@ -12,7 +12,7 @@
 # ================================================================
 
 import streamlit as st
-from datetime import date
+from datetime import date, timedelta
 import pandas as pd
 
 from db import *
@@ -259,7 +259,7 @@ if menu == "Contracts":
 
         col1, col2 = st.columns(2)
         with col1:
-            move_in = st.date_input("Move in date")
+            move_in = st.date_input("Move in date", min_value=date.today() - timedelta(days=365*20))
         
         # Logic for limited contracts
         is_limited = st.checkbox("Limited Contract (Fixed Term)")

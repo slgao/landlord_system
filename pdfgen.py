@@ -104,26 +104,58 @@ def invoice_pdf(
     return file
 
 
-def generate_mahnung(tenant_name, amount):
+def generate_mahnung(tenant_name, amount, address=None):
+    from datetime import date
 
     file = f"pdf/Mahnung_{tenant_name}.pdf"
-
     styles = getSampleStyleSheet()
+    normal = styles["BodyText"]
+    normal.leading = 16
+
+    from datetime import timedelta
+    today = date.today().strftime("%d.%m.%Y")
+    due = (date.today() + timedelta(days=7)).strftime("%d.%m.%Y")
 
     story = []
 
-    story.append(Paragraph("Payment Reminder", styles["Title"]))
+    story.append(Paragraph("<b>ZAHLUNGSERINNERUNG</b>", styles["Title"]))
+    story.append(Spacer(1, 30))
+
+    address_line = f"<br/>{address}" if address else ""
+    story.append(Paragraph(f"An:<br/><b>{tenant_name}</b>{address_line}", normal))
     story.append(Spacer(1, 20))
 
-    text = f"""
-    Tenant: {tenant_name}<br/>
-    Outstanding Amount: €{amount}<br/><br/>
-    Please transfer the outstanding amount immediately.
-    """
+    story.append(Paragraph(f"Datum: {today}", normal))
+    story.append(Spacer(1, 24))
 
-    story.append(Paragraph(text, styles["BodyText"]))
+    story.append(Paragraph("Betreff: <b>Zahlungserinnerung – Ausstehende Mietzahlung</b>", normal))
+    story.append(Spacer(1, 16))
 
-    doc = SimpleDocTemplate(file, pagesize=A4, title=f"Mahnung_{tenant_name}")
+    body = f"""
+Sehr geehrte/r {tenant_name},<br/><br/>
+
+trotz unserer bisherigen Zahlungsaufforderung mussten wir feststellen, dass der folgende Betrag auf unserem Konto noch nicht eingegangen ist:<br/><br/>
+
+<b>Offener Betrag: {amount:.2f} €</b><br/><br/>
+
+Wir bitten Sie, den ausstehenden Betrag bis spätestens <b>{due}</b> auf das Ihnen bekannte Konto zu überweisen.<br/><br/>
+
+Sollte die Zahlung bis zu diesem Datum nicht bei uns eingehen, sehen wir uns leider gezwungen, weitere rechtliche Schritte einzuleiten. Dies kann zusätzliche Kosten für Sie verursachen, die wir gerne vermeiden möchten.<br/><br/>
+
+Falls Sie der Meinung sind, dass diese Mahnung irrtümlich erfolgt ist, oder falls Sie Fragen zu Ihrem Zahlungsstand haben, stehen wir Ihnen gerne zur Verfügung.<br/><br/>
+
+Wir bitten Sie, diese Angelegenheit umgehend zu klären, und danken Ihnen für Ihre Kooperation.<br/><br/>
+
+Mit freundlichen Grüßen,<br/><br/>
+<b>Ihre Vermieter</b>
+"""
+    story.append(Paragraph(body, normal))
+
+    doc = SimpleDocTemplate(
+        file, pagesize=A4,
+        title=f"Mahnung_{tenant_name}",
+        leftMargin=72, rightMargin=72, topMargin=72, bottomMargin=72
+    )
     doc.build(story)
 
     return file

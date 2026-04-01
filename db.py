@@ -119,3 +119,17 @@ def execute(query, params=()):
     conn.commit()
 
     conn.close()
+
+
+def get_tenant_address(tenant_name):
+    """Return property address for a tenant via their active contract, or None."""
+    rows = fetch("""
+        SELECT p.address
+        FROM contracts c
+        JOIN tenants t ON t.id = c.tenant_id
+        JOIN apartments a ON a.id = c.apartment_id
+        JOIN properties p ON p.id = a.property_id
+        WHERE t.name = ?
+        LIMIT 1
+    """, (tenant_name,))
+    return rows[0][0] if rows else None

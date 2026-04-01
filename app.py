@@ -431,14 +431,25 @@ if menu == "Nebenkostenabrechnung":
 
 if menu == "Mahnung Generator":
 
-    tenant=st.text_input("Tenant")
+    tenants = fetch("SELECT id, name FROM tenants")
 
-    amount=st.number_input("Open amount")
+    if not tenants:
+        st.info("No tenants found. Please add tenants first.")
+    else:
+        tenant_choice = st.selectbox("Tenant", tenants, format_func=lambda x: x[1])
+        tenant = tenant_choice[1]
+        amount = st.number_input("Open amount")
 
-    if st.button("Generate Mahnung"):
+        address = get_tenant_address(tenant)
 
-        file=generate_mahnung(tenant,amount)
+        if address:
+            st.info(f"Address from contract: {address}")
+        else:
+            address = st.text_input("Tenant Address (no contract found — enter manually)")
 
-        with open(file,"rb") as f:
+        if st.button("Generate Mahnung"):
 
-            st.download_button("Download Mahnung",f,file_name=file)
+            file = generate_mahnung(tenant, amount, address)
+
+            with open(file, "rb") as f:
+                st.download_button("Download Mahnung", f, file_name=file)

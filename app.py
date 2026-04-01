@@ -349,6 +349,30 @@ if menu == "Rent Tracking":
 
             st.success("Payment recorded")
 
+        st.divider()
+        st.subheader("Payment History")
+
+        payments = fetch("""
+            SELECT payments.id, tenants.name, apartments.name, payments.amount, payments.payment_date
+            FROM payments
+            JOIN contracts ON payments.contract_id = contracts.id
+            JOIN tenants ON contracts.tenant_id = tenants.id
+            JOIN apartments ON contracts.apartment_id = apartments.id
+            WHERE payments.contract_id = ?
+        """, (contract_choice[0],))
+
+        if payments:
+            df_payments = pd.DataFrame(payments, columns=["ID", "Tenant", "Apartment", "Amount", "Date"])
+            st.dataframe(df_payments, width='stretch', hide_index=True)
+
+            payment_id_to_delete = st.selectbox("Select Payment ID to delete", [p[0] for p in payments])
+            if st.button("Delete Payment", type="primary"):
+                execute("DELETE FROM payments WHERE id = ?", (payment_id_to_delete,))
+                st.success(f"Payment {payment_id_to_delete} deleted.")
+                st.rerun()
+        else:
+            st.info("No payments recorded for this contract.")
+
 
 if menu == "Nebenkostenabrechnung":
 

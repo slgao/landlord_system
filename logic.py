@@ -13,24 +13,24 @@
 from db import fetch
 
 
-def strom_calc(cost_flat, tenants, days):
+def strom_calc(cost_flat, tenants, days, limit_per_month=50):
 
     cost_per_tenant = cost_flat / tenants
-    limit_day = (50 * 12) / 365 / tenants
+    limit_day = (limit_per_month * 12) / 365 / tenants
     limit_period = limit_day * days
     nachzahlung = cost_per_tenant - limit_period
 
     return cost_per_tenant, limit_period, nachzahlung
 
 
-def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end):
+def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end, limit_per_month=206):
 
     num_months = (bk_end.year - bk_start.year) * 12 + (bk_end.month - bk_start.month + 1)
     if num_months == 0:
         num_months = 1
     cost_per_tenant = cost_flat / tenants
     period_cost = cost_per_tenant / num_months * months
-    limit_month = 206 / tenants
+    limit_month = limit_per_month / tenants
     limit_period = limit_month * months
     nachzahlung = period_cost - limit_period
 

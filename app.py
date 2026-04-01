@@ -360,23 +360,24 @@ if menu == "Nebenkostenabrechnung":
 
     strom_start=st.date_input("Strom Start")
     strom_end=st.date_input("Strom End")
-
+    strom_limit_per_month=st.number_input("Electricity limit per month")
     strom_cost=st.number_input("Electricity cost")
 
     days=(strom_end-strom_start).days
 
     tenants=st.number_input("Tenants in flat",value=3)
 
-    strom_cost_tenant,strom_limit,strom_nach = strom_calc(strom_cost,tenants,days)
+    strom_cost_tenant,strom_limit,strom_nach = strom_calc(strom_cost,tenants,days, limit_per_month=strom_limit_per_month)
 
     bk_start=st.date_input("BK Start")
     bk_end=st.date_input("BK End")
+    bk_limit_per_month=st.number_input("Betriebskosten limit per month")
 
     months=st.number_input("Months",value=3)
 
     bk_cost=st.number_input("Total Betriebskosten")
 
-    bk_tenant,bk_period,bk_limit,bk_nach = betriebskosten_calc(bk_cost,tenants,months, bk_start, bk_end)
+    bk_tenant,bk_period,bk_limit,bk_nach = betriebskosten_calc(bk_cost,tenants,months, bk_start, bk_end, limit_per_month=bk_limit_per_month)
 
     if st.button("Generate PDF"):
 

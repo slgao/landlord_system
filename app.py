@@ -187,17 +187,17 @@ if menu == "Tenants":
     # Adding a tenant
     name = st.text_input("Tenant name")
     email = st.text_input("Email")
+    gender = st.selectbox("Gender", ["male", "female", "diverse"])
     if st.button("Add Tenant"):
-        insert("tenants", (name, email))
+        insert("tenants", (name, email, gender))
         st.success("Tenant added")
         st.rerun()
 
     st.divider()
     st.subheader("Tenant List")
     
-    # Fetching the join data for display
     data = fetch("""
-        SELECT tenants.id, tenants.name, tenants.email, apartments.name
+        SELECT tenants.id, tenants.name, tenants.email, tenants.gender, apartments.name
         FROM tenants
         LEFT JOIN contracts ON tenants.id = contracts.tenant_id
         LEFT JOIN apartments ON contracts.apartment_id = apartments.id
@@ -206,12 +206,10 @@ if menu == "Tenants":
     if not data:
         st.info("No tenants yet")
     else:
-        df = pd.DataFrame(data, columns=["ID", "Tenant", "Email", "Apartment"])
+        df = pd.DataFrame(data, columns=["ID", "Tenant", "Email", "Gender", "Apartment"])
         st.dataframe(df, width='stretch', hide_index=True)
 
-        # Deletion logic
         st.subheader("Remove a Tenant")
-        # Extract IDs for the selectbox
         tenant_ids = [row[0] for row in data]
         id_to_delete = st.selectbox("Select ID to delete", tenant_ids)
         
@@ -417,55 +415,58 @@ if menu == "Nebenkostenabrechnung":
 
     st.header("Generate Abrechnung")
 
-    tenant=st.text_input("Tenant")
+    landlord_name = st.text_input("Landlord name", value="Ihr Vermieter")
 
-    address=st.text_input("Address")
+    contract_tenants = fetch("""
+        SELECT DISTINCT t.id, t.name FROM tenants t
+        JOIN contracts c ON c.tenant_id = t.id
+    """)
 
-    strom_start=st.date_input("Strom Start")
-    strom_end=st.date_input("Strom End")
-    strom_limit_per_month=st.number_input("Electricity limit per month")
-    strom_cost=st.number_input("Electricity cost")
+    if not contract_tenants:
+        st.warning("No tenants with contracts found.")
+        st.stop()
 
-    days=(strom_end-strom_start).days
+    tenant_choice = st.selectbox("Tenant", contract_tenants, format_func=lambda x: x[1])
+    tenant = tenant_choice[1]
+    address = get_tenant_address(tenant) or ""
+    gender = get_tenant_gender(tenant)
+    st.info(f"Address: {address}" if address else "No address found for this tenant.")
 
-    tenants=st.number_input("Tenants in flat",value=3)
+    st.divider()
 
-    strom_cost_tenant,strom_limit,strom_nach = strom_calc(strom_cost,tenants,days, limit_per_month=strom_limit_per_month)
+    tenants = st.number_input("Tenants in flat", value=3)
 
-    bk_start=st.date_input("BK Start")
-    bk_end=st.date_input("BK End")
-    bk_limit_per_month=st.number_input("Betriebskosten limit per month")
+    st.subheader("Strom")
+    strom_start = st.date_input("Strom Start")
+    strom_end = st.date_input("Strom End")
+    strom_limit_per_month = st.number_input("Electricity prepayment per month (€)")
+    strom_cost = st.number_input("Total electricity cost flat (€)")
+    days = (strom_end - strom_start).days
 
-    months=st.number_input("Months",value=3)
+    strom_cost_tenant, strom_limit, strom_nach = strom_calc(strom_cost, tenants, days, limit_per_month=strom_limit_per_month)
 
-    bk_cost=st.number_input("Total Betriebskosten")
+    st.subheader("Betriebskosten")
+    bk_start = st.date_input("BK Start")
+    bk_end = st.date_input("BK End")
+    bk_limit_per_month = st.number_input("Betriebskosten prepayment per month (€)")
+    months = st.number_input("Months", value=3)
+    bk_cost = st.number_input("Total Betriebskosten (€)")
 
-    bk_tenant,bk_period,bk_limit,bk_nach = betriebskosten_calc(bk_cost,tenants,months, bk_start, bk_end, limit_per_month=bk_limit_per_month)
+    bk_tenant, bk_period, bk_limit, bk_nach = betriebskosten_calc(bk_cost, tenants, months, bk_start, bk_end, limit_per_month=bk_limit_per_month)
 
     if st.button("Generate PDF"):
-
         file = invoice_pdf(
-
-        tenant,
-        address,
-
-        f"{strom_start} - {strom_end}",
-        days,
-        strom_cost,
-        strom_limit,
-        strom_nach,
-
-        f"{bk_start} - {bk_end}",
-        months,
-        bk_period,
-        bk_limit,
-        bk_nach
-
+            tenant, address,
+            f"{strom_start} - {strom_end}", days, strom_cost, strom_limit, strom_nach,
+            f"{bk_start} - {bk_end}", months, bk_period, bk_limit, bk_nach,
+            landlord_name=landlord_name,
+            num_tenants=int(tenants),
+            monthly_strom_limit=strom_limit_per_month,
+            monthly_bk_limit=bk_limit_per_month,
+            gender=gender,
         )
-
-        with open(file,"rb") as f:
-
-            st.download_button("Download",f,file_name=file)
+        with open(file, "rb") as f:
+            st.download_button("Download", f, file_name=file)
 
 
 if menu == "Mahnung Generator":

@@ -45,9 +45,16 @@ def init_db():
     CREATE TABLE IF NOT EXISTS tenants(
         id INTEGER PRIMARY KEY,
         name TEXT,
-        email TEXT
+        email TEXT,
+        gender TEXT DEFAULT 'diverse'
     )
     """)
+    # migrate existing db
+    try:
+        c.execute("ALTER TABLE tenants ADD COLUMN gender TEXT DEFAULT 'diverse'")
+        conn.commit()
+    except Exception:
+        pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS contracts(
@@ -133,3 +140,8 @@ def get_tenant_address(tenant_name):
         LIMIT 1
     """, (tenant_name,))
     return rows[0][0] if rows else None
+
+
+def get_tenant_gender(tenant_name):
+    rows = fetch("SELECT gender FROM tenants WHERE name = ? LIMIT 1", (tenant_name,))
+    return rows[0][0] if rows else "diverse"

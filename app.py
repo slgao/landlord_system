@@ -373,6 +373,45 @@ if menu == "Rent Tracking":
         else:
             st.info("No payments recorded for this contract.")
 
+    # Monthly overview across all properties and tenants
+    st.divider()
+    st.subheader("Monthly Overview")
+
+    today = date.today()
+    selected_month = st.date_input(
+        "Select month",
+        value=today.replace(day=1),
+        format="YYYY-MM-DD"
+    )
+
+    month_start = selected_month.replace(day=1)
+    if month_start.month == 12:
+        month_end = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        month_end = month_start.replace(month=month_start.month + 1)
+
+    monthly_payments = fetch("""
+        SELECT p.name AS property, a.name AS apartment, t.name AS tenant,
+               pay.amount, pay.payment_date
+        FROM payments pay
+        JOIN contracts c ON pay.contract_id = c.id
+        JOIN tenants t ON c.tenant_id = t.id
+        JOIN apartments a ON c.apartment_id = a.id
+        JOIN properties p ON a.property_id = p.id
+        WHERE pay.payment_date >= ? AND pay.payment_date < ?
+        ORDER BY p.name, a.name, pay.payment_date
+    """, (str(month_start), str(month_end)))
+
+    if monthly_payments:
+        df_monthly = pd.DataFrame(
+            monthly_payments,
+            columns=["Property", "Apartment", "Tenant", "Amount", "Date"]
+        )
+        st.dataframe(df_monthly, width='stretch', hide_index=True)
+        st.metric("Total collected", f"€ {sum(r[3] for r in monthly_payments):,.2f}")
+    else:
+        st.info(f"No payments recorded for {month_start.strftime('%B %Y')}.")
+
 
 if menu == "Nebenkostenabrechnung":
 

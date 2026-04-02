@@ -108,6 +108,7 @@ def invoice_pdf(
     monthly_strom_limit=0,
     monthly_bk_limit=0,
     gender="diverse",
+    signature_path=None,
 ):
     s = _styles()
     file = f"pdf/Abrechnung_{tenant}.pdf"
@@ -222,6 +223,12 @@ def invoice_pdf(
     story.append(Paragraph("Mit freundlichen Grüßen,", s["normal"]))
     story.append(Spacer(1, 24))
     story.append(Paragraph(f"<b>{landlord_name}</b>", s["normal"]))
+    if signature_path:
+        from reportlab.platypus import Image as RLImage
+        sig = Table([[RLImage(signature_path, width=80, height=33), ""]], colWidths=[80, 387])
+        sig.setStyle(TableStyle([("LEFTPADDING", (0,0), (0,-1), 0), ("RIGHTPADDING", (0,0), (-1,-1), 0), ("TOPPADDING", (0,0), (-1,-1), 0), ("BOTTOMPADDING", (0,0), (-1,-1), 0)]))
+        story.append(Spacer(1, 6))
+        story.append(sig)
 
     doc = SimpleDocTemplate(
         file, pagesize=A4, title=f"Abrechnung_{tenant}",
@@ -233,7 +240,7 @@ def invoice_pdf(
 
 # ── Mahnung ────────────────────────────────────────────────────────────────────
 
-def generate_mahnung(tenant_name, amount, address=None, gender="diverse"):
+def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signature_path=None):
     file = f"pdf/Mahnung_{tenant_name}.pdf"
     s = _styles()
     today_str = date.today().strftime("%d.%m.%Y")
@@ -310,6 +317,12 @@ def generate_mahnung(tenant_name, amount, address=None, gender="diverse"):
     story.append(Paragraph("Mit freundlichen Grüßen,", s["normal"]))
     story.append(Spacer(1, 24))
     story.append(Paragraph("<b>Ihre Vermieter</b>", s["normal"]))
+    if signature_path:
+        from reportlab.platypus import Image as RLImage
+        sig = Table([[RLImage(signature_path, width=80, height=33), ""]], colWidths=[80, 387])
+        sig.setStyle(TableStyle([("LEFTPADDING", (0,0), (0,-1), 0), ("RIGHTPADDING", (0,0), (-1,-1), 0), ("TOPPADDING", (0,0), (-1,-1), 0), ("BOTTOMPADDING", (0,0), (-1,-1), 0)]))
+        story.append(Spacer(1, 6))
+        story.append(sig)
 
     doc = SimpleDocTemplate(
         file, pagesize=A4, title=f"Mahnung_{tenant_name}",

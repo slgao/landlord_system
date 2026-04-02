@@ -13,6 +13,7 @@
 
 import streamlit as st
 from datetime import date, timedelta
+from pathlib import Path
 import pandas as pd
 
 from db import *
@@ -218,6 +219,16 @@ if menu == "Tenants":
             st.success(f"Tenant {id_to_delete} removed")
             st.rerun()
 
+        st.divider()
+        st.subheader("Update Gender")
+        tenant_options = [(row[0], row[1]) for row in data]
+        tenant_to_edit = st.selectbox("Select Tenant", tenant_options, format_func=lambda x: x[1], key="gender_edit")
+        new_gender = st.selectbox("Gender", ["male", "female", "diverse"], key="gender_val")
+        if st.button("Save Gender"):
+            execute("UPDATE tenants SET gender = ? WHERE id = ?", (new_gender, tenant_to_edit[0]))
+            st.success(f"Gender updated for {tenant_to_edit[1]}")
+            st.rerun()
+
 
 if menu == "Tenant Ledger":
 
@@ -417,6 +428,16 @@ if menu == "Nebenkostenabrechnung":
 
     landlord_name = st.text_input("Landlord name", value="Ihr Vermieter")
 
+    sig_path = "pdf/signature.png"
+    if Path(sig_path).exists():
+        st.image(sig_path, width=200, caption="Current signature")
+    sig_upload = st.file_uploader("Upload signature image (PNG/JPG)", type=["png", "jpg", "jpeg"], key="sig_abrechnung")
+    if sig_upload:
+        Path("pdf").mkdir(exist_ok=True)
+        with open(sig_path, "wb") as f:
+            f.write(sig_upload.read())
+        st.success("Signature saved.")
+
     contract_tenants = fetch("""
         SELECT DISTINCT t.id, t.name FROM tenants t
         JOIN contracts c ON c.tenant_id = t.id
@@ -464,6 +485,7 @@ if menu == "Nebenkostenabrechnung":
             monthly_strom_limit=strom_limit_per_month,
             monthly_bk_limit=bk_limit_per_month,
             gender=gender,
+            signature_path=sig_path if Path(sig_path).exists() else None,
         )
         with open(file, "rb") as f:
             st.download_button("Download", f, file_name=file)
@@ -488,8 +510,10 @@ if menu == "Mahnung Generator":
             address = st.text_input("Tenant Address (no contract found — enter manually)")
 
         if st.button("Generate Mahnung"):
-
-            file = generate_mahnung(tenant, amount, address)
+            sig_path = "pdf/signature.png"
+            file = generate_mahnung(tenant, amount, address,
+                                    gender=get_tenant_gender(tenant),
+                                    signature_path=sig_path if Path(sig_path).exists() else None)
 
             with open(file, "rb") as f:
                 st.download_button("Download Mahnung", f, file_name=file)

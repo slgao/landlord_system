@@ -4,6 +4,22 @@ A web-based property management application tailored for landlords in Germany. B
 
 ---
 
+## Screenshots
+
+| Dashboard | Properties |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Properties](docs/screenshots/properties.png) |
+
+| Contracts | Rent Tracking |
+|---|---|
+| ![Contracts](docs/screenshots/contracts.png) | ![Rent Tracking](docs/screenshots/rent_tracking.png) |
+
+| Nebenkostenabrechnung | Mahnung Generator |
+|---|---|
+| ![Nebenkostenabrechnung](docs/screenshots/nebenkostenabrechnung.png) | ![Mahnung Generator](docs/screenshots/mahnung_generator.jpg) |
+
+---
+
 ## Features
 
 ### Dashboard

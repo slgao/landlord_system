@@ -276,8 +276,7 @@ def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signat
     story.append(Paragraph(_salutation(gender, tenant_name), s["normal"]))
     story.append(Spacer(1, 10))
     story.append(Paragraph(
-        "trotz unserer bisherigen Zahlungsaufforderung mussten wir feststellen, dass der folgende "
-        "Betrag auf unserem Konto noch nicht eingegangen ist:",
+        "für den oben genannten Abrechnungszeitraum ergibt sich folgender ausstehender Betrag:",
         s["normal"]
     ))
     story.append(Spacer(1, 12))

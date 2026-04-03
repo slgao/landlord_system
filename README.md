@@ -12,7 +12,7 @@ A web-based property management application tailored for landlords in Germany. B
 
 | Contracts | Rent Tracking |
 |---|---|
-| ![Contracts](docs/screenshots/contracts.png) | ![Rent Tracking](docs/screenshots/rent_tracking.png) |
+| ![Contracts](docs/screenshots/contracts.jpg) | ![Rent Tracking](docs/screenshots/rent_tracking.png) |
 
 | Nebenkostenabrechnung | Mahnung Generator |
 |---|---|

@@ -653,8 +653,9 @@ elif menu == "Flat Costs":
                                   format_func=lambda x: f"{x[1]} ({x[2]})" if x[2] else x[1])
         col1, col2 = st.columns(2)
         with col1:
-            cost_type = st.selectbox("Cost type", ["Hausgeld", "Mortgage", "Grundsteuer",
-                                                    "Strom Vorauszahlung", "Internet", "Other"])
+            cost_type_sel = st.selectbox("Cost type", ["Hausgeld", "Mortgage", "Grundsteuer",
+                                                        "Strom Vorauszahlung", "Internet", "Other"])
+            cost_type = st.text_input("Custom type", key="add_custom_type") if cost_type_sel == "Other" else cost_type_sel
             amount = st.number_input("Amount (€)", min_value=0.0)
         with col2:
             frequency = st.selectbox("Frequency", ["monthly", "annual", "one-time"])
@@ -707,9 +708,11 @@ elif menu == "Flat Costs":
             freq_opts = ["monthly", "annual", "one-time"]
             col1, col2 = st.columns(2)
             with col1:
-                edit_type = st.selectbox("Cost type", type_opts,
-                                         index=type_opts.index(c_type) if c_type in type_opts else 5,
-                                         key=f"cedit_type_{cost_to_edit[0]}")
+                edit_type_sel = st.selectbox("Cost type", type_opts,
+                                             index=type_opts.index(c_type) if c_type in type_opts else 5,
+                                             key=f"cedit_type_{cost_to_edit[0]}")
+                edit_type = st.text_input("Custom type", value=c_type if c_type not in type_opts else "",
+                                          key=f"cedit_custom_{cost_to_edit[0]}") if edit_type_sel == "Other" else edit_type_sel
                 edit_amount = st.number_input("Amount (€)", value=float(c_amt), min_value=0.0,
                                               key=f"cedit_amt_{cost_to_edit[0]}")
             with col2:
@@ -756,11 +759,12 @@ elif menu == "Balance Sheet":
         for prop_id, prop_name in properties:
             st.subheader(f"🏠 {prop_name}")
 
-            months_labels = [date(y, m, 1).strftime("%b %Y") for m in range(1, 13)]
+            max_month = date.today().month if y == date.today().year else 12
+            months_labels = [date(y, m, 1).strftime("%b %Y") for m in range(1, max_month + 1)]
             rows = []
             total_income = total_costs = 0.0
 
-            for m in range(1, 13):
+            for m in range(1, max_month + 1):
                 m_start = f"{y}-{m:02d}-01"
                 m_end = f"{y}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
 

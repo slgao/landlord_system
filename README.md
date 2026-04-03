@@ -72,6 +72,7 @@ A web-based property management application tailored for landlords in Germany. B
 - Set frequency: monthly, annual, or one-time
 - Set validity period (valid from / valid to)
 - Edit and delete existing cost entries
+- Custom cost type via free-text "Other" option
 - Costs grouped by property and flat for easy overview
 
 ### Balance Sheet
@@ -79,6 +80,7 @@ A web-based property management application tailored for landlords in Germany. B
 - Income: rent payments recorded in the selected year
 - Costs: flat costs prorated per month (annual ÷ 12, one-time in start month)
 - Net per month color-coded (green = profit, red = loss)
+- For the current year, only shows months up to the current month
 - Annual totals: total income, total costs, annual net
 - Tenant selected from dropdown (auto-fills address from contract)
 - **Auto-detects number of persons** sharing the same flat via the flat grouping (can be overridden manually)

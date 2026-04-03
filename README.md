@@ -35,6 +35,8 @@ A web-based property management application tailored for landlords in Germany. B
 ### Apartments
 - Link apartments to a specific property
 - Support for individual units and shared flat rooms (WG-Zimmer)
+- **Flat grouping**: assign rooms to a named flat (e.g. "Wohnung 1") to group WG rooms together
+- Edit existing apartments: room name and flat label
 - View and delete existing apartments
 
 ### Tenants
@@ -65,6 +67,7 @@ A web-based property management application tailored for landlords in Germany. B
 
 ### Nebenkostenabrechnung (Utility Billing)
 - Tenant selected from dropdown (auto-fills address from contract)
+- **Auto-detects number of persons** sharing the same flat via the flat grouping (can be overridden manually)
 - Calculate electricity costs (Strom) per tenant based on:
   - Total flat cost, number of tenants, billing period, monthly prepayment
 - Calculate Betriebskosten per tenant based on:
@@ -119,7 +122,7 @@ landlord_system/
 | Table        | Key Fields                                              |
 |--------------|---------------------------------------------------------|
 | `properties` | id, name, address                                       |
-| `apartments` | id, property_id, name                                   |
+| `apartments` | id, property_id, name, flat                             |
 | `tenants`    | id, name, email, gender                                 |
 | `contracts`  | id, tenant_id, apartment_id, rent, start_date, end_date |
 | `payments`   | id, contract_id, amount, payment_date                   |

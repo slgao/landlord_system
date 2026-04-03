@@ -377,10 +377,27 @@ if menu == "Contracts":
     """)
     if contract_data:
         df_contracts = pd.DataFrame(
-            contract_data, 
+            contract_data,
             columns=["ID", "Tenant", "Apartment", "Rent", "Start Date", "End Date"]
         )
-        st.dataframe(df_contracts, width='stretch', hide_index=True)
+
+        def highlight_contracts(row):
+            end = row["End Date"]
+            if not end or end == "None":
+                return [""] * len(row)
+            try:
+                d = date.fromisoformat(end)
+                if d < date.today():
+                    return ["background-color: #c0392b; color: white"] * len(row)  # expired
+                elif (d - date.today()).days <= 90:
+                    return ["background-color: #e67e22; color: white"] * len(row)  # expiring soon
+            except ValueError:
+                pass
+            return [""] * len(row)
+
+        st.dataframe(df_contracts.style.apply(highlight_contracts, axis=1),
+                     width='stretch', hide_index=True)
+        st.caption("🔴 Expired &nbsp;&nbsp; 🟡 Expiring within 90 days")
 
         # Deletion logic
         st.divider()

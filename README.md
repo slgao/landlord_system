@@ -38,7 +38,8 @@ A web-based property management application tailored for landlords in Germany. B
 - View and delete existing apartments
 
 ### Tenants
-- Register tenants with name and email
+- Register tenants with name, email, and gender
+- Edit tenant information: name, email, gender, and assigned apartment
 - View tenants alongside their assigned apartment (via contract)
 - Delete tenants from the system
 
@@ -46,35 +47,42 @@ A web-based property management application tailored for landlords in Germany. B
 - Create rental contracts linking a tenant to an apartment
 - Set monthly rent amount
 - Support for open-ended and fixed-term (befristet) contracts
-- View all active contracts with start/end dates
-- Terminate or delete contracts
+- Overlap detection: warns if the apartment is already occupied in the selected period
+- Edit existing contracts: apartment, rent, start/end dates
+- Terminate a contract with a move-out date (preserves history)
+- Delete contracts
+- Full move-out / move-in flow: terminate old contract, create new one for incoming tenant
 
 ### Rent Tracking
 - Record individual rent payments against a contract
 - Specify payment amount and date
 - Supports partial and custom payment amounts
+- Monthly overview: view all payments across all properties and tenants for a selected month
 
 ### Tenant Ledger
 - View full payment history for any tenant
 - Displays amount and date for each recorded payment
 
 ### Nebenkostenabrechnung (Utility Billing)
+- Tenant selected from dropdown (auto-fills address from contract)
 - Calculate electricity costs (Strom) per tenant based on:
-  - Total flat cost
-  - Number of tenants
-  - Billing period (in days)
-  - Monthly prepayment limit
+  - Total flat cost, number of tenants, billing period, monthly prepayment
 - Calculate Betriebskosten per tenant based on:
-  - Total operating costs
-  - Number of tenants
-  - Billing period (in months)
-  - Monthly prepayment limit
+  - Total operating costs, number of tenants, billing period, monthly prepayment
 - Automatically computes Nachzahlung (additional payment due)
-- Generates a formatted PDF (A4) with itemized billing tables
+- Generates a polished A4 letter-style PDF with:
+  - Recipient address block and landlord name
+  - Gender-aware salutation (Sehr geehrter Herr / Sehr geehrte Frau)
+  - Itemized calculation tables with step-by-step breakdown
+  - Color-coded total (red = Nachzahlung, green = Guthaben)
+  - Landlord signature image
+  - 7-day payment deadline for Nachzahlungen
 
 ### Mahnung Generator (Payment Reminder)
 - Generate a formal payment reminder PDF for a tenant
-- Includes tenant name and outstanding amount
+- Gender-aware salutation
+- Highlighted outstanding amount
+- Landlord signature embedded
 - Ready to print or send digitally
 
 ---
@@ -100,8 +108,8 @@ landlord_system/
 ├── pdfgen.py           # PDF generation: Nebenkostenabrechnung and Mahnung
 ├── requirements.txt    # Python dependencies
 ├── data/
-│   └── landlord.db     # SQLite database (auto-created on first run)
-└── pdf/                # Output directory for generated PDFs
+│   └── landlord.db     # SQLite database (auto-created on first run, git-ignored)
+└── pdf/                # Output directory for generated PDFs (git-ignored)
 ```
 
 ---
@@ -112,7 +120,7 @@ landlord_system/
 |--------------|---------------------------------------------------------|
 | `properties` | id, name, address                                       |
 | `apartments` | id, property_id, name                                   |
-| `tenants`    | id, name, email                                         |
+| `tenants`    | id, name, email, gender                                 |
 | `contracts`  | id, tenant_id, apartment_id, rent, start_date, end_date |
 | `payments`   | id, contract_id, amount, payment_date                   |
 
@@ -153,12 +161,18 @@ The app will be available at `http://localhost:8501`.
 
 1. **Add a Property** → Properties menu
 2. **Add Apartments** to the property → Apartments menu
-3. **Register Tenants** → Tenants menu
+3. **Register Tenants** (with gender) → Tenants menu
 4. **Create a Contract** linking tenant ↔ apartment with rent and dates → Contracts menu
 5. **Record monthly Rent Payments** → Rent Tracking menu
 6. **Review payment history** per tenant → Tenant Ledger menu
 7. **Generate Nebenkostenabrechnung** at end of billing period → Nebenkostenabrechnung menu
 8. **Send a Mahnung** if a tenant has outstanding payments → Mahnung Generator menu
+
+### Move-out / Move-in Flow
+
+1. Go to **Contracts** → Terminate Contract → set move-out date
+2. Create a new contract for the incoming tenant on the same apartment
+3. The system warns if the dates overlap with an existing active contract
 
 ### Nebenkostenabrechnung Calculation Logic
 

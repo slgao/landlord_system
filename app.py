@@ -309,18 +309,30 @@ if menu == "Contracts":
                 move_out = st.date_input("Move out date")
 
         if st.button("Create Contract"):
-            insert(
-                "contracts",
-                (
-                    tenant_choice[0],
-                    apartment_choice[0],
-                    rent,
-                    str(move_in),
-                    str(move_out) if move_out else None
+            # Check for overlapping active contract on same apartment
+            overlap = fetch("""
+                SELECT t.name FROM contracts c
+                JOIN tenants t ON c.tenant_id = t.id
+                WHERE c.apartment_id = ?
+                AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
+                AND c.start_date <= ?
+            """, (apartment_choice[0], str(move_in), str(move_out) if move_out else "9999-12-31"))
+            if overlap:
+                st.warning(f"⚠️ Apartment already occupied by **{overlap[0][0]}** in this period. "
+                           "Terminate their contract first or adjust the dates.")
+            else:
+                insert(
+                    "contracts",
+                    (
+                        tenant_choice[0],
+                        apartment_choice[0],
+                        rent,
+                        str(move_in),
+                        str(move_out) if move_out else None
+                    )
                 )
-            )
-            st.success("Contract created")
-            st.rerun()
+                st.success("Contract created")
+                st.rerun()
 
     # Display existing contracts with the end date
     st.divider()
@@ -340,7 +352,67 @@ if menu == "Contracts":
 
         # Deletion logic
         st.divider()
-        st.subheader("Terminate / Delete Contract")
+        st.subheader("Edit Contract")
+        contract_choice = st.selectbox(
+            "Select Contract to edit",
+            contract_data,
+            format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
+            key="contract_edit"
+        )
+        cid, _, _, c_rent, c_start, c_end = contract_choice
+
+        apartments_all = fetch("SELECT id, name FROM apartments")
+        apt_ids = [a[0] for a in apartments_all]
+        # find current apartment id
+        c_apt_id = fetch("SELECT apartment_id FROM contracts WHERE id = ?", (cid,))[0][0]
+        apt_index = apt_ids.index(c_apt_id) if c_apt_id in apt_ids else 0
+
+        col1, col2 = st.columns(2)
+        with col1:
+            edit_apt = st.selectbox("Apartment", apartments_all, format_func=lambda x: x[1],
+                                    index=apt_index, key=f"cedit_apt_{cid}")
+            edit_rent = st.number_input("Monthly Rent (€)", value=float(c_rent), key=f"cedit_rent_{cid}")
+        with col2:
+            edit_start = st.date_input("Start date", value=date.fromisoformat(c_start),
+                                       min_value=date.today() - timedelta(days=365*20),
+                                       key=f"cedit_start_{cid}")
+            edit_limited = st.checkbox("Fixed Term", value=bool(c_end and c_end != "None"),
+                                       key=f"cedit_limited_{cid}")
+            edit_end = None
+            if edit_limited:
+                edit_end = st.date_input("End date",
+                                         value=date.fromisoformat(c_end) if c_end and c_end != "None" else date.today(),
+                                         key=f"cedit_end_{cid}")
+
+        if st.button("Save Contract Changes"):
+            execute("""
+                UPDATE contracts SET apartment_id=?, rent=?, start_date=?, end_date=? WHERE id=?
+            """, (edit_apt[0], edit_rent, str(edit_start), str(edit_end) if edit_end else None, cid))
+            st.success("Contract updated.")
+            st.rerun()
+
+        st.divider()
+        st.subheader("Terminate Contract (Move-out)")
+        # Only show active (open-ended or future end date) contracts
+        active_contracts = [r for r in contract_data if not r[5] or r[5] == 'None' or r[5] >= str(date.today())]
+        if active_contracts:
+            contract_to_terminate = st.selectbox(
+                "Select active contract to terminate",
+                active_contracts,
+                format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
+                key="terminate_select"
+            )
+            move_out_date = st.date_input("Move-out date", value=date.today(), key="move_out_date")
+            if st.button("Terminate Contract"):
+                execute("UPDATE contracts SET end_date = ? WHERE id = ?",
+                        (str(move_out_date), contract_to_terminate[0]))
+                st.success(f"{contract_to_terminate[1]} terminated on {move_out_date}.")
+                st.rerun()
+        else:
+            st.info("No active contracts to terminate.")
+
+        st.divider()
+        st.subheader("Delete Contract")
         contract_ids = [row[0] for row in contract_data]
         contract_to_delete = st.selectbox("Select Contract ID to remove", contract_ids)
         

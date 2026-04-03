@@ -14,6 +14,7 @@
 import streamlit as st
 from datetime import date, timedelta
 from pathlib import Path
+import calendar
 import pandas as pd
 
 from db import *
@@ -39,6 +40,8 @@ menu = st.sidebar.selectbox(
 "Tenant Ledger",
 "Contracts",
 "Rent Tracking",
+"Flat Costs",
+"Balance Sheet",
 "Nebenkostenabrechnung",
 "Mahnung Generator"
 ]
@@ -89,7 +92,7 @@ if menu == "Dashboard":
         st.success("No contracts expiring in the next 90 days.")
 
 
-if menu == "Properties":
+elif menu == "Properties":
 
     st.header("Properties")
 
@@ -137,7 +140,7 @@ if menu == "Properties":
             st.rerun() # Refresh the app to show updated list
 
 
-if menu == "Apartments":
+elif menu == "Apartments":
 
     st.header("Apartments")
 
@@ -214,7 +217,7 @@ if menu == "Apartments":
     else:
         st.info("No apartments found.")
 
-if menu == "Tenants":
+elif menu == "Tenants":
     st.header("Tenants")
     
     # Adding a tenant
@@ -292,7 +295,7 @@ if menu == "Tenants":
             st.rerun()
 
 
-if menu == "Tenant Ledger":
+elif menu == "Tenant Ledger":
 
     tenants = fetch("SELECT id,name FROM tenants")
 
@@ -315,7 +318,7 @@ if menu == "Tenant Ledger":
         st.dataframe(df,width='stretch')
 
 
-if menu == "Contracts":
+elif menu == "Contracts":
     st.header("Tenant Contracts")
 
     tenants = fetch("SELECT id, name FROM tenants")
@@ -515,7 +518,7 @@ if menu == "Contracts":
             st.success("Kaution saved.")
             st.rerun()
 
-if menu == "Rent Tracking":
+elif menu == "Rent Tracking":
 
     st.header("Rent Payments")
 
@@ -638,7 +641,181 @@ if menu == "Rent Tracking":
         st.info(f"No payments recorded for {month_start.strftime('%B %Y')}.")
 
 
-if menu == "Nebenkostenabrechnung":
+elif menu == "Flat Costs":
+    st.header("Flat Costs")
+
+    apartments = fetch("SELECT id, name, flat FROM apartments")
+    if not apartments:
+        st.warning("No apartments found.")
+    else:
+        st.subheader("Add Cost")
+        apt_choice = st.selectbox("Apartment", apartments,
+                                  format_func=lambda x: f"{x[1]} ({x[2]})" if x[2] else x[1])
+        col1, col2 = st.columns(2)
+        with col1:
+            cost_type = st.selectbox("Cost type", ["Hausgeld", "Mortgage", "Grundsteuer",
+                                                    "Strom Vorauszahlung", "Internet", "Other"])
+            amount = st.number_input("Amount (€)", min_value=0.0)
+        with col2:
+            frequency = st.selectbox("Frequency", ["monthly", "annual", "one-time"])
+            valid_from = st.date_input("Valid from")
+            valid_to_enabled = st.checkbox("Set end date")
+            valid_to = st.date_input("Valid to") if valid_to_enabled else None
+
+        if st.button("Add Cost"):
+            insert("flat_costs", (apt_choice[0], cost_type, amount, frequency,
+                                  str(valid_from), str(valid_to) if valid_to else None))
+            st.success("Cost added.")
+            st.rerun()
+
+        st.divider()
+        st.subheader("Existing Costs")
+        costs = fetch("""
+            SELECT fc.id, p.name, a.name, a.flat, fc.cost_type, fc.amount, fc.frequency, fc.valid_from, fc.valid_to
+            FROM flat_costs fc
+            JOIN apartments a ON fc.apartment_id = a.id
+            JOIN properties p ON a.property_id = p.id
+            ORDER BY p.name, a.flat, fc.cost_type
+        """)
+        if costs:
+            # Group by property + flat
+            from itertools import groupby
+            for (prop, flat), group in groupby(costs, key=lambda x: (x[1], x[3])):
+                label = f"{prop} — {flat}" if flat else f"{prop} — (no flat)"
+                st.markdown(f"**{label}**")
+                group_rows = list(group)
+                df_group = pd.DataFrame(
+                    [(r[0], r[4], r[5], r[6], r[7], r[8]) for r in group_rows],
+                    columns=["ID", "Type", "Amount (€)", "Frequency", "Valid From", "Valid To"]
+                )
+                st.dataframe(df_group, width='stretch', hide_index=True)
+                st.write("")
+
+            # costs rows: (id, prop, apt, flat, type, amt, freq, from, to)
+            all_costs = fetch("""
+                SELECT fc.id, a.name, a.flat, fc.cost_type, fc.amount, fc.frequency, fc.valid_from, fc.valid_to
+                FROM flat_costs fc JOIN apartments a ON fc.apartment_id = a.id
+                ORDER BY a.name, fc.cost_type
+            """)
+            st.divider()
+            st.subheader("Edit Cost")
+            cost_to_edit = st.selectbox("Select Cost", all_costs,
+                                        format_func=lambda x: f"#{x[0]} — {x[1]} ({x[2]}) / {x[3]} ({x[5]})",
+                                        key="cost_edit")
+            _, _, _, c_type, c_amt, c_freq, c_from, c_to = cost_to_edit
+            type_opts = ["Hausgeld", "Mortgage", "Grundsteuer", "Strom Vorauszahlung", "Internet", "Other"]
+            freq_opts = ["monthly", "annual", "one-time"]
+            col1, col2 = st.columns(2)
+            with col1:
+                edit_type = st.selectbox("Cost type", type_opts,
+                                         index=type_opts.index(c_type) if c_type in type_opts else 5,
+                                         key=f"cedit_type_{cost_to_edit[0]}")
+                edit_amount = st.number_input("Amount (€)", value=float(c_amt), min_value=0.0,
+                                              key=f"cedit_amt_{cost_to_edit[0]}")
+            with col2:
+                edit_freq = st.selectbox("Frequency", freq_opts,
+                                         index=freq_opts.index(c_freq) if c_freq in freq_opts else 0,
+                                         key=f"cedit_freq_{cost_to_edit[0]}")
+                edit_from = st.date_input("Valid from", value=date.fromisoformat(c_from),
+                                          key=f"cedit_from_{cost_to_edit[0]}")
+                edit_to_enabled = st.checkbox("Set end date",
+                                              value=bool(c_to and c_to != "None"),
+                                              key=f"cedit_to_en_{cost_to_edit[0]}")
+                edit_to = st.date_input("Valid to",
+                                        value=date.fromisoformat(c_to) if c_to and c_to != "None" else date.today(),
+                                        key=f"cedit_to_{cost_to_edit[0]}") if edit_to_enabled else None
+
+            if st.button("Save Cost"):
+                execute("""UPDATE flat_costs SET cost_type=?, amount=?, frequency=?, valid_from=?, valid_to=?
+                           WHERE id=?""",
+                        (edit_type, edit_amount, edit_freq, str(edit_from),
+                         str(edit_to) if edit_to else None, cost_to_edit[0]))
+                st.success("Cost updated.")
+                st.rerun()
+
+            st.divider()
+            del_id = st.selectbox("Select Cost ID to delete", [c[0] for c in all_costs])
+            if st.button("Delete Cost", type="primary"):
+                execute("DELETE FROM flat_costs WHERE id = ?", (del_id,))
+                st.success("Cost deleted.")
+                st.rerun()
+        else:
+            st.info("No costs recorded yet.")
+
+
+elif menu == "Balance Sheet":
+    st.header("Balance Sheet")
+
+    year = st.selectbox("Year", list(range(date.today().year, date.today().year - 6, -1)))
+    y = int(year)
+
+    properties = fetch("SELECT id, name FROM properties")
+    if not properties:
+        st.warning("No properties found.")
+    else:
+        for prop_id, prop_name in properties:
+            st.subheader(f"🏠 {prop_name}")
+
+            months_labels = [date(y, m, 1).strftime("%b %Y") for m in range(1, 13)]
+            rows = []
+            total_income = total_costs = 0.0
+
+            for m in range(1, 13):
+                m_start = f"{y}-{m:02d}-01"
+                m_end = f"{y}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
+
+                income = fetch("""
+                    SELECT COALESCE(SUM(p.amount), 0)
+                    FROM payments p
+                    JOIN contracts c ON p.contract_id = c.id
+                    JOIN apartments a ON c.apartment_id = a.id
+                    WHERE a.property_id = ? AND p.payment_date BETWEEN ? AND ?
+                """, (prop_id, m_start, m_end))[0][0]
+
+                cost_rows = fetch("""
+                    SELECT fc.amount, fc.frequency, fc.valid_from, fc.valid_to
+                    FROM flat_costs fc
+                    JOIN apartments a ON fc.apartment_id = a.id
+                    WHERE a.property_id = ?
+                    AND fc.valid_from <= ? AND (fc.valid_to IS NULL OR fc.valid_to = 'None' OR fc.valid_to >= ?)
+                """, (prop_id, m_end, m_start))
+
+                costs = 0.0
+                for amt, freq, vf, vt in cost_rows:
+                    if freq == "monthly":
+                        costs += amt
+                    elif freq == "annual":
+                        costs += amt / 12
+                    else:  # one-time: count in the month it starts
+                        if vf and vf[:7] == f"{y}-{m:02d}":
+                            costs += amt
+
+                net = income - costs
+                total_income += income
+                total_costs += costs
+                rows.append({
+                    "Month": months_labels[m-1],
+                    "Income (€)": round(income, 2),
+                    "Costs (€)": round(costs, 2),
+                    "Net (€)": round(net, 2),
+                })
+
+            df_monthly = pd.DataFrame(rows)
+
+            def color_net(val):
+                return "color: green" if val >= 0 else "color: red"
+
+            st.dataframe(df_monthly.style.map(color_net, subset=["Net (€)"]),
+                         width='stretch', hide_index=True)
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Income", f"€ {total_income:,.2f}")
+            col2.metric("Total Costs", f"€ {total_costs:,.2f}")
+            col3.metric("Annual Net", f"€ {total_income - total_costs:,.2f}")
+            st.divider()
+
+
+elif menu == "Nebenkostenabrechnung":
 
     st.header("Generate Abrechnung")
 
@@ -731,7 +908,7 @@ if menu == "Nebenkostenabrechnung":
             st.download_button("Download", f, file_name=file)
 
 
-if menu == "Mahnung Generator":
+elif menu == "Mahnung Generator":
 
     tenants = fetch("SELECT id, name FROM tenants")
 

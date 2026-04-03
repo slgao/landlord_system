@@ -97,6 +97,18 @@ def init_db():
     )
     """)
 
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS flat_costs(
+        id INTEGER PRIMARY KEY,
+        apartment_id INTEGER,
+        cost_type TEXT,
+        amount REAL,
+        frequency TEXT,
+        valid_from TEXT,
+        valid_to TEXT
+    )
+    """)
+
     conn.commit()
     conn.close()
 

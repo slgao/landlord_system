@@ -470,6 +470,51 @@ if menu == "Contracts":
             st.success(f"Contract {contract_to_delete} deleted.")
             st.rerun()
 
+        # ── Kaution ────────────────────────────────────────────────
+        st.divider()
+        st.subheader("Kaution (Deposit)")
+
+        kaution_data = fetch("""
+            SELECT c.id, t.name, a.name,
+                   c.kaution_amount, c.kaution_paid_date,
+                   c.kaution_returned_date, c.kaution_returned_amount
+            FROM contracts c
+            JOIN tenants t ON c.tenant_id = t.id
+            JOIN apartments a ON c.apartment_id = a.id
+        """)
+
+        df_kaution = pd.DataFrame(kaution_data,
+            columns=["Contract ID", "Tenant", "Apartment",
+                     "Kaution (€)", "Paid Date", "Returned Date", "Returned (€)"])
+        st.dataframe(df_kaution, width='stretch', hide_index=True)
+
+        st.markdown("**Record / Update Kaution**")
+        k_contract = st.selectbox("Contract", contract_data,
+                                  format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
+                                  key="kaution_contract")
+        col1, col2 = st.columns(2)
+        with col1:
+            k_amount = st.number_input("Kaution amount (€)", min_value=0.0, key="k_amount")
+            k_paid = st.date_input("Date received", key="k_paid")
+        with col2:
+            k_returned = st.date_input("Date returned (leave if not yet)", key="k_returned")
+            k_returned_amt = st.number_input("Amount returned (€)", min_value=0.0, key="k_returned_amt")
+
+        if st.button("Save Kaution"):
+            execute("""
+                UPDATE contracts SET
+                    kaution_amount = ?,
+                    kaution_paid_date = ?,
+                    kaution_returned_date = ?,
+                    kaution_returned_amount = ?
+                WHERE id = ?
+            """, (k_amount, str(k_paid),
+                  str(k_returned) if k_returned_amt > 0 else None,
+                  k_returned_amt if k_returned_amt > 0 else None,
+                  k_contract[0]))
+            st.success("Kaution saved.")
+            st.rerun()
+
 if menu == "Rent Tracking":
 
     st.header("Rent Payments")

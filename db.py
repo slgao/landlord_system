@@ -69,9 +69,24 @@ def init_db():
         apartment_id INTEGER,
         rent REAL,
         start_date TEXT,
-        end_date TEXT
+        end_date TEXT,
+        kaution_amount REAL,
+        kaution_paid_date TEXT,
+        kaution_returned_date TEXT,
+        kaution_returned_amount REAL
     )
     """)
+    for col, typ in [
+        ("kaution_amount", "REAL"),
+        ("kaution_paid_date", "TEXT"),
+        ("kaution_returned_date", "TEXT"),
+        ("kaution_returned_amount", "REAL"),
+    ]:
+        try:
+            c.execute(f"ALTER TABLE contracts ADD COLUMN {col} {typ}")
+            conn.commit()
+        except Exception:
+            pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS payments(

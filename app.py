@@ -220,13 +220,43 @@ if menu == "Tenants":
             st.rerun()
 
         st.divider()
-        st.subheader("Update Gender")
-        tenant_options = [(row[0], row[1]) for row in data]
-        tenant_to_edit = st.selectbox("Select Tenant", tenant_options, format_func=lambda x: x[1], key="gender_edit")
-        new_gender = st.selectbox("Gender", ["male", "female", "diverse"], key="gender_val")
-        if st.button("Save Gender"):
-            execute("UPDATE tenants SET gender = ? WHERE id = ?", (new_gender, tenant_to_edit[0]))
-            st.success(f"Gender updated for {tenant_to_edit[1]}")
+        st.subheader("Edit Tenant")
+        tenant_options = [(row[0], row[1], row[2], row[3]) for row in data]  # id, name, email, gender
+        tenant_to_edit = st.selectbox("Select Tenant", tenant_options, format_func=lambda x: x[1], key="tenant_edit")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            new_name  = st.text_input("Name",   value=tenant_to_edit[1], key=f"edit_name_{tenant_to_edit[0]}")
+            new_email = st.text_input("Email",  value=tenant_to_edit[2] or "", key=f"edit_email_{tenant_to_edit[0]}")
+        with col2:
+            gender_options = ["male", "female", "diverse"]
+            current_gender = tenant_to_edit[3] if tenant_to_edit[3] in gender_options else "diverse"
+            new_gender = st.selectbox("Gender", gender_options,
+                                      index=gender_options.index(current_gender), key=f"edit_gender_{tenant_to_edit[0]}")
+
+        # Apartment reassignment
+        all_apartments = fetch("SELECT id, name FROM apartments")
+        current_apt = fetch("""
+            SELECT apartment_id FROM contracts WHERE tenant_id = ? LIMIT 1
+        """, (tenant_to_edit[0],))
+        current_apt_id = current_apt[0][0] if current_apt else None
+        apt_ids = [a[0] for a in all_apartments]
+        apt_index = apt_ids.index(current_apt_id) if current_apt_id in apt_ids else 0
+
+        if all_apartments:
+            new_apt = st.selectbox("Apartment (via contract)", all_apartments,
+                                   format_func=lambda x: x[1],
+                                   index=apt_index, key=f"edit_apt_{tenant_to_edit[0]}")
+        else:
+            new_apt = None
+
+        if st.button("Save Changes"):
+            execute("UPDATE tenants SET name = ?, email = ?, gender = ? WHERE id = ?",
+                    (new_name, new_email, new_gender, tenant_to_edit[0]))
+            if new_apt and current_apt_id:
+                execute("UPDATE contracts SET apartment_id = ? WHERE tenant_id = ?",
+                        (new_apt[0], tenant_to_edit[0]))
+            st.success(f"Tenant {new_name} updated.")
             st.rerun()
 
 

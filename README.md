@@ -59,6 +59,7 @@ A web-based property management application tailored for landlords in Germany. B
 - Record individual rent payments against a contract
 - Specify payment amount and date
 - Supports partial and custom payment amounts
+- Edit existing payments: amount and date
 - Monthly overview: view all payments across all properties and tenants for a selected month
 
 ### Tenant Ledger

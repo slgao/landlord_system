@@ -508,6 +508,26 @@ if menu == "Rent Tracking":
             df_payments = pd.DataFrame(payments, columns=["ID", "Tenant", "Apartment", "Amount", "Date"])
             st.dataframe(df_payments, width='stretch', hide_index=True)
 
+            st.divider()
+            st.subheader("Edit Payment")
+            pay_to_edit = st.selectbox("Select Payment", payments,
+                                       format_func=lambda x: f"#{x[0]} — {x[3]:.2f} € on {x[4]}",
+                                       key="pay_edit")
+            col1, col2 = st.columns(2)
+            with col1:
+                new_amount = st.number_input("Amount (€)", value=float(pay_to_edit[3]),
+                                             key=f"pay_amt_{pay_to_edit[0]}")
+            with col2:
+                new_pay_date = st.date_input("Payment date",
+                                             value=date.fromisoformat(pay_to_edit[4]),
+                                             key=f"pay_date_{pay_to_edit[0]}")
+            if st.button("Save Payment"):
+                execute("UPDATE payments SET amount = ?, payment_date = ? WHERE id = ?",
+                        (new_amount, str(new_pay_date), pay_to_edit[0]))
+                st.success("Payment updated.")
+                st.rerun()
+
+            st.divider()
             payment_id_to_delete = st.selectbox("Select Payment ID to delete", [p[0] for p in payments])
             if st.button("Delete Payment", type="primary"):
                 execute("DELETE FROM payments WHERE id = ?", (payment_id_to_delete,))

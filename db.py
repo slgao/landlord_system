@@ -37,9 +37,15 @@ def init_db():
     CREATE TABLE IF NOT EXISTS apartments(
         id INTEGER PRIMARY KEY,
         property_id INTEGER,
-        name TEXT
+        name TEXT,
+        flat TEXT
     )
     """)
+    try:
+        c.execute("ALTER TABLE apartments ADD COLUMN flat TEXT")
+        conn.commit()
+    except Exception:
+        pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS tenants(

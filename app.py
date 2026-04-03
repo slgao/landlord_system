@@ -153,22 +153,31 @@ if menu == "Apartments":
             format_func=lambda x: x[1]
         )
 
-        apartment_name = st.text_input("Apartment name (e.g. Wohnung 1 / WG Zimmer A)")
+        apartment_name = st.text_input(
+            "Room / Apartment name",
+            placeholder="e.g. Wohnung 1 - Zimmer A",
+            help="**WG (shared flat):** Enter each room separately, e.g. 'Wohnung 1 - Zimmer A', 'Wohnung 1 - Zimmer B'.\n\n"
+                 "**Whole apartment:** Enter the apartment name, e.g. 'Wohnung 2'. "
+                 "This is the name shown in contracts and rent tracking."
+        )
+        flat_name = st.text_input(
+            "Flat / Wohnung",
+            placeholder="e.g. Wohnung 1",
+            help="**WG:** All rooms in the same flat share the same label here, e.g. 'Wohnung 1'. "
+                 "This is used to auto-count how many people share the flat for Nebenkostenabrechnung.\n\n"
+                 "**Whole apartment:** Same as the room name above, e.g. 'Wohnung 2'.\n\n"
+                 "Leave empty if not needed."
+        )
 
         if st.button("Add Apartment"):
-
-            insert(
-                "apartments",
-                (property_choice[0], apartment_name)
-            )
-
+            insert("apartments", (property_choice[0], apartment_name, flat_name))
             st.success("Apartment added")
 
     st.subheader("Existing Apartments")
 
-    apt_data = fetch("SELECT id, property_id, name FROM apartments")
+    apt_data = fetch("SELECT id, property_id, name, flat FROM apartments")
     if apt_data:
-        df_apt = pd.DataFrame(apt_data, columns=["ID", "Property ID", "Apartment Name"])
+        df_apt = pd.DataFrame(apt_data, columns=["ID", "Property ID", "Room/Apartment", "Flat"])
         st.dataframe(df_apt, width='stretch', hide_index=True)
 
         # Deletion logic
@@ -178,6 +187,29 @@ if menu == "Apartments":
         if st.button("Delete Apartment", type="primary"):
             execute("DELETE FROM apartments WHERE id = ?", (apt_id_to_delete,))
             st.success(f"Apartment {apt_id_to_delete} removed")
+            st.rerun()
+
+        st.divider()
+        st.subheader("Edit Apartment")
+        apt_to_edit = st.selectbox("Select Apartment", apt_data,
+                                   format_func=lambda x: f"#{x[0]} — {x[2]} ({x[3] or 'no flat'})",
+                                   key="apt_edit")
+        col1, col2 = st.columns(2)
+        with col1:
+            new_apt_name = st.text_input("Room / Apartment name", value=apt_to_edit[2],
+                                         placeholder="e.g. Zimmer A, Wohnung 2",
+                                         help="The individual room or unit name.",
+                                         key=f"apt_name_{apt_to_edit[0]}")
+        with col2:
+            new_flat = st.text_input("Flat / Wohnung", value=apt_to_edit[3] or "",
+                                     placeholder="e.g. Wohnung 1, EG Links",
+                                     help="Rooms sharing the same flat get the same label here. "
+                                          "Used to auto-count persons for Nebenkostenabrechnung.",
+                                     key=f"apt_flat_{apt_to_edit[0]}")
+        if st.button("Save Apartment"):
+            execute("UPDATE apartments SET name = ?, flat = ? WHERE id = ?",
+                    (new_apt_name, new_flat, apt_to_edit[0]))
+            st.success("Apartment updated.")
             st.rerun()
     else:
         st.info("No apartments found.")
@@ -555,9 +587,33 @@ if menu == "Nebenkostenabrechnung":
     gender = get_tenant_gender(tenant)
     st.info(f"Address: {address}" if address else "No address found for this tenant.")
 
-    st.divider()
+    # Auto-count persons sharing the same flat (scoped to same property)
+    persons_in_flat = fetch("""
+        SELECT COUNT(DISTINCT c.tenant_id)
+        FROM contracts c
+        JOIN apartments a ON c.apartment_id = a.id
+        WHERE (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= date('now'))
+        AND a.flat IS NOT NULL AND a.flat != ''
+        AND a.property_id = (
+            SELECT a2.property_id FROM contracts c2
+            JOIN apartments a2 ON c2.apartment_id = a2.id
+            JOIN tenants t ON c2.tenant_id = t.id
+            WHERE t.name = ? LIMIT 1
+        )
+        AND a.flat = (
+            SELECT a2.flat FROM contracts c2
+            JOIN apartments a2 ON c2.apartment_id = a2.id
+            JOIN tenants t ON c2.tenant_id = t.id
+            WHERE t.name = ? AND (a2.flat IS NOT NULL AND a2.flat != '')
+            LIMIT 1
+        )
+    """, (tenant, tenant))
+    auto_count = persons_in_flat[0][0] if persons_in_flat and persons_in_flat[0][0] else 1
 
-    tenants = st.number_input("Tenants in flat", value=3)
+    st.divider()
+    tenants = st.number_input("Tenants in flat", value=int(auto_count), min_value=1)
+    if auto_count > 1:
+        st.caption(f"ℹ️ Auto-detected {auto_count} active tenants sharing the same flat.")
 
     st.subheader("Strom")
     strom_start = st.date_input("Strom Start")

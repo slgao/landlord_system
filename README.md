@@ -54,6 +54,7 @@ A web-based property management application tailored for landlords in Germany. B
 - Terminate a contract with a move-out date (preserves history)
 - Delete contracts
 - Full move-out / move-in flow: terminate old contract, create new one for incoming tenant
+- **Kaution (deposit) tracking**: record deposit amount, date received, date and amount returned
 
 ### Rent Tracking
 - Record individual rent payments against a contract
@@ -66,7 +67,19 @@ A web-based property management application tailored for landlords in Germany. B
 - View full payment history for any tenant
 - Displays amount and date for each recorded payment
 
-### Nebenkostenabrechnung (Utility Billing)
+### Flat Costs
+- Record recurring and one-time costs per apartment (Hausgeld, Mortgage, Grundsteuer, Strom Vorauszahlung, Internet, etc.)
+- Set frequency: monthly, annual, or one-time
+- Set validity period (valid from / valid to)
+- Edit and delete existing cost entries
+- Costs grouped by property and flat for easy overview
+
+### Balance Sheet
+- Monthly income vs. costs breakdown per property
+- Income: rent payments recorded in the selected year
+- Costs: flat costs prorated per month (annual ÷ 12, one-time in start month)
+- Net per month color-coded (green = profit, red = loss)
+- Annual totals: total income, total costs, annual net
 - Tenant selected from dropdown (auto-fills address from contract)
 - **Auto-detects number of persons** sharing the same flat via the flat grouping (can be overridden manually)
 - Calculate electricity costs (Strom) per tenant based on:
@@ -125,8 +138,9 @@ landlord_system/
 | `properties` | id, name, address                                       |
 | `apartments` | id, property_id, name, flat                             |
 | `tenants`    | id, name, email, gender                                 |
-| `contracts`  | id, tenant_id, apartment_id, rent, start_date, end_date |
+| `contracts`  | id, tenant_id, apartment_id, rent, start_date, end_date, kaution_amount, kaution_paid_date, kaution_returned_date, kaution_returned_amount |
 | `payments`   | id, contract_id, amount, payment_date                   |
+| `flat_costs` | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to |
 
 ---
 

@@ -110,8 +110,36 @@ def init_db():
     )
     """)
 
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS reminders(
+        id INTEGER PRIMARY KEY,
+        contract_id INTEGER,
+        sent_date TEXT,
+        months_due TEXT,
+        amount_due REAL,
+        channel TEXT,
+        note TEXT
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS config(
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+
     conn.commit()
     conn.close()
+
+
+def get_config(key, default=None):
+    rows = fetch("SELECT value FROM config WHERE key=?", (key,))
+    return rows[0][0] if rows else default
+
+
+def set_config(key, value):
+    execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value))
 
 
 def insert(table, values):

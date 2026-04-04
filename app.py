@@ -30,6 +30,7 @@ from pages import (
     balance_sheet,
     nebenkostenabrechnung,
     mahnung,
+    payment_reminders,
 )
 
 PAGES = {
@@ -42,6 +43,7 @@ PAGES = {
     "Rent Tracking":         rent_tracking.show,
     "Flat Costs":            flat_costs.show,
     "Balance Sheet":         balance_sheet.show,
+    "Payment Reminders":     payment_reminders.show,
     "Nebenkostenabrechnung": nebenkostenabrechnung.show,
     "Mahnung Generator":     mahnung.show,
 }

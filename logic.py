@@ -10,6 +10,8 @@
 #   Description :
 #
 # ================================================================
+import calendar as _calendar
+from datetime import date as _date
 from db import fetch
 
 
@@ -86,6 +88,79 @@ def dashboard_stats():
         "contracts": contracts,
         "rent": rent,
     }
+
+
+def detect_overdue(months_back=3):
+    """
+    For every active (non-terminated) contract, compare expected monthly rent
+    against recorded payments for the last `months_back` months.
+    Returns a list of dicts for contracts with at least one underpaid month.
+    """
+    today = _date.today()
+
+    # Build the list of month start dates to examine (oldest first)
+    months_to_check = []
+    for i in range(months_back, 0, -1):
+        m = today.month - i
+        y = today.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        months_to_check.append(_date(y, m, 1))
+
+    active_contracts = fetch("""
+        SELECT c.id, t.name, t.email, a.name, c.rent, c.start_date, c.end_date
+        FROM contracts c
+        JOIN tenants t ON c.tenant_id = t.id
+        JOIN apartments a ON c.apartment_id = a.id
+        WHERE COALESCE(c.terminated, 0) = 0
+    """)
+
+    results = []
+    for cid, t_name, t_email, apt_name, rent, start_str, end_str in active_contracts:
+        contract_start = _date.fromisoformat(start_str)
+        contract_end   = (_date.fromisoformat(end_str)
+                          if end_str and end_str != "None" else None)
+
+        overdue_months = []
+        total_due      = 0.0
+
+        for m_start in months_to_check:
+            m_end = m_start.replace(
+                day=_calendar.monthrange(m_start.year, m_start.month)[1]
+            )
+            # Skip months before contract started or after it ended
+            if contract_start > m_end:
+                continue
+            if contract_end and contract_end < m_start:
+                continue
+
+            paid = fetch("""
+                SELECT COALESCE(SUM(amount), 0) FROM payments
+                WHERE contract_id=? AND payment_date >= ? AND payment_date <= ?
+            """, (cid, str(m_start), str(m_end)))[0][0]
+
+            gap = round(rent - paid, 2)
+            if gap > 0:
+                overdue_months.append({
+                    "month":    m_start.strftime("%B %Y"),
+                    "expected": rent,
+                    "paid":     paid,
+                    "gap":      gap,
+                })
+                total_due += gap
+
+        if overdue_months:
+            results.append({
+                "contract_id":    cid,
+                "tenant":         t_name,
+                "email":          t_email or "",
+                "apartment":      apt_name,
+                "overdue_months": overdue_months,
+                "total_due":      round(total_due, 2),
+            })
+
+    return results
 
 
 def tenant_ledger(tenant_id):

@@ -21,20 +21,40 @@ from datetime import date, timedelta
 from pathlib import Path
 
 PDF_DIR = Path("pdf")
-PAGE_W = A4[0]
 
-# ── Shared styles ──────────────────────────────────────────────────────────────
+# ── Palette ────────────────────────────────────────────────────────────────────
+C_NAVY    = colors.HexColor("#1e2d3d")   # main dark
+C_BLUE    = colors.HexColor("#3a7fc1")   # accent blue
+C_LBLUE   = colors.HexColor("#deedf8")   # light-blue row highlight
+C_SECBG   = colors.HexColor("#f3f8fd")   # section background
+C_LGRAY   = colors.HexColor("#f8f9fa")   # alternating row / box bg
+C_MGRAY   = colors.HexColor("#dde3ea")   # subtle separator
+C_TEXT    = colors.HexColor("#2d3436")   # body text
+C_MUTED   = colors.HexColor("#8395a7")   # muted / caption text
+C_HDRFG   = colors.HexColor("#9ec5e8")   # header subtitle / date
+C_RED     = colors.HexColor("#e74c3c")   # Nachzahlung / overdue
+C_DARKRED = colors.HexColor("#7b241c")   # Mahnung banner
+C_REDBG   = colors.HexColor("#fdf2f1")   # light red box background
+C_GREEN   = colors.HexColor("#27ae60")   # Guthaben
+C_WHITE   = colors.white
+
+# Usable content width: A4(595.27pt) − leftMargin(25mm=70.87pt) − rightMargin(20mm=56.69pt)
+W = 468
+
+
+# ── Styles ─────────────────────────────────────────────────────────────────────
 
 def _styles():
-    base = getSampleStyleSheet()
     s = {}
-    s["normal"] = ParagraphStyle("normal", fontName="Helvetica", fontSize=10, leading=15)
-    s["small"]  = ParagraphStyle("small",  fontName="Helvetica", fontSize=8,  leading=12, textColor=colors.grey)
-    s["bold"]   = ParagraphStyle("bold",   fontName="Helvetica-Bold", fontSize=10, leading=15)
-    s["title"]  = ParagraphStyle("title",  fontName="Helvetica-Bold", fontSize=16, leading=20, spaceAfter=4)
-    s["right"]  = ParagraphStyle("right",  fontName="Helvetica", fontSize=10, leading=15, alignment=TA_RIGHT)
-    s["section"]= ParagraphStyle("section",fontName="Helvetica-Bold", fontSize=11, leading=16,
-                                  textColor=colors.HexColor("#1a3a5c"), spaceBefore=10, spaceAfter=4)
+    s["body"]       = ParagraphStyle("body",       fontName="Helvetica",       fontSize=10, leading=15, textColor=C_TEXT)
+    s["small"]      = ParagraphStyle("small",      fontName="Helvetica",       fontSize=8,  leading=12, textColor=C_MUTED)
+    s["hdr_title"]  = ParagraphStyle("hdr_title",  fontName="Helvetica-Bold",  fontSize=18, leading=22, textColor=C_WHITE)
+    s["hdr_sub"]    = ParagraphStyle("hdr_sub",    fontName="Helvetica",       fontSize=8,  leading=13, textColor=C_HDRFG)
+    s["hdr_right"]  = ParagraphStyle("hdr_right",  fontName="Helvetica-Bold",  fontSize=10, leading=14, alignment=TA_RIGHT, textColor=C_WHITE)
+    s["hdr_date"]   = ParagraphStyle("hdr_date",   fontName="Helvetica",       fontSize=8,  leading=13, alignment=TA_RIGHT, textColor=C_HDRFG)
+    s["date_right"] = ParagraphStyle("date_right", fontName="Helvetica",       fontSize=10, leading=15, alignment=TA_RIGHT, textColor=C_MUTED)
+    s["section"]    = ParagraphStyle("section",    fontName="Helvetica-Bold",  fontSize=11, leading=15, textColor=C_NAVY)
+    s["caption"]    = ParagraphStyle("caption",    fontName="Helvetica",       fontSize=9,  leading=13, textColor=C_MUTED)
     return s
 
 
@@ -47,45 +67,178 @@ def _salutation(gender, name):
         return f"Sehr geehrte/r {name},"
 
 
-def _calc_table(data, col_widths):
+# ── Shared building blocks ──────────────────────────────────────────────────────
+
+def _header_banner(title, subtitle, sender, today_str, accent=None):
+    """Full-width dark banner: title + subtitle left, sender + date right."""
+    if accent is None:
+        accent = C_NAVY
+    s = _styles()
+    left_cells = [Paragraph(title, s["hdr_title"])]
+    if subtitle:
+        left_cells.append(Spacer(1, 3))
+        left_cells.append(Paragraph(subtitle, s["hdr_sub"]))
+    right_cells = [
+        Paragraph(sender, s["hdr_right"]),
+        Spacer(1, 3),
+        Paragraph(today_str, s["hdr_date"]),
+    ]
+    t = Table([[left_cells, right_cells]], colWidths=[320, 148])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), accent),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 18),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
+        ("LEFTPADDING",   (0, 0), (0, -1),  18),
+        ("LEFTPADDING",   (1, 0), (1, -1),  4),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 18),
+    ]))
+    return t
+
+
+def _accent_line(color=None, thickness=3):
+    if color is None:
+        color = C_BLUE
+    return HRFlowable(width="100%", thickness=thickness, color=color, spaceAfter=0, spaceBefore=0)
+
+
+def _address_block(name, address_lines, today_str, s):
+    """Recipient address left, date right."""
+    left = [Paragraph(f"<b>{name}</b>", s["body"])]
+    for ln in address_lines:
+        left.append(Paragraph(ln, s["body"]))
+    right = [Spacer(1, 2), Paragraph(today_str, s["date_right"])]
+    t = Table([[left, right]], colWidths=[310, 158])
+    t.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ("TOPPADDING",    (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return t
+
+
+def _section_header(num, title, s):
+    """Numbered section title with a left accent strip and tinted background."""
+    t = Table([["", Paragraph(f"{num}.  {title}", s["section"])]], colWidths=[5, W - 5])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (0, -1), C_BLUE),
+        ("BACKGROUND",    (1, 0), (1, -1), C_SECBG),
+        ("TOPPADDING",    (0, 0), (-1, -1), 9),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+        ("LEFTPADDING",   (0, 0), (0, -1),  0),
+        ("LEFTPADDING",   (1, 0), (1, -1),  12),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    return t
+
+
+def _info_box(text, s):
+    """Subtle caption row below a section header."""
+    t = Table([[Paragraph(text, s["caption"])]], colWidths=[W])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), C_SECBG),
+        ("LINEBELOW",     (0, 0), (-1, -1), 0.5, C_MGRAY),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 17),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 14),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    return t
+
+
+def _calc_table(data, col_widths=None):
+    """
+    Clean calculation table: navy header, alternating rows,
+    highlighted last row, no vertical grid lines.
+    Default col_widths sums to W=468.
+    """
+    if col_widths is None:
+        col_widths = [190, 200, 78]
     t = Table(data, colWidths=col_widths)
     t.setStyle(TableStyle([
-        ("BACKGROUND",  (0, 0), (-1, 0),  colors.HexColor("#1a3a5c")),
-        ("TEXTCOLOR",   (0, 0), (-1, 0),  colors.white),
-        ("FONTNAME",    (0, 0), (-1, 0),  "Helvetica-Bold"),
-        ("FONTSIZE",    (0, 0), (-1, -1), 9),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f0f4f8")]),
-        ("GRID",        (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
-        ("ALIGN",       (2, 0), (2, -1),  "RIGHT"),
-        ("ALIGN",       (1, 0), (1, -1),  "LEFT"),
-        ("FONTNAME",    (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("BACKGROUND",  (0, -1), (-1, -1), colors.HexColor("#dce8f5")),
-        ("TOPPADDING",  (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        # Header row
+        ("BACKGROUND",     (0, 0), (-1, 0),  C_NAVY),
+        ("TEXTCOLOR",      (0, 0), (-1, 0),  C_WHITE),
+        ("FONTNAME",       (0, 0), (-1, 0),  "Helvetica-Bold"),
+        # Body rows
+        ("FONTSIZE",       (0, 0), (-1, -1), 9),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
+        ("LINEBELOW",      (0, 0), (-1, -2), 0.4, C_MGRAY),
+        # Highlighted last row (Nachzahlung)
+        ("BACKGROUND",     (0, -1), (-1, -1), C_LBLUE),
+        ("FONTNAME",       (0, -1), (-1, -1), "Helvetica-Bold"),
+        # Alignment
+        ("ALIGN",          (2, 0), (2, -1),  "RIGHT"),
+        ("ALIGN",          (1, 0), (1, -1),  "LEFT"),
+        # Padding
+        ("TOPPADDING",     (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1), 7),
+        ("LEFTPADDING",    (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING",   (0, 0), (-1, -1), 10),
     ]))
     return t
 
 
-def _total_table(strom_nach, bk_nach, total, s):
-    color = colors.HexColor("#c0392b") if total > 0 else colors.HexColor("#27ae60")
-    data = [
-        ["", "Nachzahlung Strom",        f"{strom_nach:.2f} €"],
-        ["", "Nachzahlung Betriebskosten", f"{bk_nach:.2f} €"],
-        ["▶", "Gesamtbetrag nachzuzahlen", f"{total:.2f} €"],
-    ]
-    t = Table(data, colWidths=[14, 380, 90])
+def _total_box(items):
+    """
+    Summary box: item rows on light gray, total row on dark navy
+    with colored amount (red = Nachzahlung, green = Guthaben).
+    """
+    total    = sum(v for _, v in items)
+    is_nach  = total > 0
+    t_color  = C_RED if is_nach else C_GREEN
+    t_label  = "Gesamtbetrag nachzuzahlen" if is_nach else "Guthaben (wird erstattet)"
+
+    body_lbl = ParagraphStyle("_bl", fontName="Helvetica",      fontSize=10, leading=15, textColor=C_TEXT)
+    body_amt = ParagraphStyle("_ba", fontName="Helvetica",      fontSize=10, leading=15, alignment=TA_RIGHT, textColor=C_TEXT)
+    tot_lbl  = ParagraphStyle("_tl", fontName="Helvetica-Bold", fontSize=12, leading=16, textColor=C_WHITE)
+    tot_amt  = ParagraphStyle("_ta", fontName="Helvetica-Bold", fontSize=15, leading=19, alignment=TA_RIGHT, textColor=t_color)
+
+    rows = []
+    for label, val in items:
+        rows.append([Paragraph(label, body_lbl), Paragraph(f"{val:.2f} €", body_amt)])
+    rows.append([Paragraph(t_label, tot_lbl), Paragraph(f"{abs(total):.2f} €", tot_amt)])
+
+    t = Table(rows, colWidths=[390, 78])
     t.setStyle(TableStyle([
-        ("FONTSIZE",    (0, 0), (-1, -1), 10),
-        ("ALIGN",       (2, 0), (2, -1),  "RIGHT"),
-        ("LINEABOVE",   (0, -1), (-1, -1), 1, colors.HexColor("#cccccc")),
-        ("FONTNAME",    (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("TEXTCOLOR",   (0, -1), (-1, -1), color),
-        ("FONTSIZE",    (0, -1), (-1, -1), 11),
-        ("TOPPADDING",  (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 5),
+        # Item rows
+        ("BACKGROUND",    (0, 0), (-1, -2), C_LGRAY),
+        ("LINEBELOW",     (0, 0), (-1, -2), 0.5, C_MGRAY),
+        ("TOPPADDING",    (0, 0), (-1, -2), 9),
+        ("BOTTOMPADDING", (0, 0), (-1, -2), 9),
+        ("LEFTPADDING",   (0, 0), (-1, -2), 14),
+        ("RIGHTPADDING",  (0, 0), (-1, -2), 14),
+        # Total row
+        ("BACKGROUND",    (0, -1), (-1, -1), C_NAVY),
+        ("LINEABOVE",     (0, -1), (-1, -1), 2,   C_BLUE),
+        ("TOPPADDING",    (0, -1), (-1, -1), 13),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 13),
+        ("LEFTPADDING",   (0, -1), (-1, -1), 14),
+        ("RIGHTPADDING",  (0, -1), (-1, -1), 14),
     ]))
     return t
+
+
+def _signature_block(landlord_name, signature_path, s):
+    story = []
+    story.append(Paragraph("Mit freundlichen Grüßen,", s["body"]))
+    story.append(Spacer(1, 24))
+    if signature_path:
+        from reportlab.platypus import Image as RLImage
+        sig = Table([[RLImage(signature_path, width=80, height=33), ""]], colWidths=[80, 388])
+        sig.setStyle(TableStyle([
+            ("LEFTPADDING",   (0, 0), (0, -1), 0),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(sig)
+        story.append(Spacer(1, 4))
+    story.append(Paragraph(f"<b>{landlord_name}</b>", s["body"]))
+    return story
 
 
 # ── Nebenkostenabrechnung ──────────────────────────────────────────────────────
@@ -93,119 +246,144 @@ def _total_table(strom_nach, bk_nach, total, s):
 def invoice_pdf(
     tenant,
     address,
-    strom_period,
-    strom_days,
-    strom_cost,
-    strom_limit,
-    strom_nach,
-    bk_period,
-    bk_months,
-    bk_cost,
-    bk_limit,
-    bk_nach,
     landlord_name="Ihr Vermieter",
-    num_tenants=1,
-    monthly_strom_limit=0,
-    monthly_bk_limit=0,
     gender="diverse",
     signature_path=None,
+    strom=None,
+    gas=None,
+    bk=None,
 ):
+    """
+    strom / gas dict keys: period, days, cost, limit, nach, monthly_limit, num_tenants
+    bk dict keys:          period, months, cost, limit, nach, monthly_limit, num_tenants
+    Pass None to omit a section entirely.
+    """
     s = _styles()
     file = f"pdf/Abrechnung_{tenant}.pdf"
     story = []
     today_str = date.today().strftime("%d.%m.%Y")
-    total = strom_nach + bk_nach
 
-    # ── Header bar (sender right, recipient left) ──────────────────
-    sender_lines = [Paragraph(f"<b>{landlord_name}</b>", s["right"]),
-                    Paragraph(today_str, s["right"])]
+    # Period subtitle for header
+    period_parts = []
+    if strom: period_parts.append(f"Strom: {strom['period']}")
+    if gas:   period_parts.append(f"Gas: {gas['period']}")
+    if bk:    period_parts.append(f"Betriebskosten: {bk['period']}")
+    period_str = "  ·  ".join(period_parts)
 
-    recipient_lines = [Paragraph(f"<b>{tenant}</b>", s["normal"])]
+    # ── Header banner ──────────────────────────────────────────────
+    story.append(_header_banner("NEBENKOSTENABRECHNUNG", period_str, landlord_name, today_str))
+    story.append(_accent_line(C_BLUE))
+    story.append(Spacer(1, 22))
+
+    # ── Address block ──────────────────────────────────────────────
+    addr_lines = []
     if address:
         for line in address.replace(",", "\n").split("\n"):
             l = line.strip()
             if l:
-                recipient_lines.append(Paragraph(l, s["normal"]))
-
-    header_table = Table(
-        [[recipient_lines, sender_lines]],
-        colWidths=[280, 200]
-    )
-    header_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    story.append(header_table)
+                addr_lines.append(l)
+    story.append(_address_block(tenant, addr_lines, today_str, s))
     story.append(Spacer(1, 18))
-    story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#1a3a5c")))
-    story.append(Spacer(1, 10))
-
-    # ── Title + subject ────────────────────────────────────────────
-    story.append(Paragraph("Nebenkostenabrechnung", s["title"]))
-    story.append(Paragraph(f"Abrechnungszeitraum Strom: {strom_period} &nbsp;|&nbsp; Betriebskosten: {bk_period}", s["small"]))
-    story.append(Spacer(1, 18))
+    story.append(_accent_line(C_MGRAY, thickness=0.5))
+    story.append(Spacer(1, 14))
 
     # ── Salutation + intro ─────────────────────────────────────────
-    story.append(Paragraph(_salutation(gender, tenant), s["normal"]))
+    story.append(Paragraph(_salutation(gender, tenant), s["body"]))
     story.append(Spacer(1, 8))
     story.append(Paragraph(
         "anbei erhalten Sie Ihre Nebenkostenabrechnung für den oben genannten Zeitraum. "
         "Die folgende Aufstellung zeigt die angefallenen Kosten, Ihre geleisteten Vorauszahlungen "
         "sowie den sich daraus ergebenden Nachzahlungsbetrag.",
-        s["normal"]
+        s["body"]
     ))
-    story.append(Spacer(1, 20))
+    story.append(Spacer(1, 22))
 
-    # ── 1. Strom ───────────────────────────────────────────────────
-    story.append(Paragraph("1.  Stromkosten", s["section"]))
-    strom_cost_per_tenant = strom_cost / num_tenants if num_tenants else strom_cost
-    daily_limit = (monthly_strom_limit * 12) / 365 / num_tenants if num_tenants else 0
-    story.append(Paragraph(
-        f"Gesamtstromkosten der Wohnung werden zu gleichen Teilen auf {num_tenants} Mieter aufgeteilt. "
-        f"Monatliche Vorauszahlung: <b>{monthly_strom_limit:.2f} €</b>. "
-        f"Abrechnungsdauer: <b>{strom_days} Tage</b>.",
-        s["normal"]
-    ))
-    story.append(Spacer(1, 6))
-    story.append(_calc_table([
-        ["Position", "Berechnung", "Betrag"],
-        ["Gesamtkosten Wohnung (Strom)", "Gesamtkosten", f"{strom_cost:.2f} €"],
-        ["Ihr Anteil", f"÷ {num_tenants} Mieter", f"{strom_cost_per_tenant:.2f} €"],
-        ["Tägliche Vorauszahlung", f"({monthly_strom_limit:.2f} € × 12) ÷ 365 ÷ {num_tenants}", f"{daily_limit:.4f} €"],
-        ["Vorauszahlung Zeitraum", f"{daily_limit:.4f} € × {strom_days} Tage", f"{strom_limit:.2f} €"],
-        ["Nachzahlung Strom", "Ihr Anteil − Vorauszahlung", f"{strom_nach:.2f} €"],
-    ], [195, 225, 80]))
-    story.append(Spacer(1, 18))
+    section_num = 1
+    total_items = []
 
-    # ── 2. Betriebskosten ──────────────────────────────────────────
-    story.append(Paragraph("2.  Betriebskosten", s["section"]))
-    bk_cost_per_tenant = bk_cost / num_tenants if num_tenants else bk_cost
-    bk_limit_month = monthly_bk_limit / num_tenants if num_tenants else 0
-    story.append(Paragraph(
-        f"Die Betriebskosten werden ebenfalls auf {num_tenants} Mieter aufgeteilt. "
-        f"Monatliche Vorauszahlung: <b>{monthly_bk_limit:.2f} €</b>. "
-        f"Abrechnungsdauer: <b>{bk_months} Monate</b>.",
-        s["normal"]
-    ))
-    story.append(Spacer(1, 6))
-    story.append(_calc_table([
-        ["Position", "Berechnung", "Betrag"],
-        ["Gesamte Betriebskosten", "Gesamtkosten", f"{bk_cost:.2f} €"],
-        ["Ihr Anteil (gesamt)", f"÷ {num_tenants} Mieter", f"{bk_cost_per_tenant:.2f} €"],
-        ["Monatliche Vorauszahlung", f"{monthly_bk_limit:.2f} € ÷ {num_tenants}", f"{bk_limit_month:.2f} €"],
-        ["Vorauszahlung Zeitraum", f"{bk_limit_month:.2f} € × {bk_months} Monate", f"{bk_limit:.2f} €"],
-        ["Nachzahlung Betriebskosten", "Ihr Anteil − Vorauszahlung", f"{bk_nach:.2f} €"],
-    ], [195, 225, 80]))
-    story.append(Spacer(1, 20))
+    # ── Strom ──────────────────────────────────────────────────────
+    if strom:
+        d = strom
+        n = d["num_tenants"]
+        cost_per_tenant = d["cost"] / n if n else d["cost"]
+        daily_limit = (d["monthly_limit"] * 12) / 365 / n if n else 0
 
-    # ── 3. Gesamtbetrag ────────────────────────────────────────────
-    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc")))
-    story.append(Spacer(1, 8))
-    story.append(_total_table(strom_nach, bk_nach, total, s))
-    story.append(Spacer(1, 24))
+        story.append(_section_header(section_num, "Stromkosten", s))
+        story.append(_info_box(
+            f"Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+            f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
+        ))
+        story.append(Spacer(1, 8))
+        story.append(_calc_table([
+            ["Position", "Berechnung", "Betrag"],
+            ["Gesamtkosten Wohnung (Strom)", "Gesamtkosten", f"{d['cost']:.2f} €"],
+            ["Ihr Anteil", f"÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
+            ["Tägliche Vorauszahlung", f"({d['monthly_limit']:.2f} € × 12) ÷ 365 ÷ {n}", f"{daily_limit:.4f} €"],
+            ["Vorauszahlung Zeitraum", f"{daily_limit:.4f} € × {d['days']} Tage", f"{d['limit']:.2f} €"],
+            ["Nachzahlung Strom", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
+        ]))
+        story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Strom", d["nach"]))
+        section_num += 1
 
-    # ── Closing ────────────────────────────────────────────────────
+    # ── Gas ────────────────────────────────────────────────────────
+    if gas:
+        d = gas
+        n = d["num_tenants"]
+        cost_per_tenant = d["cost"] / n if n else d["cost"]
+        daily_limit = (d["monthly_limit"] * 12) / 365 / n if n else 0
+
+        story.append(_section_header(section_num, "Gaskosten", s))
+        story.append(_info_box(
+            f"Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+            f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
+        ))
+        story.append(Spacer(1, 8))
+        story.append(_calc_table([
+            ["Position", "Berechnung", "Betrag"],
+            ["Gesamtkosten Wohnung (Gas)", "Gesamtkosten", f"{d['cost']:.2f} €"],
+            ["Ihr Anteil", f"÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
+            ["Tägliche Vorauszahlung", f"({d['monthly_limit']:.2f} € × 12) ÷ 365 ÷ {n}", f"{daily_limit:.4f} €"],
+            ["Vorauszahlung Zeitraum", f"{daily_limit:.4f} € × {d['days']} Tage", f"{d['limit']:.2f} €"],
+            ["Nachzahlung Gas", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
+        ]))
+        story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Gas", d["nach"]))
+        section_num += 1
+
+    # ── Betriebskosten ─────────────────────────────────────────────
+    if bk:
+        d = bk
+        n = d["num_tenants"]
+        bk_cost_per_tenant = d["cost"] / n if n else d["cost"]
+        bk_limit_month = d["monthly_limit"] / n if n else 0
+
+        story.append(_section_header(section_num, "Betriebskosten", s))
+        story.append(_info_box(
+            f"Zeitraum: {d['period']}  ·  {d['months']} Monate  ·  "
+            f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
+        ))
+        story.append(Spacer(1, 8))
+        story.append(_calc_table([
+            ["Position", "Berechnung", "Betrag"],
+            ["Gesamte Betriebskosten", "Gesamtkosten", f"{d['cost']:.2f} €"],
+            ["Ihr Anteil (gesamt)", f"÷ {n} Mieter", f"{bk_cost_per_tenant:.2f} €"],
+            ["Monatliche Vorauszahlung", f"{d['monthly_limit']:.2f} € ÷ {n}", f"{bk_limit_month:.2f} €"],
+            ["Vorauszahlung Zeitraum", f"{bk_limit_month:.2f} € × {d['months']} Monate", f"{d['limit']:.2f} €"],
+            ["Nachzahlung Betriebskosten", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
+        ]))
+        story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Betriebskosten", d["nach"]))
+        section_num += 1
+
+    # ── Summary box ────────────────────────────────────────────────
+    story.append(_accent_line(C_MGRAY, thickness=0.5))
+    story.append(Spacer(1, 10))
+    story.append(_total_box(total_items))
+    story.append(Spacer(1, 26))
+
+    # ── Closing paragraph ──────────────────────────────────────────
+    total = sum(v for _, v in total_items)
     if total > 0:
         closing = (
             f"Wir bitten Sie, den Nachzahlungsbetrag von <b>{total:.2f} €</b> innerhalb von <b>7 Tagen</b> "
@@ -214,21 +392,13 @@ def invoice_pdf(
         )
     else:
         closing = (
-            f"Ihre Vorauszahlungen haben die tatsächlichen Kosten vollständig gedeckt. "
+            "Ihre Vorauszahlungen haben die tatsächlichen Kosten vollständig gedeckt. "
             f"Es ergibt sich ein Guthaben von <b>{abs(total):.2f} €</b>, "
             "das wir Ihnen in Kürze erstatten werden."
         )
-    story.append(Paragraph(closing, s["normal"]))
+    story.append(Paragraph(closing, s["body"]))
     story.append(Spacer(1, 30))
-    story.append(Paragraph("Mit freundlichen Grüßen,", s["normal"]))
-    story.append(Spacer(1, 24))
-    story.append(Paragraph(f"<b>{landlord_name}</b>", s["normal"]))
-    if signature_path:
-        from reportlab.platypus import Image as RLImage
-        sig = Table([[RLImage(signature_path, width=80, height=33), ""]], colWidths=[80, 387])
-        sig.setStyle(TableStyle([("LEFTPADDING", (0,0), (0,-1), 0), ("RIGHTPADDING", (0,0), (-1,-1), 0), ("TOPPADDING", (0,0), (-1,-1), 0), ("BOTTOMPADDING", (0,0), (-1,-1), 0)]))
-        story.append(Spacer(1, 6))
-        story.append(sig)
+    story.extend(_signature_block(landlord_name, signature_path, s))
 
     doc = SimpleDocTemplate(
         file, pagesize=A4, title=f"Abrechnung_{tenant}",
@@ -244,84 +414,85 @@ def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signat
     file = f"pdf/Mahnung_{tenant_name}.pdf"
     s = _styles()
     today_str = date.today().strftime("%d.%m.%Y")
-    due_str = (date.today() + timedelta(days=7)).strftime("%d.%m.%Y")
+    due_str   = (date.today() + timedelta(days=7)).strftime("%d.%m.%Y")
     story = []
 
-    # ── Header ─────────────────────────────────────────────────────
-    recipient_lines = [Paragraph(f"<b>{tenant_name}</b>", s["normal"])]
+    # ── Header banner (red theme) ──────────────────────────────────
+    story.append(_header_banner(
+        "ZAHLUNGSERINNERUNG", "Ausstehende Mietzahlung",
+        "Ihre Vermieter", today_str, accent=C_DARKRED
+    ))
+    story.append(_accent_line(C_RED))
+    story.append(Spacer(1, 22))
+
+    # ── Address block ──────────────────────────────────────────────
+    addr_lines = []
     if address:
         for line in address.replace(",", "\n").split("\n"):
             l = line.strip()
             if l:
-                recipient_lines.append(Paragraph(l, s["normal"]))
-
-    header_table = Table(
-        [[recipient_lines, [Paragraph(today_str, s["right"])]]],
-        colWidths=[280, 200]
-    )
-    header_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    story.append(header_table)
+                addr_lines.append(l)
+    story.append(_address_block(tenant_name, addr_lines, today_str, s))
     story.append(Spacer(1, 18))
-    story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#c0392b")))
-    story.append(Spacer(1, 10))
+    story.append(_accent_line(C_MGRAY, thickness=0.5))
+    story.append(Spacer(1, 14))
 
-    story.append(Paragraph("Zahlungserinnerung", s["title"]))
-    story.append(Paragraph("Ausstehende Mietzahlung", s["small"]))
-    story.append(Spacer(1, 18))
-
-    story.append(Paragraph(_salutation(gender, tenant_name), s["normal"]))
+    # ── Salutation ─────────────────────────────────────────────────
+    story.append(Paragraph(_salutation(gender, tenant_name), s["body"]))
     story.append(Spacer(1, 10))
     story.append(Paragraph(
         "für den oben genannten Abrechnungszeitraum ergibt sich folgender ausstehender Betrag:",
-        s["normal"]
+        s["body"]
     ))
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 16))
 
-    amt_table = Table([[f"Offener Betrag:  {amount:.2f} €"]], colWidths=[484])
-    amt_table.setStyle(TableStyle([
-        ("FONTNAME",    (0, 0), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE",    (0, 0), (-1, -1), 13),
-        ("TEXTCOLOR",   (0, 0), (-1, -1), colors.HexColor("#c0392b")),
-        ("ALIGN",       (0, 0), (-1, -1), "CENTER"),
-        ("BACKGROUND",  (0, 0), (-1, -1), colors.HexColor("#fdf2f2")),
-        ("BOX",         (0, 0), (-1, -1), 1, colors.HexColor("#c0392b")),
-        ("TOPPADDING",  (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 10),
+    # ── Outstanding amount box ─────────────────────────────────────
+    lbl_style  = ParagraphStyle("_ml", fontName="Helvetica",      fontSize=9,  leading=13, alignment=TA_CENTER, textColor=C_MUTED)
+    amt_style  = ParagraphStyle("_ma", fontName="Helvetica-Bold", fontSize=26, leading=30, alignment=TA_CENTER, textColor=C_RED)
+    due_style  = ParagraphStyle("_md", fontName="Helvetica",      fontSize=9,  leading=13, alignment=TA_CENTER, textColor=C_MUTED)
+
+    amt_cell = [
+        Paragraph("Offener Betrag", lbl_style),
+        Spacer(1, 4),
+        Paragraph(f"{amount:.2f} €", amt_style),
+        Spacer(1, 4),
+        Paragraph(f"Fällig bis: {due_str}", due_style),
+    ]
+    amt_t = Table([[amt_cell]], colWidths=[W])
+    amt_t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), C_REDBG),
+        ("BOX",           (0, 0), (-1, -1), 1.5, C_RED),
+        ("TOPPADDING",    (0, 0), (-1, -1), 18),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 20),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 20),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
     ]))
-    story.append(amt_table)
-    story.append(Spacer(1, 14))
+    story.append(amt_t)
+    story.append(Spacer(1, 18))
 
+    # ── Body paragraphs ────────────────────────────────────────────
     story.append(Paragraph(
         f"Wir bitten Sie, den ausstehenden Betrag bis spätestens <b>{due_str}</b> "
         "auf das Ihnen bekannte Konto zu überweisen.",
-        s["normal"]
+        s["body"]
     ))
     story.append(Spacer(1, 10))
     story.append(Paragraph(
         "Sollte die Zahlung bis zu diesem Datum nicht bei uns eingehen, sehen wir uns leider gezwungen, "
-        "weitere rechtliche Schritte einzuleiten. Dies kann zusätzliche Kosten verursachen, die wir gerne vermeiden möchten.",
-        s["normal"]
+        "weitere rechtliche Schritte einzuleiten. Dies kann zusätzliche Kosten verursachen, "
+        "die wir gerne vermeiden möchten.",
+        s["body"]
     ))
     story.append(Spacer(1, 10))
     story.append(Paragraph(
         "Falls Sie der Meinung sind, dass diese Erinnerung irrtümlich erfolgt ist, oder falls Sie Fragen "
         "zu Ihrem Zahlungsstand haben, stehen wir Ihnen gerne zur Verfügung.",
-        s["normal"]
+        s["body"]
     ))
     story.append(Spacer(1, 30))
-    story.append(Paragraph("Mit freundlichen Grüßen,", s["normal"]))
-    story.append(Spacer(1, 24))
-    story.append(Paragraph("<b>Ihre Vermieter</b>", s["normal"]))
-    if signature_path:
-        from reportlab.platypus import Image as RLImage
-        sig = Table([[RLImage(signature_path, width=80, height=33), ""]], colWidths=[80, 387])
-        sig.setStyle(TableStyle([("LEFTPADDING", (0,0), (0,-1), 0), ("RIGHTPADDING", (0,0), (-1,-1), 0), ("TOPPADDING", (0,0), (-1,-1), 0), ("BOTTOMPADDING", (0,0), (-1,-1), 0)]))
-        story.append(Spacer(1, 6))
-        story.append(sig)
+    story.extend(_signature_block("Ihre Vermieter", signature_path, s))
 
     doc = SimpleDocTemplate(
         file, pagesize=A4, title=f"Mahnung_{tenant_name}",

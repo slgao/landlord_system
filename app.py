@@ -363,7 +363,11 @@ elif menu == "Contracts":
                         apartment_choice[0],
                         rent,
                         str(move_in),
-                        str(move_out) if move_out else None
+                        str(move_out) if move_out else None,
+                        None,
+                        None,
+                        None,
+                        None
                     )
                 )
                 st.success("Contract created")
@@ -878,38 +882,265 @@ elif menu == "Nebenkostenabrechnung":
     if auto_count > 1:
         st.caption(f"ℹ️ Auto-detected {auto_count} active tenants sharing the same flat.")
 
-    st.subheader("Strom")
-    strom_start = st.date_input("Strom Start")
-    strom_end = st.date_input("Strom End")
-    strom_limit_per_month = st.number_input("Electricity prepayment per month (€)")
-    strom_cost = st.number_input("Total electricity cost flat (€)")
-    days = (strom_end - strom_start).days
+    # ── Tenant contract reference ──────────────────────────────────
+    # Fetched once; each utility section intersects its own billing
+    # period with these dates independently.
+    st.divider()
+    contract_row = fetch("""
+        SELECT c.start_date, c.end_date
+        FROM contracts c
+        WHERE c.tenant_id = ?
+        ORDER BY c.start_date DESC
+        LIMIT 1
+    """, (tenant_choice[0],))
 
-    strom_cost_tenant, strom_limit, strom_nach = strom_calc(strom_cost, tenants, days, limit_per_month=strom_limit_per_month)
+    if not contract_row:
+        st.warning("No contract found for this tenant.")
+        st.stop()
 
-    st.subheader("Betriebskosten")
-    bk_start = st.date_input("BK Start")
-    bk_end = st.date_input("BK End")
-    bk_limit_per_month = st.number_input("Betriebskosten prepayment per month (€)")
-    months = st.number_input("Months", value=3)
-    bk_cost = st.number_input("Total Betriebskosten (€)")
+    c_start_str, c_end_str = contract_row[0]
+    contract_start = date.fromisoformat(c_start_str)
+    contract_end   = (date.fromisoformat(c_end_str)
+                      if c_end_str and c_end_str != 'None'
+                      else None)
+    contract_end_display = (
+        contract_end.strftime("%d.%m.%Y") if contract_end else "unbefristet"
+    )
+    st.info(
+        f"**Tenant contract:**  "
+        f"{contract_start.strftime('%d.%m.%Y')} — {contract_end_display}  \n"
+        "Each utility's billing period will be intersected with these dates "
+        "to determine the tenant's effective share."
+    )
 
-    bk_tenant, bk_period, bk_limit, bk_nach = betriebskosten_calc(bk_cost, tenants, months, bk_start, bk_end, limit_per_month=bk_limit_per_month)
+    # ── Cost type selection ────────────────────────────────────────
+    st.divider()
+    st.subheader("Select Cost Types to Include")
+    include_strom = st.checkbox("Strom (Electricity)")
+    include_gas   = st.checkbox("Gas")
+    include_bk    = st.checkbox("Betriebskosten (Operating costs)")
+
+    strom_data = gas_data = bk_data = None
+
+    # ── Helper: intersect a utility billing period with the contract ──
+    def _effective(bill_start, bill_end):
+        """
+        Returns (eff_start, eff_end) clamped to the tenant's contract,
+        or None if there is no overlap.
+        """
+        c_end = contract_end if contract_end else bill_end
+        eff_s = max(bill_start, contract_start)
+        eff_e = min(bill_end, c_end)
+        return (eff_s, eff_e) if eff_s <= eff_e else None
+
+    # ── Strom ──────────────────────────────────────────────────────
+    if include_strom:
+        st.subheader("Strom")
+        col1, col2 = st.columns(2)
+        with col1:
+            strom_bill_start = st.date_input(
+                "Strom billing period start",
+                value=date.today().replace(month=1, day=1),
+                min_value=date.today() - timedelta(days=365 * 20),
+                key="strom_start"
+            )
+        with col2:
+            strom_bill_end = st.date_input(
+                "Strom billing period end",
+                value=date.today().replace(month=12, day=31),
+                key="strom_end"
+            )
+        strom_eff = _effective(strom_bill_start, strom_bill_end)
+        if strom_eff is None:
+            st.warning("Tenant's contract does not overlap with the Strom billing period.")
+        else:
+            s_eff_start_auto, s_eff_end_auto = strom_eff
+            st.caption("Tenant's effective period (auto-detected, editable):")
+            col1, col2 = st.columns(2)
+            with col1:
+                s_eff_start = st.date_input("Effective start", value=s_eff_start_auto,
+                                            min_value=date.today() - timedelta(days=365*20),
+                                            key="strom_eff_start")
+            with col2:
+                s_eff_end = st.date_input("Effective end", value=s_eff_end_auto,
+                                          key="strom_eff_end")
+            s_eff_days = (s_eff_end - s_eff_start).days
+            st.caption(f"{s_eff_days} days")
+            strom_limit_per_month = st.number_input(
+                "Electricity prepayment per month (€)", min_value=0.0, key="strom_limit"
+            )
+            strom_cost = st.number_input(
+                "Total electricity cost flat for billing period (€)", min_value=0.0, key="strom_cost"
+            )
+            _, strom_limit, strom_nach = strom_calc(
+                strom_cost, tenants, s_eff_days, limit_per_month=strom_limit_per_month
+            )
+            strom_data = {
+                "period": (f"{s_eff_start.strftime('%d.%m.%Y')} – "
+                           f"{s_eff_end.strftime('%d.%m.%Y')}"),
+                "days": s_eff_days,
+                "cost": strom_cost,
+                "limit": strom_limit,
+                "nach": strom_nach,
+                "monthly_limit": strom_limit_per_month,
+                "num_tenants": int(tenants),
+            }
+
+    # ── Gas ────────────────────────────────────────────────────────
+    if include_gas:
+        st.subheader("Gas")
+        col1, col2 = st.columns(2)
+        with col1:
+            gas_bill_start = st.date_input(
+                "Gas billing period start",
+                value=date.today().replace(month=1, day=1),
+                min_value=date.today() - timedelta(days=365 * 20),
+                key="gas_start"
+            )
+        with col2:
+            gas_bill_end = st.date_input(
+                "Gas billing period end",
+                value=date.today().replace(month=12, day=31),
+                key="gas_end"
+            )
+        gas_eff = _effective(gas_bill_start, gas_bill_end)
+        if gas_eff is None:
+            st.warning("Tenant's contract does not overlap with the Gas billing period.")
+        else:
+            g_eff_start_auto, g_eff_end_auto = gas_eff
+            st.caption("Tenant's effective period (auto-detected, editable):")
+            col1, col2 = st.columns(2)
+            with col1:
+                g_eff_start = st.date_input("Effective start", value=g_eff_start_auto,
+                                            min_value=date.today() - timedelta(days=365*20),
+                                            key="gas_eff_start")
+            with col2:
+                g_eff_end = st.date_input("Effective end", value=g_eff_end_auto,
+                                          key="gas_eff_end")
+            g_eff_days = (g_eff_end - g_eff_start).days
+            st.caption(f"{g_eff_days} days")
+            gas_limit_per_month = st.number_input(
+                "Gas prepayment per month (€)", min_value=0.0, key="gas_limit"
+            )
+            gas_cost = st.number_input(
+                "Total gas cost flat for billing period (€)", min_value=0.0, key="gas_cost"
+            )
+            _, gas_limit, gas_nach = gas_calc(
+                gas_cost, tenants, g_eff_days, limit_per_month=gas_limit_per_month
+            )
+            gas_data = {
+                "period": (f"{g_eff_start.strftime('%d.%m.%Y')} – "
+                           f"{g_eff_end.strftime('%d.%m.%Y')}"),
+                "days": g_eff_days,
+                "cost": gas_cost,
+                "limit": gas_limit,
+                "nach": gas_nach,
+                "monthly_limit": gas_limit_per_month,
+                "num_tenants": int(tenants),
+            }
+
+    # ── Betriebskosten ─────────────────────────────────────────────
+    if include_bk:
+        st.subheader("Betriebskosten")
+
+        _month_labels = {i: date(2000, i, 1).strftime("%B") for i in range(1, 13)}
+        _year_opts    = list(range(date.today().year + 1, date.today().year - 20, -1))
+        _prev_yr_idx  = next((i for i, y in enumerate(_year_opts)
+                               if y == date.today().year - 1), 0)
+
+        # Billing period — whole months
+        st.caption("Billing period (month / year):")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            bk_s_month = st.selectbox("Start month", list(_month_labels.keys()),
+                                       format_func=lambda m: _month_labels[m],
+                                       index=0, key="bk_s_month")
+        with col2:
+            bk_s_year  = st.selectbox("Start year", _year_opts,
+                                       index=_prev_yr_idx, key="bk_s_year")
+        with col3:
+            bk_e_month = st.selectbox("End month", list(_month_labels.keys()),
+                                       format_func=lambda m: _month_labels[m],
+                                       index=11, key="bk_e_month")
+        with col4:
+            bk_e_year  = st.selectbox("End year", _year_opts,
+                                       index=_prev_yr_idx, key="bk_e_year")
+
+        bk_bill_start = date(bk_s_year, bk_s_month, 1)
+        bk_bill_end   = date(bk_e_year, bk_e_month,
+                             calendar.monthrange(bk_e_year, bk_e_month)[1])
+
+        bk_eff = _effective(bk_bill_start, bk_bill_end)
+        if bk_eff is None:
+            st.warning("Tenant's contract does not overlap with the BK billing period.")
+        else:
+            b_auto_start, b_auto_end = bk_eff
+
+            # Effective period — auto-detected, editable as month/year
+            st.caption("Tenant's effective period (auto-detected, editable):")
+            col1, col2, col3, col4 = st.columns(4)
+            _s_idx = next((i for i, y in enumerate(_year_opts) if y == b_auto_start.year), 0)
+            _e_idx = next((i for i, y in enumerate(_year_opts) if y == b_auto_end.year),   0)
+            with col1:
+                be_s_month = st.selectbox("Eff. start month", list(_month_labels.keys()),
+                                           format_func=lambda m: _month_labels[m],
+                                           index=b_auto_start.month - 1,
+                                           key="bk_eff_s_month")
+            with col2:
+                be_s_year  = st.selectbox("Eff. start year", _year_opts,
+                                           index=_s_idx, key="bk_eff_s_year")
+            with col3:
+                be_e_month = st.selectbox("Eff. end month", list(_month_labels.keys()),
+                                           format_func=lambda m: _month_labels[m],
+                                           index=b_auto_end.month - 1,
+                                           key="bk_eff_e_month")
+            with col4:
+                be_e_year  = st.selectbox("Eff. end year", _year_opts,
+                                           index=_e_idx, key="bk_eff_e_year")
+
+            b_eff_months = max(1, (be_e_year - be_s_year) * 12
+                                  + (be_e_month - be_s_month) + 1)
+            st.caption(f"{b_eff_months} month{'s' if b_eff_months != 1 else ''}")
+
+            bk_limit_per_month = st.number_input(
+                "Betriebskosten prepayment per month (€)", min_value=0.0, key="bk_limit"
+            )
+            bk_cost = st.number_input(
+                "Total Betriebskosten for billing period (€)", min_value=0.0, key="bk_cost"
+            )
+            _, bk_period_cost, bk_limit, bk_nach = betriebskosten_calc(
+                bk_cost, tenants, b_eff_months, bk_bill_start, bk_bill_end,
+                limit_per_month=bk_limit_per_month
+            )
+            b_eff_start_date = date(be_s_year, be_s_month, 1)
+            b_eff_end_date   = date(be_e_year, be_e_month,
+                                    calendar.monthrange(be_e_year, be_e_month)[1])
+            bk_data = {
+                "period": (f"{b_eff_start_date.strftime('%d.%m.%Y')} – "
+                           f"{b_eff_end_date.strftime('%d.%m.%Y')}"),
+                "months": int(b_eff_months),
+                "cost": bk_period_cost,
+                "limit": bk_limit,
+                "nach": bk_nach,
+                "monthly_limit": bk_limit_per_month,
+                "num_tenants": int(tenants),
+            }
 
     if st.button("Generate PDF"):
-        file = invoice_pdf(
-            tenant, address,
-            f"{strom_start} - {strom_end}", days, strom_cost, strom_limit, strom_nach,
-            f"{bk_start} - {bk_end}", months, bk_period, bk_limit, bk_nach,
-            landlord_name=landlord_name,
-            num_tenants=int(tenants),
-            monthly_strom_limit=strom_limit_per_month,
-            monthly_bk_limit=bk_limit_per_month,
-            gender=gender,
-            signature_path=sig_path if Path(sig_path).exists() else None,
-        )
-        with open(file, "rb") as f:
-            st.download_button("Download", f, file_name=file)
+        if not any([strom_data, gas_data, bk_data]):
+            st.warning("Please select at least one cost type.")
+        else:
+            file = invoice_pdf(
+                tenant, address,
+                landlord_name=landlord_name,
+                gender=gender,
+                signature_path=sig_path if Path(sig_path).exists() else None,
+                strom=strom_data,
+                gas=gas_data,
+                bk=bk_data,
+            )
+            with open(file, "rb") as f:
+                st.download_button("Download", f, file_name=file)
 
 
 elif menu == "Mahnung Generator":

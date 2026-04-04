@@ -3,7 +3,7 @@ import calendar
 from datetime import date, timedelta
 from pathlib import Path
 from db import fetch, get_tenant_address, get_tenant_gender
-from logic import strom_calc, gas_calc, betriebskosten_calc
+from logic import strom_calc, gas_calc, water_calc, betriebskosten_calc
 from pdfgen import invoice_pdf
 
 
@@ -97,9 +97,10 @@ def show():
     st.subheader("Select Cost Types to Include")
     include_strom = st.checkbox("Strom (Electricity)")
     include_gas   = st.checkbox("Gas")
+    include_water = st.checkbox("Kaltwasser (Cold Water)")
     include_bk    = st.checkbox("Betriebskosten (Operating costs)")
 
-    strom_data = gas_data = bk_data = None
+    strom_data = gas_data = water_data = bk_data = None
 
     # ── Strom ──────────────────────────────────────────────────────
     if include_strom:
@@ -205,6 +206,58 @@ def show():
                 "num_tenants": int(num_tenants),
             }
 
+    # ── Kaltwasser ─────────────────────────────────────────────────
+    if include_water:
+        st.subheader("Kaltwasser (Cold Water)")
+        col1, col2 = st.columns(2)
+        with col1:
+            water_bill_start = st.date_input("Billing period start",
+                                             value=date.today().replace(month=1, day=1),
+                                             min_value=date.today() - timedelta(days=365 * 20),
+                                             key="water_start")
+        with col2:
+            water_bill_end = st.date_input("Billing period end",
+                                           value=date.today().replace(month=12, day=31),
+                                           key="water_end")
+
+        water_eff = _effective(water_bill_start, water_bill_end)
+        if water_eff is None:
+            st.warning("Tenant's contract does not overlap with the water billing period.")
+        else:
+            w_auto_s, w_auto_e = water_eff
+            _wk = (water_bill_start, water_bill_end)
+            if st.session_state.get("_water_bill_key") != _wk:
+                st.session_state["water_eff_start"] = w_auto_s
+                st.session_state["water_eff_end"]   = w_auto_e
+                st.session_state["_water_bill_key"] = _wk
+            st.caption("Tenant's effective period (auto-detected, editable):")
+            col1, col2 = st.columns(2)
+            with col1:
+                w_eff_start = st.date_input("Effective start",
+                                            min_value=date.today() - timedelta(days=365 * 20),
+                                            key="water_eff_start")
+            with col2:
+                w_eff_end = st.date_input("Effective end", key="water_eff_end")
+            w_eff_days = (w_eff_end - w_eff_start).days
+            st.caption(f"{w_eff_days} days")
+
+            water_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0, key="water_limit")
+            water_cost     = st.number_input("Total cold water cost for flat (€)", min_value=0.0, key="water_cost")
+            water_bill_days = max(1, (water_bill_end - water_bill_start).days)
+            _, w_limit, w_nach = water_calc(water_cost, num_tenants, water_bill_days,
+                                            w_eff_days, limit_per_month=water_limit_pm)
+            water_data = {
+                "bill_period": f"{water_bill_start.strftime('%d.%m.%Y')} – {water_bill_end.strftime('%d.%m.%Y')}",
+                "bill_days":   water_bill_days,
+                "period":      f"{w_eff_start.strftime('%d.%m.%Y')} – {w_eff_end.strftime('%d.%m.%Y')}",
+                "days":        w_eff_days,
+                "cost":        water_cost,
+                "limit":       w_limit,
+                "nach":        w_nach,
+                "monthly_limit": water_limit_pm,
+                "num_tenants": int(num_tenants),
+            }
+
     # ── Betriebskosten ─────────────────────────────────────────────
     if include_bk:
         st.subheader("Betriebskosten")
@@ -283,7 +336,7 @@ def show():
 
     # ── Generate PDF ───────────────────────────────────────────────
     if st.button("Generate PDF"):
-        if not any([strom_data, gas_data, bk_data]):
+        if not any([strom_data, gas_data, water_data, bk_data]):
             st.warning("Please select at least one cost type.")
         else:
             file = invoice_pdf(
@@ -293,6 +346,7 @@ def show():
                 signature_path=sig_path if Path(sig_path).exists() else None,
                 strom=strom_data,
                 gas=gas_data,
+                water=water_data,
                 bk=bk_data,
             )
             with open(file, "rb") as f:

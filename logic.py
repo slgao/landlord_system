@@ -41,6 +41,20 @@ def gas_calc(cost_flat, tenants, bill_days, eff_days, limit_per_month=0):
     return cost_per_tenant, limit_period, nachzahlung
 
 
+def water_calc(cost_flat, tenants, bill_days, eff_days, limit_per_month=0):
+    """
+    cost_flat    – total cold water cost for the whole flat over the billing period
+    bill_days    – length of the provider's billing period in days
+    eff_days     – days the tenant actually lived in the flat (effective period)
+    """
+    cost_per_day_flat = cost_flat / bill_days
+    cost_per_tenant   = cost_per_day_flat * eff_days / tenants
+    limit_day         = (limit_per_month * 12) / 365 / tenants
+    limit_period      = limit_day * eff_days
+    nachzahlung       = cost_per_tenant - limit_period
+    return cost_per_tenant, limit_period, nachzahlung
+
+
 def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end, limit_per_month=206):
     num_months = (bk_end.year - bk_start.year) * 12 + (bk_end.month - bk_start.month + 1)
     if num_months == 0:

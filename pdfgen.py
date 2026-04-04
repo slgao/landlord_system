@@ -251,11 +251,14 @@ def invoice_pdf(
     signature_path=None,
     strom=None,
     gas=None,
+    water=None,
     bk=None,
 ):
     """
-    strom / gas dict keys: period, days, cost, limit, nach, monthly_limit, num_tenants
-    bk dict keys:          period, months, cost, limit, nach, monthly_limit, num_tenants
+    strom / gas / water dict keys: bill_period, bill_days, period, days,
+                                   cost, limit, nach, monthly_limit, num_tenants
+    bk dict keys: bill_period, num_months, period, months, total_cost,
+                  cost, limit, nach, monthly_limit, num_tenants
     Pass None to omit a section entirely.
     """
     s = _styles()
@@ -267,6 +270,7 @@ def invoice_pdf(
     period_parts = []
     if strom: period_parts.append(f"Strom: {strom['period']} ({strom['days']} Tage)")
     if gas:   period_parts.append(f"Gas: {gas['period']} ({gas['days']} Tage)")
+    if water: period_parts.append(f"Wasser: {water['period']} ({water['days']} Tage)")
     if bk:    period_parts.append(f"BK: {bk['period']} ({bk['months']} Monate)")
     period_str = "  ·  ".join(period_parts)
 
@@ -355,6 +359,34 @@ def invoice_pdf(
         ]))
         story.append(Spacer(1, 18))
         total_items.append(("Nachzahlung Gas", d["nach"]))
+        section_num += 1
+
+    # ── Kaltwasser ─────────────────────────────────────────────────
+    if water:
+        d = water
+        n = d["num_tenants"]
+        cost_per_day    = d["cost"] / d["bill_days"] if d["bill_days"] else 0
+        cost_per_tenant = cost_per_day * d["days"] / n if n else 0
+        daily_limit     = (d["monthly_limit"] * 12) / 365 / n if n else 0
+
+        story.append(_section_header(section_num, "Kaltwasser", s))
+        story.append(_info_box(
+            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+            f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
+        ))
+        story.append(Spacer(1, 8))
+        story.append(_calc_table([
+            ["Position", "Berechnung", "Betrag"],
+            ["Gesamtkosten Wohnung (Wasser)", f"Abrechnungszeitraum {d['bill_days']} Tage", f"{d['cost']:.2f} €"],
+            ["Kosten je Tag (Wohnung)", f"{d['cost']:.2f} € ÷ {d['bill_days']} Tage", f"{cost_per_day:.4f} €"],
+            ["Ihr Anteil (Nutzungsdauer)", f"{cost_per_day:.4f} € × {d['days']} Tage ÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
+            ["Tägliche Vorauszahlung", f"({d['monthly_limit']:.2f} € × 12) ÷ 365 ÷ {n}", f"{daily_limit:.4f} €"],
+            ["Vorauszahlung Zeitraum", f"{daily_limit:.4f} € × {d['days']} Tage", f"{d['limit']:.2f} €"],
+            ["Nachzahlung Kaltwasser", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
+        ]))
+        story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Kaltwasser", d["nach"]))
         section_num += 1
 
     # ── Betriebskosten ─────────────────────────────────────────────

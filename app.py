@@ -955,15 +955,19 @@ elif menu == "Nebenkostenabrechnung":
             st.warning("Tenant's contract does not overlap with the Strom billing period.")
         else:
             s_eff_start_auto, s_eff_end_auto = strom_eff
+            _strom_bill_key = (strom_bill_start, strom_bill_end)
+            if st.session_state.get("_strom_bill_key") != _strom_bill_key:
+                st.session_state["strom_eff_start"] = s_eff_start_auto
+                st.session_state["strom_eff_end"]   = s_eff_end_auto
+                st.session_state["_strom_bill_key"] = _strom_bill_key
             st.caption("Tenant's effective period (auto-detected, editable):")
             col1, col2 = st.columns(2)
             with col1:
-                s_eff_start = st.date_input("Effective start", value=s_eff_start_auto,
+                s_eff_start = st.date_input("Effective start",
                                             min_value=date.today() - timedelta(days=365*20),
                                             key="strom_eff_start")
             with col2:
-                s_eff_end = st.date_input("Effective end", value=s_eff_end_auto,
-                                          key="strom_eff_end")
+                s_eff_end = st.date_input("Effective end", key="strom_eff_end")
             s_eff_days = (s_eff_end - s_eff_start).days
             st.caption(f"{s_eff_days} days")
             strom_limit_per_month = st.number_input(
@@ -1008,15 +1012,19 @@ elif menu == "Nebenkostenabrechnung":
             st.warning("Tenant's contract does not overlap with the Gas billing period.")
         else:
             g_eff_start_auto, g_eff_end_auto = gas_eff
+            _gas_bill_key = (gas_bill_start, gas_bill_end)
+            if st.session_state.get("_gas_bill_key") != _gas_bill_key:
+                st.session_state["gas_eff_start"] = g_eff_start_auto
+                st.session_state["gas_eff_end"]   = g_eff_end_auto
+                st.session_state["_gas_bill_key"] = _gas_bill_key
             st.caption("Tenant's effective period (auto-detected, editable):")
             col1, col2 = st.columns(2)
             with col1:
-                g_eff_start = st.date_input("Effective start", value=g_eff_start_auto,
+                g_eff_start = st.date_input("Effective start",
                                             min_value=date.today() - timedelta(days=365*20),
                                             key="gas_eff_start")
             with col2:
-                g_eff_end = st.date_input("Effective end", value=g_eff_end_auto,
-                                          key="gas_eff_end")
+                g_eff_end = st.date_input("Effective end", key="gas_eff_end")
             g_eff_days = (g_eff_end - g_eff_start).days
             st.caption(f"{g_eff_days} days")
             gas_limit_per_month = st.number_input(
@@ -1076,27 +1084,32 @@ elif menu == "Nebenkostenabrechnung":
         else:
             b_auto_start, b_auto_end = bk_eff
 
+            # Reset effective period selectors when billing period changes
+            _bk_bill_key = (bk_s_month, bk_s_year, bk_e_month, bk_e_year)
+            if st.session_state.get("_bk_bill_key") != _bk_bill_key:
+                st.session_state["bk_eff_s_month"] = b_auto_start.month
+                st.session_state["bk_eff_s_year"]  = b_auto_start.year
+                st.session_state["bk_eff_e_month"] = b_auto_end.month
+                st.session_state["bk_eff_e_year"]  = b_auto_end.year
+                st.session_state["_bk_bill_key"]   = _bk_bill_key
+
             # Effective period — auto-detected, editable as month/year
             st.caption("Tenant's effective period (auto-detected, editable):")
             col1, col2, col3, col4 = st.columns(4)
-            _s_idx = next((i for i, y in enumerate(_year_opts) if y == b_auto_start.year), 0)
-            _e_idx = next((i for i, y in enumerate(_year_opts) if y == b_auto_end.year),   0)
             with col1:
                 be_s_month = st.selectbox("Eff. start month", list(_month_labels.keys()),
                                            format_func=lambda m: _month_labels[m],
-                                           index=b_auto_start.month - 1,
                                            key="bk_eff_s_month")
             with col2:
                 be_s_year  = st.selectbox("Eff. start year", _year_opts,
-                                           index=_s_idx, key="bk_eff_s_year")
+                                           key="bk_eff_s_year")
             with col3:
                 be_e_month = st.selectbox("Eff. end month", list(_month_labels.keys()),
                                            format_func=lambda m: _month_labels[m],
-                                           index=b_auto_end.month - 1,
                                            key="bk_eff_e_month")
             with col4:
                 be_e_year  = st.selectbox("Eff. end year", _year_opts,
-                                           index=_e_idx, key="bk_eff_e_year")
+                                           key="bk_eff_e_year")
 
             b_eff_months = max(1, (be_e_year - be_s_year) * 12
                                   + (be_e_month - be_s_month) + 1)

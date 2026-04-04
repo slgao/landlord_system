@@ -321,67 +321,15 @@ elif menu == "Tenant Ledger":
 elif menu == "Contracts":
     st.header("Tenant Contracts")
 
-    tenants = fetch("SELECT id, name FROM tenants")
-    apartments = fetch("SELECT id, name FROM apartments")
-
-    if len(tenants) == 0 or len(apartments) == 0:
-        st.warning("Please create tenants and apartments first")
-    else:
-        tenant_choice = st.selectbox("Tenant", tenants, format_func=lambda x: x[1])
-        apartment_choice = st.selectbox("Apartment", apartments, format_func=lambda x: x[1])
-        rent = st.number_input("Monthly Rent", value=650.0)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            move_in = st.date_input("Move in date", min_value=date.today() - timedelta(days=365*20))
-        
-        # Logic for limited contracts
-        is_limited = st.checkbox("Limited Contract (Fixed Term)")
-        move_out = None
-        
-        if is_limited:
-            with col2:
-                move_out = st.date_input("Move out date")
-
-        if st.button("Create Contract"):
-            # Check for overlapping active contract on same apartment
-            overlap = fetch("""
-                SELECT t.name FROM contracts c
-                JOIN tenants t ON c.tenant_id = t.id
-                WHERE c.apartment_id = ?
-                AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
-                AND c.start_date <= ?
-            """, (apartment_choice[0], str(move_in), str(move_out) if move_out else "9999-12-31"))
-            if overlap:
-                st.warning(f"⚠️ Apartment already occupied by **{overlap[0][0]}** in this period. "
-                           "Terminate their contract first or adjust the dates.")
-            else:
-                insert(
-                    "contracts",
-                    (
-                        tenant_choice[0],
-                        apartment_choice[0],
-                        rent,
-                        str(move_in),
-                        str(move_out) if move_out else None,
-                        None,
-                        None,
-                        None,
-                        None
-                    )
-                )
-                st.success("Contract created")
-                st.rerun()
-
-    # Display existing contracts with the end date
-    st.divider()
-    st.subheader("Existing Contracts")
+    # ── Existing Contracts table (always visible) ──────────────────
     contract_data = fetch("""
-        SELECT c.id, t.name, a.name, c.rent, c.start_date, c.end_date 
+        SELECT c.id, t.name, a.name, c.rent, c.start_date, c.end_date
         FROM contracts c
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
+        ORDER BY c.start_date DESC
     """)
+
     if contract_data:
         df_contracts = pd.DataFrame(
             contract_data,
@@ -395,9 +343,9 @@ elif menu == "Contracts":
             try:
                 d = date.fromisoformat(end)
                 if d < date.today():
-                    return ["background-color: #c0392b; color: white"] * len(row)  # expired
+                    return ["background-color: #c0392b; color: white"] * len(row)
                 elif (d - date.today()).days <= 90:
-                    return ["background-color: #e67e22; color: white"] * len(row)  # expiring soon
+                    return ["background-color: #e67e22; color: white"] * len(row)
             except ValueError:
                 pass
             return [""] * len(row)
@@ -405,122 +353,174 @@ elif menu == "Contracts":
         st.dataframe(df_contracts.style.apply(highlight_contracts, axis=1),
                      width='stretch', hide_index=True)
         st.caption("🔴 Expired &nbsp;&nbsp; 🟡 Expiring within 90 days")
+    else:
+        st.info("No contracts yet.")
 
-        # Deletion logic
-        st.divider()
-        st.subheader("Edit Contract")
-        contract_choice = st.selectbox(
-            "Select Contract to edit",
-            contract_data,
-            format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
-            key="contract_edit"
-        )
-        cid, _, _, c_rent, c_start, c_end = contract_choice
+    st.divider()
 
-        apartments_all = fetch("SELECT id, name FROM apartments")
-        apt_ids = [a[0] for a in apartments_all]
-        # find current apartment id
-        c_apt_id = fetch("SELECT apartment_id FROM contracts WHERE id = ?", (cid,))[0][0]
-        apt_index = apt_ids.index(c_apt_id) if c_apt_id in apt_ids else 0
-
-        col1, col2 = st.columns(2)
-        with col1:
-            edit_apt = st.selectbox("Apartment", apartments_all, format_func=lambda x: x[1],
-                                    index=apt_index, key=f"cedit_apt_{cid}")
-            edit_rent = st.number_input("Monthly Rent (€)", value=float(c_rent), key=f"cedit_rent_{cid}")
-        with col2:
-            edit_start = st.date_input("Start date", value=date.fromisoformat(c_start),
-                                       min_value=date.today() - timedelta(days=365*20),
-                                       key=f"cedit_start_{cid}")
-            edit_limited = st.checkbox("Fixed Term", value=bool(c_end and c_end != "None"),
-                                       key=f"cedit_limited_{cid}")
-            edit_end = None
-            if edit_limited:
-                edit_end = st.date_input("End date",
-                                         value=date.fromisoformat(c_end) if c_end and c_end != "None" else date.today(),
-                                         key=f"cedit_end_{cid}")
-
-        if st.button("Save Contract Changes"):
-            execute("""
-                UPDATE contracts SET apartment_id=?, rent=?, start_date=?, end_date=? WHERE id=?
-            """, (edit_apt[0], edit_rent, str(edit_start), str(edit_end) if edit_end else None, cid))
-            st.success("Contract updated.")
-            st.rerun()
-
-        st.divider()
-        st.subheader("Terminate Contract (Move-out)")
-        # Only show active (open-ended or future end date) contracts
-        active_contracts = [r for r in contract_data if not r[5] or r[5] == 'None' or r[5] >= str(date.today())]
-        if active_contracts:
-            contract_to_terminate = st.selectbox(
-                "Select active contract to terminate",
-                active_contracts,
-                format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
-                key="terminate_select"
-            )
-            move_out_date = st.date_input("Move-out date", value=date.today(), key="move_out_date")
-            if st.button("Terminate Contract"):
-                execute("UPDATE contracts SET end_date = ? WHERE id = ?",
-                        (str(move_out_date), contract_to_terminate[0]))
-                st.success(f"{contract_to_terminate[1]} terminated on {move_out_date}.")
-                st.rerun()
+    # ── Create New Contract ────────────────────────────────────────
+    with st.expander("Create New Contract"):
+        tenants = fetch("SELECT id, name FROM tenants")
+        apartments = fetch("SELECT id, name FROM apartments")
+        if not tenants or not apartments:
+            st.warning("Please create tenants and apartments first.")
         else:
-            st.info("No active contracts to terminate.")
+            tenant_choice  = st.selectbox("Tenant",    tenants,    format_func=lambda x: x[1], key="new_c_tenant")
+            apartment_choice = st.selectbox("Apartment", apartments, format_func=lambda x: x[1], key="new_c_apt")
+            rent = st.number_input("Monthly Rent (€)", value=650.0, key="new_c_rent")
+            col1, col2 = st.columns(2)
+            with col1:
+                move_in = st.date_input("Move-in date",
+                                        min_value=date.today() - timedelta(days=365*20),
+                                        key="new_c_movein")
+            is_limited = st.checkbox("Fixed Term", key="new_c_limited")
+            move_out = None
+            if is_limited:
+                with col2:
+                    move_out = st.date_input("Move-out date", key="new_c_moveout")
 
-        st.divider()
-        st.subheader("Delete Contract")
-        contract_ids = [row[0] for row in contract_data]
-        contract_to_delete = st.selectbox("Select Contract ID to remove", contract_ids)
-        
-        if st.button("Delete Contract", type="primary"):
-            execute("DELETE FROM contracts WHERE id = ?", (contract_to_delete,))
-            st.success(f"Contract {contract_to_delete} deleted.")
-            st.rerun()
+            if st.button("Create Contract", key="btn_create_contract"):
+                overlap = fetch("""
+                    SELECT t.name FROM contracts c
+                    JOIN tenants t ON c.tenant_id = t.id
+                    WHERE c.apartment_id = ?
+                    AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
+                    AND c.start_date <= ?
+                """, (apartment_choice[0], str(move_in),
+                      str(move_out) if move_out else "9999-12-31"))
+                if overlap:
+                    st.warning(f"⚠️ Apartment already occupied by **{overlap[0][0]}** in this period.")
+                else:
+                    execute(
+                        """INSERT INTO contracts
+                           (tenant_id, apartment_id, rent, start_date, end_date)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (tenant_choice[0], apartment_choice[0], rent,
+                         str(move_in), str(move_out) if move_out else None)
+                    )
+                    st.success("Contract created.")
+                    st.rerun()
 
-        # ── Kaution ────────────────────────────────────────────────
-        st.divider()
-        st.subheader("Kaution (Deposit)")
+    # ── Edit Contract ──────────────────────────────────────────────
+    if contract_data:
+        with st.expander("Edit Contract"):
+            contract_choice = st.selectbox(
+                "Select contract",
+                contract_data,
+                format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
+                key="contract_edit"
+            )
+            cid, _, _, c_rent, c_start, c_end = contract_choice
 
-        kaution_data = fetch("""
-            SELECT c.id, t.name, a.name,
-                   c.kaution_amount, c.kaution_paid_date,
-                   c.kaution_returned_date, c.kaution_returned_amount
-            FROM contracts c
-            JOIN tenants t ON c.tenant_id = t.id
-            JOIN apartments a ON c.apartment_id = a.id
-        """)
+            apartments_all = fetch("SELECT id, name FROM apartments")
+            apt_ids   = [a[0] for a in apartments_all]
+            c_apt_id  = fetch("SELECT apartment_id FROM contracts WHERE id = ?", (cid,))[0][0]
+            apt_index = apt_ids.index(c_apt_id) if c_apt_id in apt_ids else 0
 
-        df_kaution = pd.DataFrame(kaution_data,
-            columns=["Contract ID", "Tenant", "Apartment",
-                     "Kaution (€)", "Paid Date", "Returned Date", "Returned (€)"])
-        st.dataframe(df_kaution, width='stretch', hide_index=True)
+            col1, col2 = st.columns(2)
+            with col1:
+                edit_apt  = st.selectbox("Apartment", apartments_all, format_func=lambda x: x[1],
+                                         index=apt_index, key=f"cedit_apt_{cid}")
+                edit_rent = st.number_input("Monthly Rent (€)", value=float(c_rent),
+                                            key=f"cedit_rent_{cid}")
+            with col2:
+                edit_start   = st.date_input("Start date", value=date.fromisoformat(c_start),
+                                             min_value=date.today() - timedelta(days=365*20),
+                                             key=f"cedit_start_{cid}")
+                edit_limited = st.checkbox("Fixed Term", value=bool(c_end and c_end != "None"),
+                                           key=f"cedit_limited_{cid}")
+                edit_end = None
+                if edit_limited:
+                    edit_end = st.date_input(
+                        "End date",
+                        value=date.fromisoformat(c_end) if c_end and c_end != "None" else date.today(),
+                        key=f"cedit_end_{cid}"
+                    )
 
-        st.markdown("**Record / Update Kaution**")
-        k_contract = st.selectbox("Contract", contract_data,
-                                  format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
-                                  key="kaution_contract")
-        col1, col2 = st.columns(2)
-        with col1:
-            k_amount = st.number_input("Kaution amount (€)", min_value=0.0, key="k_amount")
-            k_paid = st.date_input("Date received", key="k_paid")
-        with col2:
-            k_returned = st.date_input("Date returned (leave if not yet)", key="k_returned")
-            k_returned_amt = st.number_input("Amount returned (€)", min_value=0.0, key="k_returned_amt")
+            if st.button("Save Contract Changes", key="btn_save_contract"):
+                execute("""UPDATE contracts SET apartment_id=?, rent=?, start_date=?, end_date=?
+                           WHERE id=?""",
+                        (edit_apt[0], edit_rent, str(edit_start),
+                         str(edit_end) if edit_end else None, cid))
+                st.success("Contract updated.")
+                st.rerun()
 
-        if st.button("Save Kaution"):
-            execute("""
-                UPDATE contracts SET
-                    kaution_amount = ?,
-                    kaution_paid_date = ?,
-                    kaution_returned_date = ?,
-                    kaution_returned_amount = ?
-                WHERE id = ?
-            """, (k_amount, str(k_paid),
-                  str(k_returned) if k_returned_amt > 0 else None,
-                  k_returned_amt if k_returned_amt > 0 else None,
-                  k_contract[0]))
-            st.success("Kaution saved.")
-            st.rerun()
+        # ── Terminate Contract ─────────────────────────────────────
+        with st.expander("Terminate Contract (Move-out)"):
+            active_contracts = [r for r in contract_data
+                                if not r[5] or r[5] == "None" or r[5] >= str(date.today())]
+            if active_contracts:
+                contract_to_terminate = st.selectbox(
+                    "Select active contract",
+                    active_contracts,
+                    format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
+                    key="terminate_select"
+                )
+                move_out_date = st.date_input("Move-out date", value=date.today(),
+                                              key="move_out_date")
+                if st.button("Terminate Contract", key="btn_terminate"):
+                    execute("UPDATE contracts SET end_date = ? WHERE id = ?",
+                            (str(move_out_date), contract_to_terminate[0]))
+                    st.success(f"{contract_to_terminate[1]} terminated on {move_out_date}.")
+                    st.rerun()
+            else:
+                st.info("No active contracts to terminate.")
+
+        # ── Kaution (Deposit) ──────────────────────────────────────
+        with st.expander("Kaution (Deposit)"):
+            kaution_data = fetch("""
+                SELECT c.id, t.name, a.name,
+                       c.kaution_amount, c.kaution_paid_date,
+                       c.kaution_returned_date, c.kaution_returned_amount
+                FROM contracts c
+                JOIN tenants t ON c.tenant_id = t.id
+                JOIN apartments a ON c.apartment_id = a.id
+            """)
+            df_kaution = pd.DataFrame(kaution_data,
+                columns=["Contract ID", "Tenant", "Apartment",
+                         "Kaution (€)", "Paid Date", "Returned Date", "Returned (€)"])
+            st.dataframe(df_kaution, width='stretch', hide_index=True)
+
+            st.markdown("**Record / Update Kaution**")
+            k_contract = st.selectbox("Contract", contract_data,
+                                      format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
+                                      key="kaution_contract")
+            col1, col2 = st.columns(2)
+            with col1:
+                k_amount = st.number_input("Kaution amount (€)", min_value=0.0, key="k_amount")
+                k_paid   = st.date_input("Date received", key="k_paid")
+            with col2:
+                k_returned     = st.date_input("Date returned (if applicable)", key="k_returned")
+                k_returned_amt = st.number_input("Amount returned (€)", min_value=0.0,
+                                                 key="k_returned_amt")
+
+            if st.button("Save Kaution", key="btn_kaution"):
+                execute("""UPDATE contracts SET
+                               kaution_amount = ?,
+                               kaution_paid_date = ?,
+                               kaution_returned_date = ?,
+                               kaution_returned_amount = ?
+                           WHERE id = ?""",
+                        (k_amount, str(k_paid),
+                         str(k_returned) if k_returned_amt > 0 else None,
+                         k_returned_amt if k_returned_amt > 0 else None,
+                         k_contract[0]))
+                st.success("Kaution saved.")
+                st.rerun()
+
+        # ── Delete Contract (last) ─────────────────────────────────
+        with st.expander("Delete Contract"):
+            contract_to_delete = st.selectbox(
+                "Select contract to delete",
+                contract_data,
+                format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
+                key="contract_delete"
+            )
+            st.warning("This permanently removes the contract and cannot be undone.")
+            if st.button("Delete Contract", type="primary", key="btn_delete_contract"):
+                execute("DELETE FROM contracts WHERE id = ?", (contract_to_delete[0],))
+                st.success(f"Contract #{contract_to_delete[0]} deleted.")
+                st.rerun()
 
 elif menu == "Rent Tracking":
 
@@ -685,6 +685,7 @@ elif menu == "Flat Costs":
         if costs:
             # Group by property + flat
             from itertools import groupby
+            _today_fc = date.today()
             for (prop, flat), group in groupby(costs, key=lambda x: (x[1], x[3])):
                 label = f"{prop} — {flat}" if flat else f"{prop} — (no flat)"
                 st.markdown(f"**{label}**")
@@ -694,6 +695,35 @@ elif menu == "Flat Costs":
                     columns=["ID", "Type", "Amount (€)", "Frequency", "Valid From", "Valid To"]
                 )
                 st.dataframe(df_group, width='stretch', hide_index=True)
+
+                # Monthly cost summary for this flat
+                monthly_equiv = 0.0
+                onetime_active = 0
+                for r in group_rows:
+                    try:
+                        from_ok = date.fromisoformat(r[7]) <= _today_fc
+                    except (ValueError, TypeError):
+                        from_ok = True
+                    try:
+                        to_ok = not r[8] or r[8] == "None" or date.fromisoformat(r[8]) >= _today_fc
+                    except (ValueError, TypeError):
+                        to_ok = True
+                    if from_ok and to_ok:
+                        if r[6] == "monthly":
+                            monthly_equiv += r[5]
+                        elif r[6] == "annual":
+                            monthly_equiv += r[5] / 12
+                        else:
+                            onetime_active += 1
+                note = f"  ·  +{onetime_active} one-time cost(s) active" if onetime_active else ""
+                st.markdown(
+                    f"<div style='background:#f0f4f8;border-left:4px solid #3a7fc1;"
+                    f"padding:6px 12px;border-radius:4px;margin-bottom:12px;'>"
+                    f"<span style='color:#8395a7;font-size:0.85em;'>Monthly total (currently active)</span><br>"
+                    f"<b style='font-size:1.1em;'>{monthly_equiv:.2f} €</b>"
+                    f"<span style='color:#8395a7;font-size:0.85em;'>{note}</span></div>",
+                    unsafe_allow_html=True
+                )
                 st.write("")
 
             # costs rows: (id, prop, apt, flat, type, amt, freq, from, to)

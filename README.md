@@ -23,25 +23,26 @@ A web-based property management application tailored for landlords in Germany. B
 ## Features
 
 ### Dashboard
-- At-a-glance metrics: total properties and tenants
+- At-a-glance metrics: total properties, apartments, tenants, and contracts
 - Automatic alerts for contracts expiring within the next 90 days
 - Highlights already-expired contracts in red
+- Terminated (moved-out) contracts are excluded from alerts
 
 ### Properties
 - Add properties with name and address
 - View all properties in a table
-- Delete properties by ID
+- Delete properties by selection
 
 ### Apartments
 - Link apartments to a specific property
 - Support for individual units and shared flat rooms (WG-Zimmer)
 - **Flat grouping**: assign rooms to a named flat (e.g. "Wohnung 1") to group WG rooms together
 - Edit existing apartments: room name and flat label
-- View and delete existing apartments
+- Table shows property name alongside each apartment
 
 ### Tenants
 - Register tenants with name, email, and gender
-- Edit tenant information: name, email, gender, and assigned apartment
+- Edit tenant information and assigned apartment
 - View tenants alongside their assigned apartment (via contract)
 - Delete tenants from the system
 
@@ -49,30 +50,36 @@ A web-based property management application tailored for landlords in Germany. B
 - Create rental contracts linking a tenant to an apartment
 - Set monthly rent amount
 - Support for open-ended and fixed-term (befristet) contracts
-- Overlap detection: warns if the apartment is already occupied in the selected period
+- Overlap detection: warns if the apartment is already occupied in the selected period (excludes terminated contracts)
 - Edit existing contracts: apartment, rent, start/end dates
-- Terminate a contract with a move-out date (preserves history)
-- Delete contracts
-- Full move-out / move-in flow: terminate old contract, create new one for incoming tenant
+- **Contract status tracking** — each contract is labelled:
+  - **Active** — running, no end date or future end date
+  - **Expiring soon** — end date within 90 days (orange)
+  - **Expired** — end date in the past, not yet resolved (red, needs attention)
+  - **Moved out** — explicitly closed (gray, historical)
+- **Terminate Contract**: sets the move-out date and marks the contract as closed
+- **Handle Expired Contracts**: single expander for all unresolved expired contracts with a radio choice:
+  - *Close — tenant has moved out* → marks as terminated, removes from alerts
+  - *Reopen — tenant is still living there* → clears end date, restores to active
 - **Kaution (deposit) tracking**: record deposit amount, date received, date and amount returned
 
 ### Rent Tracking
+- Monthly overview at the top: all payments across all properties for a selected month
 - Record individual rent payments against a contract
-- Specify payment amount and date
 - Supports partial and custom payment amounts
-- Edit existing payments: amount and date
-- Monthly overview: view all payments across all properties and tenants for a selected month
+- Edit and delete existing payments
 
 ### Tenant Ledger
 - View full payment history for any tenant
 - Displays amount and date for each recorded payment
+- Shows total amount paid
 
 ### Flat Costs
-- Record recurring and one-time costs per apartment (Hausgeld, Mortgage, Grundsteuer, Strom Vorauszahlung, Internet, etc.)
+- Record recurring and one-time costs per apartment (Hausgeld, Mortgage, Grundsteuer, Strom Vorauszahlung, Internet, custom)
 - Set frequency: monthly, annual, or one-time
 - Set validity period (valid from / valid to)
 - Edit and delete existing cost entries
-- Custom cost type via free-text "Other" option
+- **Monthly cost summary** per flat: shows the current monthly equivalent (monthly entries + annual ÷ 12), with one-time costs noted separately
 - Costs grouped by property and flat for easy overview
 
 ### Balance Sheet
@@ -82,17 +89,20 @@ A web-based property management application tailored for landlords in Germany. B
 - Net per month color-coded (green = profit, red = loss)
 - For the current year, only shows months up to the current month
 - Annual totals: total income, total costs, annual net
-- Tenant selected from dropdown (auto-fills address from contract)
-- **Auto-detects number of persons** sharing the same flat via the flat grouping (can be overridden manually)
-- Calculate electricity costs (Strom) per tenant based on:
-  - Total flat cost, number of tenants, billing period, monthly prepayment
-- Calculate Betriebskosten per tenant based on:
-  - Total operating costs, number of tenants, billing period, monthly prepayment
-- Automatically computes Nachzahlung (additional payment due)
+
+### Nebenkostenabrechnung
+- Freely select which utilities to include per Abrechnung: **Strom**, **Gas**, **Kaltwasser**, **Betriebskosten** — each is independent and optional
+- Each utility has its **own billing period** from the provider, separate from the tenant's contract period
+- Tenant's **effective period** is auto-detected as the intersection of the utility billing period and the tenant's contract dates — editable after auto-detection
+- Changing a billing period automatically updates the effective period inputs
+- **Correct proration**: `(total_flat_cost / bill_days) × eff_days / tenants` — accounts for partial occupancy within the billing period
+- Strom, Gas, and Kaltwasser use day-based billing; Betriebskosten uses month-based billing with month/year selectors
+- Auto-detects number of persons sharing the same flat via flat grouping (can be overridden)
 - Generates a polished A4 letter-style PDF with:
   - Recipient address block and landlord name
-  - Gender-aware salutation (Sehr geehrter Herr / Sehr geehrte Frau)
-  - Itemized calculation tables with step-by-step breakdown
+  - Gender-aware salutation (Sehr geehrter Herr / Sehr geehrte Frau / Sehr geehrte/r)
+  - Per-utility sections showing both the provider billing period and the tenant's effective period
+  - Itemized step-by-step calculation tables (cost per day → tenant share → prepayment → Nachzahlung)
   - Color-coded total (red = Nachzahlung, green = Guthaben)
   - Landlord signature image
   - 7-day payment deadline for Nachzahlungen
@@ -100,7 +110,7 @@ A web-based property management application tailored for landlords in Germany. B
 ### Mahnung Generator (Payment Reminder)
 - Generate a formal payment reminder PDF for a tenant
 - Gender-aware salutation
-- Highlighted outstanding amount
+- Highlighted outstanding amount with due date
 - Landlord signature embedded
 - Ready to print or send digitally
 
@@ -121,11 +131,24 @@ A web-based property management application tailored for landlords in Germany. B
 
 ```
 landlord_system/
-├── app.py              # Main Streamlit app — UI layout and page routing
+├── app.py              # Entry point — sidebar routing only
 ├── db.py               # Database initialization, CRUD helpers (insert, fetch, delete, execute)
-├── logic.py            # Business logic: cost calculations (Strom, BK), tenant ledger
+├── logic.py            # Business logic: strom_calc, gas_calc, water_calc,
+│                       #   betriebskosten_calc, tenant_ledger
 ├── pdfgen.py           # PDF generation: Nebenkostenabrechnung and Mahnung
 ├── requirements.txt    # Python dependencies
+├── pages/              # One module per menu page
+│   ├── dashboard.py
+│   ├── properties.py
+│   ├── apartments.py
+│   ├── tenants.py
+│   ├── tenant_ledger.py
+│   ├── contracts.py
+│   ├── rent_tracking.py
+│   ├── flat_costs.py
+│   ├── balance_sheet.py
+│   ├── nebenkostenabrechnung.py
+│   └── mahnung.py
 ├── data/
 │   └── landlord.db     # SQLite database (auto-created on first run, git-ignored)
 └── pdf/                # Output directory for generated PDFs (git-ignored)
@@ -140,7 +163,7 @@ landlord_system/
 | `properties` | id, name, address                                       |
 | `apartments` | id, property_id, name, flat                             |
 | `tenants`    | id, name, email, gender                                 |
-| `contracts`  | id, tenant_id, apartment_id, rent, start_date, end_date, kaution_amount, kaution_paid_date, kaution_returned_date, kaution_returned_amount |
+| `contracts`  | id, tenant_id, apartment_id, rent, start_date, end_date, terminated, kaution_amount, kaution_paid_date, kaution_returned_date, kaution_returned_amount |
 | `payments`   | id, contract_id, amount, payment_date                   |
 | `flat_costs` | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to |
 
@@ -185,34 +208,52 @@ The app will be available at `http://localhost:8501`.
 4. **Create a Contract** linking tenant ↔ apartment with rent and dates → Contracts menu
 5. **Record monthly Rent Payments** → Rent Tracking menu
 6. **Review payment history** per tenant → Tenant Ledger menu
-7. **Generate Nebenkostenabrechnung** at end of billing period → Nebenkostenabrechnung menu
-8. **Send a Mahnung** if a tenant has outstanding payments → Mahnung Generator menu
+7. **Track Flat Costs** (Hausgeld, Mortgage, etc.) → Flat Costs menu
+8. **Generate Nebenkostenabrechnung** at end of billing period → Nebenkostenabrechnung menu
+9. **Send a Mahnung** if a tenant has outstanding payments → Mahnung Generator menu
 
 ### Move-out / Move-in Flow
 
-1. Go to **Contracts** → Terminate Contract → set move-out date
+1. Go to **Contracts** → *Terminate Contract* → set move-out date (marks contract as "Moved out")
 2. Create a new contract for the incoming tenant on the same apartment
-3. The system warns if the dates overlap with an existing active contract
+3. The overlap check excludes terminated contracts, so the apartment is considered free
+
+### Handling Expired Contracts
+
+If a fixed-term contract's end date has passed without being explicitly terminated:
+
+- The contract appears in red (**Expired**) in the contracts table and triggers a dashboard alert
+- Go to **Contracts** → *Handle Expired Contracts*
+- Choose the action:
+  - **Close** — tenant has moved out → marks as terminated, removes from alerts
+  - **Reopen** — tenant is still living there → clears the end date, restores to active
 
 ### Nebenkostenabrechnung Calculation Logic
 
-**Electricity (Strom):**
+Each utility is billed independently. The tenant's effective period is the intersection of the utility's billing period and the tenant's contract dates.
+
+**Electricity (Strom), Gas, Cold Water (Kaltwasser):**
 ```
-cost_per_tenant     = total_flat_cost / number_of_tenants
-daily_limit         = (monthly_limit × 12) / 365 / tenants
-period_limit        = daily_limit × billing_days
-Nachzahlung (Strom) = cost_per_tenant − period_limit
+bill_days           = total days in provider billing period
+eff_days            = days tenant lived in flat (within billing period)
+cost_per_day        = total_flat_cost / bill_days
+tenant_cost         = cost_per_day × eff_days / num_tenants
+daily_prepayment    = (monthly_limit × 12) / 365 / num_tenants
+period_prepayment   = daily_prepayment × eff_days
+Nachzahlung         = tenant_cost − period_prepayment
 ```
 
-**Betriebskosten:**
+**Betriebskosten (month-based):**
 ```
-cost_per_tenant  = total_bk_cost / number_of_tenants
-period_cost      = (cost_per_tenant / total_months) × billed_months
-period_limit     = (monthly_limit / tenants) × billed_months
-Nachzahlung (BK) = period_cost − period_limit
+num_months          = total months in provider billing period
+eff_months          = months tenant lived in flat (within billing period)
+cost_per_tenant     = total_bk_cost / num_tenants
+period_cost         = (cost_per_tenant / num_months) × eff_months
+period_prepayment   = (monthly_limit / num_tenants) × eff_months
+Nachzahlung (BK)    = period_cost − period_prepayment
 ```
 
-**Total due = Nachzahlung Strom + Nachzahlung BK**
+**Total due = sum of all Nachzahlungen across selected utilities**
 
 ---
 

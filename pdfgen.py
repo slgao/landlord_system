@@ -263,11 +263,11 @@ def invoice_pdf(
     story = []
     today_str = date.today().strftime("%d.%m.%Y")
 
-    # Period subtitle for header
+    # Period subtitle for header (show tenant's effective periods)
     period_parts = []
-    if strom: period_parts.append(f"Strom: {strom['period']}")
-    if gas:   period_parts.append(f"Gas: {gas['period']}")
-    if bk:    period_parts.append(f"Betriebskosten: {bk['period']}")
+    if strom: period_parts.append(f"Strom: {strom['period']} ({strom['days']} Tage)")
+    if gas:   period_parts.append(f"Gas: {gas['period']} ({gas['days']} Tage)")
+    if bk:    period_parts.append(f"BK: {bk['period']} ({bk['months']} Monate)")
     period_str = "  ·  ".join(period_parts)
 
     # ── Header banner ──────────────────────────────────────────────
@@ -305,19 +305,22 @@ def invoice_pdf(
     if strom:
         d = strom
         n = d["num_tenants"]
-        cost_per_tenant = d["cost"] / n if n else d["cost"]
-        daily_limit = (d["monthly_limit"] * 12) / 365 / n if n else 0
+        cost_per_day   = d["cost"] / d["bill_days"] if d["bill_days"] else 0
+        cost_per_tenant = cost_per_day * d["days"] / n if n else 0
+        daily_limit    = (d["monthly_limit"] * 12) / 365 / n if n else 0
 
         story.append(_section_header(section_num, "Stromkosten", s))
         story.append(_info_box(
-            f"Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
             f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
         ))
         story.append(Spacer(1, 8))
         story.append(_calc_table([
             ["Position", "Berechnung", "Betrag"],
-            ["Gesamtkosten Wohnung (Strom)", "Gesamtkosten", f"{d['cost']:.2f} €"],
-            ["Ihr Anteil", f"÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
+            ["Gesamtkosten Wohnung (Strom)", f"Abrechnungszeitraum {d['bill_days']} Tage", f"{d['cost']:.2f} €"],
+            ["Kosten je Tag (Wohnung)", f"{d['cost']:.2f} € ÷ {d['bill_days']} Tage", f"{cost_per_day:.4f} €"],
+            ["Ihr Anteil (Nutzungsdauer)", f"{cost_per_day:.4f} € × {d['days']} Tage ÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
             ["Tägliche Vorauszahlung", f"({d['monthly_limit']:.2f} € × 12) ÷ 365 ÷ {n}", f"{daily_limit:.4f} €"],
             ["Vorauszahlung Zeitraum", f"{daily_limit:.4f} € × {d['days']} Tage", f"{d['limit']:.2f} €"],
             ["Nachzahlung Strom", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
@@ -330,19 +333,22 @@ def invoice_pdf(
     if gas:
         d = gas
         n = d["num_tenants"]
-        cost_per_tenant = d["cost"] / n if n else d["cost"]
-        daily_limit = (d["monthly_limit"] * 12) / 365 / n if n else 0
+        cost_per_day    = d["cost"] / d["bill_days"] if d["bill_days"] else 0
+        cost_per_tenant = cost_per_day * d["days"] / n if n else 0
+        daily_limit     = (d["monthly_limit"] * 12) / 365 / n if n else 0
 
         story.append(_section_header(section_num, "Gaskosten", s))
         story.append(_info_box(
-            f"Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
             f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
         ))
         story.append(Spacer(1, 8))
         story.append(_calc_table([
             ["Position", "Berechnung", "Betrag"],
-            ["Gesamtkosten Wohnung (Gas)", "Gesamtkosten", f"{d['cost']:.2f} €"],
-            ["Ihr Anteil", f"÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
+            ["Gesamtkosten Wohnung (Gas)", f"Abrechnungszeitraum {d['bill_days']} Tage", f"{d['cost']:.2f} €"],
+            ["Kosten je Tag (Wohnung)", f"{d['cost']:.2f} € ÷ {d['bill_days']} Tage", f"{cost_per_day:.4f} €"],
+            ["Ihr Anteil (Nutzungsdauer)", f"{cost_per_day:.4f} € × {d['days']} Tage ÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
             ["Tägliche Vorauszahlung", f"({d['monthly_limit']:.2f} € × 12) ÷ 365 ÷ {n}", f"{daily_limit:.4f} €"],
             ["Vorauszahlung Zeitraum", f"{daily_limit:.4f} € × {d['days']} Tage", f"{d['limit']:.2f} €"],
             ["Nachzahlung Gas", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
@@ -355,19 +361,21 @@ def invoice_pdf(
     if bk:
         d = bk
         n = d["num_tenants"]
-        bk_cost_per_tenant = d["cost"] / n if n else d["cost"]
+        cost_per_tenant_full = d["total_cost"] / n if n else d["total_cost"]
         bk_limit_month = d["monthly_limit"] / n if n else 0
 
         story.append(_section_header(section_num, "Betriebskosten", s))
         story.append(_info_box(
-            f"Zeitraum: {d['period']}  ·  {d['months']} Monate  ·  "
+            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['num_months']} Monate  |  "
+            f"Ihr Zeitraum: {d['period']}  ·  {d['months']} Monate  ·  "
             f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
         ))
         story.append(Spacer(1, 8))
         story.append(_calc_table([
             ["Position", "Berechnung", "Betrag"],
-            ["Gesamte Betriebskosten", "Gesamtkosten", f"{d['cost']:.2f} €"],
-            ["Ihr Anteil (gesamt)", f"÷ {n} Mieter", f"{bk_cost_per_tenant:.2f} €"],
+            ["Gesamte Betriebskosten", f"Abrechnungszeitraum {d['num_months']} Monate", f"{d['total_cost']:.2f} €"],
+            ["Ihr Anteil (gesamt)", f"÷ {n} Mieter", f"{cost_per_tenant_full:.2f} €"],
+            ["Ihr Anteil (Nutzungsdauer)", f"÷ {d['num_months']} × {d['months']} Monate", f"{d['cost']:.2f} €"],
             ["Monatliche Vorauszahlung", f"{d['monthly_limit']:.2f} € ÷ {n}", f"{bk_limit_month:.2f} €"],
             ["Vorauszahlung Zeitraum", f"{bk_limit_month:.2f} € × {d['months']} Monate", f"{d['limit']:.2f} €"],
             ["Nachzahlung Betriebskosten", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],

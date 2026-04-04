@@ -976,10 +976,15 @@ elif menu == "Nebenkostenabrechnung":
             strom_cost = st.number_input(
                 "Total electricity cost flat for billing period (€)", min_value=0.0, key="strom_cost"
             )
+            strom_bill_days = max(1, (strom_bill_end - strom_bill_start).days)
             _, strom_limit, strom_nach = strom_calc(
-                strom_cost, tenants, s_eff_days, limit_per_month=strom_limit_per_month
+                strom_cost, tenants, strom_bill_days, s_eff_days,
+                limit_per_month=strom_limit_per_month
             )
             strom_data = {
+                "bill_period": (f"{strom_bill_start.strftime('%d.%m.%Y')} – "
+                                f"{strom_bill_end.strftime('%d.%m.%Y')}"),
+                "bill_days": strom_bill_days,
                 "period": (f"{s_eff_start.strftime('%d.%m.%Y')} – "
                            f"{s_eff_end.strftime('%d.%m.%Y')}"),
                 "days": s_eff_days,
@@ -1033,10 +1038,15 @@ elif menu == "Nebenkostenabrechnung":
             gas_cost = st.number_input(
                 "Total gas cost flat for billing period (€)", min_value=0.0, key="gas_cost"
             )
+            gas_bill_days = max(1, (gas_bill_end - gas_bill_start).days)
             _, gas_limit, gas_nach = gas_calc(
-                gas_cost, tenants, g_eff_days, limit_per_month=gas_limit_per_month
+                gas_cost, tenants, gas_bill_days, g_eff_days,
+                limit_per_month=gas_limit_per_month
             )
             gas_data = {
+                "bill_period": (f"{gas_bill_start.strftime('%d.%m.%Y')} – "
+                                f"{gas_bill_end.strftime('%d.%m.%Y')}"),
+                "bill_days": gas_bill_days,
                 "period": (f"{g_eff_start.strftime('%d.%m.%Y')} – "
                            f"{g_eff_end.strftime('%d.%m.%Y')}"),
                 "days": g_eff_days,
@@ -1128,10 +1138,16 @@ elif menu == "Nebenkostenabrechnung":
             b_eff_start_date = date(be_s_year, be_s_month, 1)
             b_eff_end_date   = date(be_e_year, be_e_month,
                                     calendar.monthrange(be_e_year, be_e_month)[1])
+            bk_num_months = max(1, (bk_e_year - bk_s_year) * 12
+                                   + (bk_e_month - bk_s_month) + 1)
             bk_data = {
+                "bill_period": (f"{bk_bill_start.strftime('%d.%m.%Y')} – "
+                                f"{bk_bill_end.strftime('%d.%m.%Y')}"),
+                "num_months": bk_num_months,
                 "period": (f"{b_eff_start_date.strftime('%d.%m.%Y')} – "
                            f"{b_eff_end_date.strftime('%d.%m.%Y')}"),
                 "months": int(b_eff_months),
+                "total_cost": bk_cost,
                 "cost": bk_period_cost,
                 "limit": bk_limit,
                 "nach": bk_nach,

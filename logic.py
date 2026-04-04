@@ -13,21 +13,31 @@
 from db import fetch
 
 
-def strom_calc(cost_flat, tenants, days, limit_per_month=50):
-
-    cost_per_tenant = cost_flat / tenants
-    limit_day = (limit_per_month * 12) / 365 / tenants
-    limit_period = limit_day * days
-    nachzahlung = cost_per_tenant - limit_period
-
+def strom_calc(cost_flat, tenants, bill_days, eff_days, limit_per_month=50):
+    """
+    cost_flat    – total electricity cost for the whole flat over the billing period
+    bill_days    – length of the provider's billing period in days
+    eff_days     – days the tenant actually lived in the flat (effective period)
+    """
+    cost_per_day_flat = cost_flat / bill_days
+    cost_per_tenant   = cost_per_day_flat * eff_days / tenants
+    limit_day         = (limit_per_month * 12) / 365 / tenants
+    limit_period      = limit_day * eff_days
+    nachzahlung       = cost_per_tenant - limit_period
     return cost_per_tenant, limit_period, nachzahlung
 
 
-def gas_calc(cost_flat, tenants, days, limit_per_month=0):
-    cost_per_tenant = cost_flat / tenants
-    limit_day = (limit_per_month * 12) / 365 / tenants
-    limit_period = limit_day * days
-    nachzahlung = cost_per_tenant - limit_period
+def gas_calc(cost_flat, tenants, bill_days, eff_days, limit_per_month=0):
+    """
+    cost_flat    – total gas cost for the whole flat over the billing period
+    bill_days    – length of the provider's billing period in days
+    eff_days     – days the tenant actually lived in the flat (effective period)
+    """
+    cost_per_day_flat = cost_flat / bill_days
+    cost_per_tenant   = cost_per_day_flat * eff_days / tenants
+    limit_day         = (limit_per_month * 12) / 365 / tenants
+    limit_period      = limit_day * eff_days
+    nachzahlung       = cost_per_tenant - limit_period
     return cost_per_tenant, limit_period, nachzahlung
 
 

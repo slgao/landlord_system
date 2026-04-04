@@ -717,11 +717,11 @@ elif menu == "Flat Costs":
                             onetime_active += 1
                 note = f"  ·  +{onetime_active} one-time cost(s) active" if onetime_active else ""
                 st.markdown(
-                    f"<div style='background:#f0f4f8;border-left:4px solid #3a7fc1;"
+                    f"<div style='background:#2c3e50;border-left:4px solid #3a7fc1;"
                     f"padding:6px 12px;border-radius:4px;margin-bottom:12px;'>"
-                    f"<span style='color:#8395a7;font-size:0.85em;'>Monthly total (currently active)</span><br>"
-                    f"<b style='font-size:1.1em;'>{monthly_equiv:.2f} €</b>"
-                    f"<span style='color:#8395a7;font-size:0.85em;'>{note}</span></div>",
+                    f"<span style='color:#9ec5e8;font-size:0.82em;'>Monthly total (currently active)</span><br>"
+                    f"<b style='font-size:1.1em;color:#ffffff;'>{monthly_equiv:.2f} €</b>"
+                    f"<span style='color:#8395a7;font-size:0.82em;'>{note}</span></div>",
                     unsafe_allow_html=True
                 )
                 st.write("")

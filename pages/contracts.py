@@ -8,8 +8,10 @@ def show():
     st.header("Tenant Contracts")
 
     # ── Existing Contracts table (always visible) ──────────────────
+    # col index: 0=id, 1=tenant, 2=apt, 3=rent, 4=start, 5=end, 6=terminated
     contract_data = fetch("""
-        SELECT c.id, t.name, a.name, c.rent, c.start_date, c.end_date
+        SELECT c.id, t.name, a.name, c.rent, c.start_date, c.end_date,
+               COALESCE(c.terminated, 0)
         FROM contracts c
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
@@ -17,25 +19,44 @@ def show():
     """)
 
     if contract_data:
-        df = pd.DataFrame(contract_data,
-                          columns=["ID", "Tenant", "Apartment", "Rent", "Start Date", "End Date"])
+        today_str = str(date.today())
 
-        def highlight(row):
-            end = row["End Date"]
+        def status_label(row):
+            end, term = row["End Date"], row["Terminated"]
+            if term:
+                return "Moved out"
             if not end or end == "None":
-                return [""] * len(row)
+                return "Active"
             try:
                 d = date.fromisoformat(end)
-                if d < date.today():
-                    return ["background-color: #c0392b; color: white"] * len(row)
-                elif (d - date.today()).days <= 90:
-                    return ["background-color: #e67e22; color: white"] * len(row)
+                days = (d - date.today()).days
+                if days < 0:
+                    return "Expired"
+                elif days <= 90:
+                    return "Expiring soon"
             except ValueError:
                 pass
+            return "Active"
+
+        def highlight(row):
+            s = row["Status"]
+            if s == "Moved out":
+                return ["color: #8395a7"] * len(row)
+            if s == "Expired":
+                return ["background-color: #c0392b; color: white"] * len(row)
+            if s == "Expiring soon":
+                return ["background-color: #e67e22; color: white"] * len(row)
             return [""] * len(row)
 
+        df = pd.DataFrame(contract_data,
+                          columns=["ID", "Tenant", "Apartment", "Rent",
+                                   "Start Date", "End Date", "Terminated"])
+        df["Status"]     = df.apply(status_label, axis=1)
+        df["Terminated"] = df["Terminated"].apply(lambda x: "Yes" if x else "")
+        df = df[["ID", "Tenant", "Apartment", "Rent", "Start Date", "End Date", "Status"]]
+
         st.dataframe(df.style.apply(highlight, axis=1), width="stretch", hide_index=True)
-        st.caption("🔴 Expired &nbsp;&nbsp; 🟡 Expiring within 90 days")
+        st.caption("🔴 Expired – needs renewal &nbsp;&nbsp; 🟠 Expiring within 90 days &nbsp;&nbsp; ⬜ Moved out (closed)")
     else:
         st.info("No contracts yet.")
 
@@ -67,6 +88,7 @@ def show():
                     SELECT t.name FROM contracts c
                     JOIN tenants t ON c.tenant_id = t.id
                     WHERE c.apartment_id = ?
+                    AND COALESCE(c.terminated, 0) = 0
                     AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
                     AND c.start_date <= ?
                 """, (apartment_choice[0], str(move_in),
@@ -90,7 +112,7 @@ def show():
             c_choice = st.selectbox("Select contract", contract_data,
                                     format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
                                     key="contract_edit")
-            cid, _, _, c_rent, c_start, c_end = c_choice
+            cid, _, _, c_rent, c_start, c_end, c_term = c_choice
 
             apts_all  = fetch("SELECT id, name FROM apartments")
             apt_ids   = [a[0] for a in apts_all]
@@ -124,22 +146,56 @@ def show():
                 st.success("Contract updated.")
                 st.rerun()
 
-        # ── Terminate Contract ─────────────────────────────────────
+        # ── Terminate Contract (Move-out) ──────────────────────────
         with st.expander("Terminate Contract (Move-out)"):
+            # Active = not yet terminated, end_date not yet past
             active = [r for r in contract_data
-                      if not r[5] or r[5] == "None" or r[5] >= str(date.today())]
+                      if not r[6]
+                      and (not r[5] or r[5] == "None" or r[5] >= str(date.today()))]
             if active:
                 to_term = st.selectbox("Select active contract", active,
                                        format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
                                        key="terminate_select")
                 moveout_date = st.date_input("Move-out date", value=date.today(), key="move_out_date")
                 if st.button("Terminate Contract", key="btn_terminate"):
-                    execute("UPDATE contracts SET end_date=? WHERE id=?",
+                    execute("UPDATE contracts SET end_date=?, terminated=1 WHERE id=?",
                             (str(moveout_date), to_term[0]))
-                    st.success(f"{to_term[1]} terminated on {moveout_date}.")
+                    st.success(f"{to_term[1]} marked as moved out on {moveout_date}.")
                     st.rerun()
             else:
                 st.info("No active contracts to terminate.")
+
+        # ── Handle Expired Contracts ───────────────────────────────
+        with st.expander("Handle Expired Contracts"):
+            st.caption(
+                "These contracts have passed their end date and are flagged as needing attention. "
+                "Choose what happened: close the contract if the tenant moved out, "
+                "or reopen it if the tenant is still living there and a new agreement is pending."
+            )
+            expired = [r for r in contract_data
+                       if not r[6]
+                       and r[5] and r[5] != "None" and r[5] < str(date.today())]
+            if expired:
+                to_handle = st.selectbox(
+                    "Select expired contract", expired,
+                    format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}  (ended {x[5]})",
+                    key="handle_expired_select"
+                )
+                action = st.radio(
+                    "Action",
+                    ["Close — tenant has moved out", "Reopen — tenant is still living there"],
+                    key="handle_expired_action"
+                )
+                if st.button("Apply", key="btn_handle_expired"):
+                    if action.startswith("Close"):
+                        execute("UPDATE contracts SET terminated=1 WHERE id=?", (to_handle[0],))
+                        st.success(f"Contract #{to_handle[0]} ({to_handle[1]}) closed.")
+                    else:
+                        execute("UPDATE contracts SET end_date=NULL WHERE id=?", (to_handle[0],))
+                        st.success(f"Contract #{to_handle[0]} ({to_handle[1]}) reopened — end date cleared.")
+                    st.rerun()
+            else:
+                st.info("No expired contracts need attention.")
 
         # ── Kaution (Deposit) ──────────────────────────────────────
         with st.expander("Kaution (Deposit)"):

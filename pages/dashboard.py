@@ -21,6 +21,7 @@ def show():
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
         WHERE c.end_date IS NOT NULL AND c.end_date != 'None'
+        AND COALESCE(c.terminated, 0) = 0
         ORDER BY c.end_date
     """)
 

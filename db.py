@@ -81,6 +81,7 @@ def init_db():
         ("kaution_paid_date", "TEXT"),
         ("kaution_returned_date", "TEXT"),
         ("kaution_returned_amount", "REAL"),
+        ("terminated", "INTEGER DEFAULT 0"),
     ]:
         try:
             c.execute(f"ALTER TABLE contracts ADD COLUMN {col} {typ}")

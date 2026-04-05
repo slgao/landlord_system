@@ -129,9 +129,15 @@ def init_db():
         serial_number TEXT,
         description TEXT,
         unit_price REAL DEFAULT 0.0,
-        unit_label TEXT DEFAULT 'Einheiten'
+        unit_label TEXT DEFAULT 'Einheiten',
+        conversion_factor REAL DEFAULT 1.0
     )
     """)
+    try:
+        c.execute("ALTER TABLE heizung_meters ADD COLUMN conversion_factor REAL DEFAULT 1.0")
+        conn.commit()
+    except Exception:
+        pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS billing_profiles(

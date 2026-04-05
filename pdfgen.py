@@ -475,9 +475,11 @@ def invoice_pdf(
         vz_label_h  = "Pauschale" if pauschale_h else "Vorauszahlung"
 
         story.append(_section_header(section_num, "Heizkosten (Heizkostenverteiler)", s))
+        price_kwh = d.get("price_kwh", 0.0)
         story.append(_info_box(
             f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
-            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  |  "
+            f"Preis: {price_kwh:.4f} €/kWh  ·  "
             f"{vz_label_h}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
             + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_h else ""), s
         ))
@@ -491,32 +493,71 @@ def invoice_pdf(
         meter_tot    = ParagraphStyle("_mt",  fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_TEXT)
         meter_tot_r  = ParagraphStyle("_mtr", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_TEXT, alignment=TA_RIGHT)
 
-        mw = [120, 120, 50, 50, 60, 68]  # Serial | Description | Start | End | Verbrauch | Kosten
-        m_rows = [[
-            Paragraph("Seriennummer",  meter_hdr),
-            Paragraph("Beschreibung",  meter_hdr),
-            Paragraph(f"Start ({unit})", meter_hdr_r),
-            Paragraph(f"Ende ({unit})",  meter_hdr_r),
-            Paragraph(f"Verbrauch",    meter_hdr_r),
-            Paragraph("Kosten",        meter_hdr_r),
-        ]]
-        for m in d.get("meter_details", []):
+        # Check if any meter uses a conversion factor ≠ 1
+        any_factor = any(abs(m.get("conversion_factor", 1.0) - 1.0) > 1e-6
+                         for m in d.get("meter_details", []))
+
+        if any_factor:
+            # Einheiten → ×factor (per meter) → kWh → ×€/kWh (shared) → Kosten
+            mw = [100, 105, 45, 45, 52, 50, 71]
+            m_rows = [[
+                Paragraph("Seriennummer",        meter_hdr),
+                Paragraph("Beschreibung",        meter_hdr),
+                Paragraph(f"Start ({unit})",     meter_hdr_r),
+                Paragraph(f"Ende ({unit})",      meter_hdr_r),
+                Paragraph(f"Verbr. ({unit})",    meter_hdr_r),
+                Paragraph("kWh (×Faktor)",       meter_hdr_r),
+                Paragraph("Kosten",              meter_hdr_r),
+            ]]
+            for m in d.get("meter_details", []):
+                fac = m.get("conversion_factor", 1.0)
+                kwh = m.get("kwh", round(m["units"] * fac, 3))
+                m_rows.append([
+                    Paragraph(m["serial"],                       meter_style),
+                    Paragraph(m["description"],                  meter_style),
+                    Paragraph(f"{m['start']:.3f}",               meter_right),
+                    Paragraph(f"{m['end']:.3f}",                 meter_right),
+                    Paragraph(f"{m['units']:.3f}",               meter_right),
+                    Paragraph(f"{kwh:.3f} (×{fac:.4f})",        meter_right),
+                    Paragraph(f"{m['cost']:.2f} €",             meter_right),
+                ])
             m_rows.append([
-                Paragraph(m["serial"],      meter_style),
-                Paragraph(m["description"], meter_style),
-                Paragraph(f"{m['start']:.3f}", meter_right),
-                Paragraph(f"{m['end']:.3f}",   meter_right),
-                Paragraph(f"{m['units']:.3f}", meter_right),
-                Paragraph(f"{m['cost']:.2f} €", meter_right),
+                Paragraph("Gesamt",                        meter_tot),
+                Paragraph("",                              meter_tot),
+                Paragraph("",                              meter_tot),
+                Paragraph("",                              meter_tot),
+                Paragraph("",                              meter_tot),
+                Paragraph("",                              meter_tot),
+                Paragraph(f"{d['total_cost_flat']:.2f} €", meter_tot_r),
             ])
-        m_rows.append([
-            Paragraph("Gesamt", meter_tot),
-            Paragraph("", meter_tot),
-            Paragraph("", meter_tot),
-            Paragraph("", meter_tot),
-            Paragraph(f"{d['total_units']:.3f}", meter_tot_r),
-            Paragraph(f"{d['total_cost_flat']:.2f} €", meter_tot_r),
-        ])
+        else:
+            # Meters already read in kWh (factor = 1.0 for all)
+            mw = [120, 130, 50, 50, 60, 58]
+            m_rows = [[
+                Paragraph("Seriennummer",    meter_hdr),
+                Paragraph("Beschreibung",    meter_hdr),
+                Paragraph("Start (kWh)",     meter_hdr_r),
+                Paragraph("Ende (kWh)",      meter_hdr_r),
+                Paragraph("Verbr. (kWh)",    meter_hdr_r),
+                Paragraph("Kosten",          meter_hdr_r),
+            ]]
+            for m in d.get("meter_details", []):
+                m_rows.append([
+                    Paragraph(m["serial"],          meter_style),
+                    Paragraph(m["description"],     meter_style),
+                    Paragraph(f"{m['start']:.3f}",  meter_right),
+                    Paragraph(f"{m['end']:.3f}",    meter_right),
+                    Paragraph(f"{m['units']:.3f}",  meter_right),
+                    Paragraph(f"{m['cost']:.2f} €", meter_right),
+                ])
+            m_rows.append([
+                Paragraph("Gesamt",                        meter_tot),
+                Paragraph("",                              meter_tot),
+                Paragraph("",                              meter_tot),
+                Paragraph("",                              meter_tot),
+                Paragraph("",                              meter_tot),
+                Paragraph(f"{d['total_cost_flat']:.2f} €", meter_tot_r),
+            ])
         mt = Table(m_rows, colWidths=mw)
         mt.setStyle(TableStyle([
             ("BACKGROUND",    (0, 0), (-1, 0),   C_NAVY),
@@ -535,7 +576,7 @@ def invoice_pdf(
         # ── Proration calculation table ───────────────────────────
         story.append(_calc_table([
             ["Position", "Berechnung", "Betrag"],
-            ["Gesamtkosten Wohnung",    f"Σ Verteiler × Einheitspreis",
+            ["Gesamtkosten Wohnung",    f"Σ ({unit} × Faktor × {price_kwh:.4f} €/kWh)",
              f"{d['total_cost_flat']:.2f} €"],
             ["Ihr Anteil (Zeitraum)",   f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
              f"{d['cost']:.2f} €"],

@@ -148,8 +148,13 @@ def water_calc_detail(start_m3, end_m3, frischwasser_per_m3, abwasser_per_m3,
 def heizung_calc_detail(meters, num_tenants, bill_days, eff_days,
                         prepay_monthly, is_pauschale=False):
     """
-    meters: list of dicts with keys start, end, unit_price
-    Computes heating cost from Heizkostenverteiler readings.
+    meters: list of dicts with keys:
+        start, end          – meter readings in native units (e.g. ISTA Einheiten)
+        unit_label          – label for native units (e.g. 'Einheiten')
+        conversion_factor   – native units → kWh  (from ISTA bill, default 1.0)
+        unit_price          – €/kWh  (from ISTA bill)
+
+    Cost per meter = (end − start) × conversion_factor × €/kWh
     """
     n  = max(1, num_tenants)
     bd = max(1, bill_days)
@@ -157,18 +162,23 @@ def heizung_calc_detail(meters, num_tenants, bill_days, eff_days,
     total_cost_flat = 0.0
     total_units = 0.0
     for m in meters:
-        units = max(0.0, m["end"] - m["start"])
-        cost  = round(units * m["unit_price"], 2)
-        total_units     += units
+        raw_units  = max(0.0, m["end"] - m["start"])
+        factor     = float(m.get("conversion_factor", 1.0))
+        kwh        = raw_units * factor
+        cost       = round(kwh * m["unit_price"], 2)
+        total_units     += raw_units
         total_cost_flat += cost
         meter_details.append({
-            "serial":      m.get("serial", ""),
-            "description": m.get("description", ""),
-            "start":       m["start"],
-            "end":         m["end"],
-            "units":       round(units, 3),
-            "unit_price":  m["unit_price"],
-            "cost":        cost,
+            "serial":            m.get("serial", ""),
+            "description":       m.get("description", ""),
+            "unit_label":        m.get("unit_label", "Einheiten"),
+            "start":             m["start"],
+            "end":               m["end"],
+            "units":             round(raw_units, 3),
+            "conversion_factor": round(factor, 4),
+            "kwh":               round(kwh, 3),
+            "unit_price":        m["unit_price"],
+            "cost":              cost,
         })
     cost_tenant = total_cost_flat * eff_days / bd / n
     prepay      = prepay_monthly * 12 / 365 * eff_days

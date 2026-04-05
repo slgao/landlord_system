@@ -3,7 +3,7 @@ import streamlit as st
 import calendar
 from datetime import date, timedelta
 from pathlib import Path
-from db import fetch, execute, get_config, get_tenant_address, get_tenant_gender
+from db import fetch, execute, get_config, get_tenant_gender
 from logic import strom_calc_detail, gas_calc_detail, water_calc_detail, betriebskosten_calc, heizung_calc_detail
 from pdfgen import invoice_pdf
 
@@ -86,13 +86,14 @@ def _load_profile_into_state(data: dict):
         st.session_state["heiz_eff_start"]    = eff_s
         st.session_state["heiz_eff_end"]      = eff_e
         st.session_state["heiz_limit"]        = float(h.get("prepay_pm", 0))
+        st.session_state["heiz_price_kwh"]    = float(h.get("price_kwh", 0))
         st.session_state["heiz_is_pauschale"] = bool(h.get("is_pauschale", False))
         st.session_state["_heiz_bill_key"]    = (bill_s, bill_e)
         for m in h.get("meters", []):
             mid = m["meter_id"]
-            st.session_state[f"heiz_start_{mid}"] = float(m.get("start", 0))
-            st.session_state[f"heiz_end_{mid}"]   = float(m.get("end", 0))
-            st.session_state[f"heiz_price_{mid}"] = float(m.get("unit_price", 0))
+            st.session_state[f"heiz_start_{mid}"]  = float(m.get("start", 0))
+            st.session_state[f"heiz_end_{mid}"]    = float(m.get("end", 0))
+            st.session_state[f"heiz_factor_{mid}"] = float(m.get("conversion_factor", 1.0))
     else:
         st.session_state["include_heiz"] = False
 
@@ -155,10 +156,8 @@ def show():
         return
 
     tenant_choice = st.selectbox("Tenant", contract_tenants, format_func=lambda x: x[1])
-    tenant  = tenant_choice[1]
-    address = get_tenant_address(tenant) or ""
-    gender  = get_tenant_gender(tenant)
-    st.info(f"Address: {address}" if address else "No address found for this tenant.")
+    tenant = tenant_choice[1]
+    gender = get_tenant_gender(tenant)
 
     # ── Load Billing Profile ───────────────────────────────────────
     profiles = fetch(
@@ -187,6 +186,52 @@ def show():
                     st.success(f"Profile '{sel_prof[1]}' deleted.")
                     st.rerun()
 
+    # ── Contract / Apartment selector ─────────────────────────────
+    all_contracts = fetch("""
+        SELECT c.id, c.start_date, c.end_date, a.name, a.id
+        FROM contracts c
+        JOIN apartments a ON c.apartment_id = a.id
+        WHERE c.tenant_id=? ORDER BY c.start_date DESC
+    """, (tenant_choice[0],))
+    if not all_contracts:
+        st.warning("No contract found for this tenant.")
+        return
+
+    def _fmt_contract(row):
+        cid, s, e, apt, _ = row
+        e_str = e if e and e != "None" else "unbefristet"
+        return f"{apt}  ({s} – {e_str})"
+
+    if len(all_contracts) > 1:
+        contract_row = st.selectbox(
+            "Contract / Apartment", all_contracts,
+            format_func=_fmt_contract,
+            key="nk_contract_sel",
+        )
+    else:
+        contract_row = all_contracts[0]
+
+    selected_contract_id  = contract_row[0]
+    selected_apartment_id = contract_row[4]
+    c_start_str, c_end_str = contract_row[1], contract_row[2]
+    contract_start = date.fromisoformat(c_start_str)
+    contract_end   = (date.fromisoformat(c_end_str)
+                      if c_end_str and c_end_str != "None" else None)
+    end_display = contract_end.strftime("%d.%m.%Y") if contract_end else "unbefristet"
+
+    addr_row = fetch("""
+        SELECT p.address FROM apartments a
+        JOIN properties p ON p.id = a.property_id
+        WHERE a.id = ?
+    """, (selected_apartment_id,))
+    address = addr_row[0][0] if addr_row and addr_row[0][0] else ""
+
+    st.info(
+        f"**Contract:** {contract_row[3]}  ·  "
+        f"{contract_start.strftime('%d.%m.%Y')} — {end_display}  \n"
+        + (f"**Address:** {address}" if address else "No address found for this property.")
+    )
+
     # ── Auto-count persons in flat ─────────────────────────────────
     persons_in_flat = fetch("""
         SELECT COUNT(DISTINCT c.tenant_id)
@@ -195,22 +240,15 @@ def show():
         WHERE COALESCE(c.terminated, 0) = 0
         AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= date('now'))
         AND a.flat IS NOT NULL AND a.flat != ''
-        AND a.property_id = (
-            SELECT a2.property_id FROM contracts c2
-            JOIN apartments a2 ON c2.apartment_id = a2.id
-            WHERE c2.tenant_id = ? LIMIT 1
-        )
-        AND a.flat = (
-            SELECT a2.flat FROM contracts c2
-            JOIN apartments a2 ON c2.apartment_id = a2.id
-            WHERE c2.tenant_id = ? AND (a2.flat IS NOT NULL AND a2.flat != '')
-            LIMIT 1
-        )
-    """, (tenant_choice[0], tenant_choice[0]))
+        AND a.property_id = (SELECT property_id FROM apartments WHERE id=?)
+        AND a.flat = (SELECT flat FROM apartments WHERE id=?)
+    """, (selected_apartment_id, selected_apartment_id))
     auto_count = persons_in_flat[0][0] if persons_in_flat and persons_in_flat[0][0] else 1
 
-    if st.session_state.get("_nk_tenant_id") != tenant_choice[0]:
-        st.session_state["_nk_tenant_id"]  = tenant_choice[0]
+    # Reset when tenant OR contract changes
+    _nk_key = (tenant_choice[0], selected_contract_id)
+    if st.session_state.get("_nk_tenant_id") != _nk_key:
+        st.session_state["_nk_tenant_id"]  = _nk_key
         st.session_state["nk_num_tenants"] = int(auto_count)
         _reset_extra_items([])
 
@@ -223,26 +261,6 @@ def show():
     num_tenants = st.number_input("Tenants in flat", min_value=1, key="nk_num_tenants")
     if auto_count > 1:
         st.caption(f"Auto-detected {auto_count} active tenants sharing the same flat.")
-
-    # ── Tenant contract reference ──────────────────────────────────
-    st.divider()
-    contract_row = fetch("""
-        SELECT c.start_date, c.end_date FROM contracts c
-        WHERE c.tenant_id=? ORDER BY c.start_date DESC LIMIT 1
-    """, (tenant_choice[0],))
-    if not contract_row:
-        st.warning("No contract found for this tenant.")
-        return
-
-    c_start_str, c_end_str = contract_row[0]
-    contract_start = date.fromisoformat(c_start_str)
-    contract_end   = (date.fromisoformat(c_end_str)
-                      if c_end_str and c_end_str != "None" else None)
-    end_display = contract_end.strftime("%d.%m.%Y") if contract_end else "unbefristet"
-    st.info(
-        f"**Tenant contract:** {contract_start.strftime('%d.%m.%Y')} — {end_display}  \n"
-        "Each utility's billing period is intersected with these dates to determine the effective share."
-    )
 
     def _effective(bill_start, bill_end):
         c_end = contract_end if contract_end else bill_end
@@ -261,6 +279,7 @@ def show():
     include_extra = st.checkbox("Zusätzliche Positionen (damages, agreements…)", key="include_extra")
 
     strom_data = gas_data = water_data = heiz_data = bk_data = extra_data = None
+    meter_inputs = []
 
     # ── Strom ──────────────────────────────────────────────────────
     if include_strom:
@@ -535,16 +554,11 @@ def show():
     if include_heiz:
         st.subheader("Heizkosten (Heizkostenverteiler)")
 
-        # Look up the apartment for this tenant
-        apt_row = fetch("""
-            SELECT a.id, a.name FROM contracts c
-            JOIN apartments a ON c.apartment_id = a.id
-            WHERE c.tenant_id=? ORDER BY c.start_date DESC LIMIT 1
-        """, (tenant_choice[0],))
-        apt_id = apt_row[0][0] if apt_row else None
+        apt_id = selected_apartment_id
 
         reg_meters = fetch(
-            "SELECT id, serial_number, description, unit_price, unit_label "
+            "SELECT id, serial_number, description, unit_label, "
+            "COALESCE(conversion_factor, 1.0) "
             "FROM heizung_meters WHERE apartment_id=? ORDER BY id",
             (apt_id,)
         ) if apt_id else []
@@ -587,17 +601,22 @@ def show():
                 h_eff_days = max(1, (h_eff_end - h_eff_start).days + 1)
                 st.caption(f"{h_eff_days} days")
 
-                st.caption("Meter readings:")
+                heiz_price_kwh = st.number_input(
+                    "Price (€/kWh) — same for all meters, from ISTA bill",
+                    min_value=0.0, format="%.4f", key="heiz_price_kwh",
+                )
+
+                st.caption("Meter readings — conversion factor per Heizkörper from ISTA bill:")
                 # Header row
                 hc1, hc2, hc3, hc4, hc5 = st.columns([2, 2, 1, 1, 1])
-                hc1.caption("Serial / Description")
+                hc1.caption("Serial")
                 hc2.caption("Description")
                 hc3.caption("Start reading")
                 hc4.caption("End reading")
-                hc5.caption("Unit price")
+                hc5.caption("Conv. factor (→kWh)")
 
                 meter_inputs = []
-                for mid, serial, desc, default_price, unit_label in reg_meters:
+                for mid, serial, desc, unit_label, default_factor in reg_meters:
                     c1, c2, c3, c4, c5 = st.columns([2, 2, 1, 1, 1])
                     c1.markdown(f"**{serial}**")
                     c2.markdown(desc or "—")
@@ -610,23 +629,24 @@ def show():
                                                 key=f"heiz_end_{mid}",
                                                 label_visibility="collapsed")
                     with c5:
-                        m_price = st.number_input("€/unit", min_value=0.0,
-                                                  value=float(st.session_state.get(
-                                                      f"heiz_price_{mid}", default_price)),
-                                                  format="%.4f",
-                                                  key=f"heiz_price_{mid}",
-                                                  label_visibility="collapsed")
+                        m_factor = st.number_input("Conv. factor", min_value=0.0,
+                                                   value=float(st.session_state.get(
+                                                       f"heiz_factor_{mid}", default_factor)),
+                                                   format="%.4f",
+                                                   key=f"heiz_factor_{mid}",
+                                                   label_visibility="collapsed")
                     meter_inputs.append({
-                        "meter_id":    mid,
-                        "serial":      serial,
-                        "description": desc or "",
-                        "unit_label":  unit_label or "Einheiten",
-                        "start":       m_start,
-                        "end":         m_end,
-                        "unit_price":  m_price,
+                        "meter_id":          mid,
+                        "serial":            serial,
+                        "description":       desc or "",
+                        "unit_label":        unit_label or "Einheiten",
+                        "start":             m_start,
+                        "end":               m_end,
+                        "unit_price":        heiz_price_kwh,
+                        "conversion_factor": m_factor,
                     })
 
-                unit_label_display = reg_meters[0][4] if reg_meters else "Einheiten"
+                unit_label_display = reg_meters[0][3] if reg_meters else "Einheiten"
                 heiz_limit_pm  = st.number_input("Prepayment per month (€)",
                                                  min_value=0.0, key="heiz_limit")
                 heiz_is_pauschale = st.checkbox(
@@ -653,6 +673,7 @@ def show():
                     "days":           h_eff_days,
                     "num_tenants":    int(num_tenants),
                     "monthly_limit":  heiz_limit_pm,
+                    "price_kwh":      heiz_price_kwh,
                     "unit_label":     unit_label_display,
                     "is_pauschale":   bool(heiz_is_pauschale),
                     **calc_h,
@@ -807,11 +828,11 @@ def show():
         key="include_ll_info",
     )
 
-    # Check for an unreturned Kaution on this tenant's latest contract
+    # Check for an unreturned Kaution on the selected contract
     kaution_row = fetch("""
         SELECT kaution_amount, kaution_returned_date FROM contracts
-        WHERE tenant_id=? ORDER BY start_date DESC LIMIT 1
-    """, (tenant_choice[0],))
+        WHERE id=?
+    """, (selected_contract_id,))
     kaution_available = (
         kaution_row
         and kaution_row[0][0]
@@ -923,17 +944,18 @@ def show():
                 "eff_start":    str(st.session_state["heiz_eff_start"]),
                 "eff_end":      str(st.session_state["heiz_eff_end"]),
                 "prepay_pm":    float(st.session_state.get("heiz_limit", 0)),
+                "price_kwh":    float(st.session_state.get("heiz_price_kwh", 0)),
                 "is_pauschale": bool(st.session_state.get("heiz_is_pauschale", False)),
                 "meters": [
                     {
-                        "meter_id":   m["meter_id"],
-                        "serial":     m["serial"],
-                        "description": m["description"],
-                        "start":      float(st.session_state.get(f"heiz_start_{m['meter_id']}", 0)),
-                        "end":        float(st.session_state.get(f"heiz_end_{m['meter_id']}", 0)),
-                        "unit_price": float(st.session_state.get(f"heiz_price_{m['meter_id']}", 0)),
+                        "meter_id":          m["meter_id"],
+                        "serial":            m["serial"],
+                        "description":       m["description"],
+                        "start":             float(st.session_state.get(f"heiz_start_{m['meter_id']}", 0)),
+                        "end":               float(st.session_state.get(f"heiz_end_{m['meter_id']}", 0)),
+                        "conversion_factor": float(st.session_state.get(f"heiz_factor_{m['meter_id']}", 1.0)),
                     }
-                    for m in heiz_data.get("meter_details", [])
+                    for m in meter_inputs
                 ],
             }
         extra_items = _collect_extra_items()
@@ -979,8 +1001,11 @@ def show():
                     format_func=lambda x: f"{x[1]}  ({x[2]})",
                     key="profile_update_sel",
                 )
-                new_label = st.text_input("Rename (leave unchanged to keep current name)",
-                                          value=to_update[1], key="profile_update_label")
+                if st.session_state.get("_profile_update_id") != to_update[0]:
+                    st.session_state["_profile_update_id"]  = to_update[0]
+                    st.session_state["profile_update_label"] = to_update[1]
+                new_label = st.text_input("Rename (optional)",
+                                          key="profile_update_label")
                 if st.button("Update", key="btn_update_profile", type="primary"):
                     pd_ = _build_profile_data()
                     if len(pd_) <= 1:

@@ -74,40 +74,54 @@ def show():
                 key="apt_heiz_sel"
             )
             meters = fetch(
-                "SELECT id, serial_number, description, unit_price, unit_label "
+                "SELECT id, serial_number, description, unit_label, "
+                "COALESCE(conversion_factor, 1.0) "
                 "FROM heizung_meters WHERE apartment_id=? ORDER BY id",
                 (apt_heiz[0],)
             )
             if meters:
                 df_m = pd.DataFrame(meters,
                                     columns=["ID", "Serial No.", "Description",
-                                             "Unit Price", "Unit"])
+                                             "Meter Unit", "Conv. Factor (→kWh)"])
                 st.dataframe(df_m, hide_index=True)
             else:
                 st.info("No meters registered for this apartment.")
 
+            st.caption(
+                "**How billing works:** meter reads in Einheiten → "
+                "× conversion factor (per meter) = kWh → "
+                "× price €/kWh (entered once per billing) = cost."
+            )
             st.markdown("**Add meter**")
             col1, col2 = st.columns(2)
             with col1:
                 m_serial = st.text_input("Serial number", key="m_serial",
                                          placeholder="e.g. ISTA-00123456")
-                m_price  = st.number_input("Unit price (€/unit or €/kWh)",
-                                           min_value=0.0, format="%.4f", key="m_price")
-            with col2:
                 m_desc   = st.text_input("Description / Location", key="m_desc",
                                          placeholder="e.g. Wohnzimmer Heizkörper")
-                m_unit   = st.text_input("Unit label", value="Einheiten", key="m_unit",
-                                         placeholder="e.g. Einheiten / kWh")
+            with col2:
+                m_unit   = st.text_input(
+                    "Meter unit label", value="Einheiten", key="m_unit",
+                    placeholder="e.g. Einheiten",
+                    help="The unit shown on the physical meter display."
+                )
+                m_factor = st.number_input(
+                    "Conversion factor (Einheiten → kWh)",
+                    min_value=0.0, value=1.0, format="%.4f", key="m_factor",
+                    help="From your ISTA bill: converts this meter's units to kWh. "
+                         "Each Heizkörper can have a different factor. "
+                         "Leave at 1.0 if the meter already reads in kWh."
+                )
             if st.button("Add Meter", key="btn_add_meter"):
                 if not m_serial.strip():
                     st.warning("Serial number is required.")
                 else:
                     execute(
                         "INSERT INTO heizung_meters "
-                        "(apartment_id, serial_number, description, unit_price, unit_label) "
+                        "(apartment_id, serial_number, description, unit_label, conversion_factor) "
                         "VALUES (?, ?, ?, ?, ?)",
                         (apt_heiz[0], m_serial.strip(), m_desc.strip(),
-                         m_price, m_unit.strip() or "Einheiten")
+                         m_unit.strip() or "Einheiten", m_factor)
                     )
                     st.success("Meter added.")
                     st.rerun()

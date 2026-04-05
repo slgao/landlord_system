@@ -77,7 +77,7 @@ def strom_calc_detail(start_kwh, end_kwh, arbeitspreis, grundpreis_monthly,
         nach = max(0.0, nach)
     return dict(
         verbrauch           = round(verbrauch, 2),
-        verbrauch_tenant    = round(verbrauch_tenant, 4),
+        verbrauch_tenant    = round(verbrauch_tenant, 3),
         arbeitskosten       = round(arbeitskosten, 2),
         grundkosten         = round(grundkosten, 2),
         cost_tenant         = round(cost_tenant, 2),
@@ -109,7 +109,7 @@ def gas_calc_detail(start_m3, end_m3, umrechnungsfaktor, arbeitspreis, grundprei
     return dict(
         verbrauch_m3        = round(verbrauch_m3, 3),
         verbrauch_kwh       = round(verbrauch_kwh, 2),
-        verbrauch_kwh_t     = round(verbrauch_kwh_t, 4),
+        verbrauch_kwh_t     = round(verbrauch_kwh_t, 3),
         arbeitskosten       = round(arbeitskosten, 2),
         grundkosten         = round(grundkosten, 2),
         cost_tenant         = round(cost_tenant, 2),
@@ -137,7 +137,7 @@ def water_calc_detail(start_m3, end_m3, frischwasser_per_m3, abwasser_per_m3,
         nach = max(0.0, nach)
     return dict(
         verbrauch_m3    = round(verbrauch_m3, 3),
-        cost_per_m3     = round(cost_per_m3, 4),
+        cost_per_m3     = round(cost_per_m3, 3),
         cost_flat       = round(cost_flat, 2),
         cost_tenant     = round(cost_tenant, 2),
         prepay          = round(prepay, 2),

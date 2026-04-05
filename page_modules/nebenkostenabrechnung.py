@@ -280,7 +280,7 @@ def show():
                                                   min_value=0.0, format="%.2f",
                                                   key="strom_start_kwh")
                 strom_arbeitspreis = st.number_input("Arbeitspreis (€/kWh)",
-                                                     min_value=0.0, format="%.4f",
+                                                     min_value=0.0, format="%.3f",
                                                      key="strom_arbeitspreis")
             with col2:
                 strom_end_kwh = st.number_input("Ende Zählerstand (kWh)",
@@ -368,7 +368,7 @@ def show():
                                                min_value=0.0, format="%.3f",
                                                key="gas_start_m3")
                 gas_umrechnung = st.number_input("Umrechnungsfaktor (kWh/m³)",
-                                                 min_value=0.0, value=10.0, format="%.4f",
+                                                 min_value=0.0, value=10.0, format="%.3f",
                                                  key="gas_umrechnung",
                                                  help="Brennwert × Zustandszahl — from your gas bill (NBB)")
                 gas_grundpreis = st.number_input("Grundpreis (€/Monat)",
@@ -379,7 +379,7 @@ def show():
                                              min_value=0.0, format="%.3f",
                                              key="gas_end_m3")
                 gas_arbeitspreis = st.number_input("Arbeitspreis (€/kWh)",
-                                                   min_value=0.0, format="%.4f",
+                                                   min_value=0.0, format="%.3f",
                                                    key="gas_arbeitspreis")
             gas_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0,
                                            key="gas_limit")
@@ -461,14 +461,14 @@ def show():
                                                  min_value=0.0, format="%.3f",
                                                  key="water_start_m3")
                 water_frischwasser = st.number_input("Frischwasser (€/m³)",
-                                                     min_value=0.0, format="%.4f",
+                                                     min_value=0.0, format="%.3f",
                                                      key="water_frischwasser")
             with col2:
                 water_end_m3 = st.number_input("Ende Wasserzählerstand (m³)",
                                                min_value=0.0, format="%.3f",
                                                key="water_end_m3")
                 water_abwasser = st.number_input("Abwasser (€/m³)",
-                                                 min_value=0.0, format="%.4f",
+                                                 min_value=0.0, format="%.3f",
                                                  key="water_abwasser")
             water_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0,
                                              key="water_limit")

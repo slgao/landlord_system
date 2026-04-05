@@ -270,7 +270,7 @@ def show():
                                             key="strom_eff_start")
             with col2:
                 s_eff_end = st.date_input("Effective end", key="strom_eff_end")
-            s_eff_days = max(1, (s_eff_end - s_eff_start).days)
+            s_eff_days = max(1, (s_eff_end - s_eff_start).days + 1)
             st.caption(f"{s_eff_days} days")
 
             st.caption("Meter readings & tariff:")
@@ -297,7 +297,7 @@ def show():
                 key="strom_is_pauschale",
             )
 
-            strom_bill_days = max(1, (strom_bill_end - strom_bill_start).days)
+            strom_bill_days = max(1, (strom_bill_end - strom_bill_start).days + 1)
             calc = strom_calc_detail(
                 strom_start_kwh, strom_end_kwh, strom_arbeitspreis, strom_grundpreis,
                 num_tenants, strom_bill_days, s_eff_days, strom_limit_pm,
@@ -358,7 +358,7 @@ def show():
                                             key="gas_eff_start")
             with col2:
                 g_eff_end = st.date_input("Effective end", key="gas_eff_end")
-            g_eff_days = max(1, (g_eff_end - g_eff_start).days)
+            g_eff_days = max(1, (g_eff_end - g_eff_start).days + 1)
             st.caption(f"{g_eff_days} days")
 
             st.caption("Meter readings & tariff:")
@@ -389,7 +389,7 @@ def show():
                 key="gas_is_pauschale",
             )
 
-            gas_bill_days = max(1, (gas_bill_end - gas_bill_start).days)
+            gas_bill_days = max(1, (gas_bill_end - gas_bill_start).days + 1)
             calc = gas_calc_detail(
                 gas_start_m3, gas_end_m3, gas_umrechnung, gas_arbeitspreis, gas_grundpreis,
                 num_tenants, gas_bill_days, g_eff_days, gas_limit_pm,
@@ -451,7 +451,7 @@ def show():
                                             key="water_eff_start")
             with col2:
                 w_eff_end = st.date_input("Effective end", key="water_eff_end")
-            w_eff_days = max(1, (w_eff_end - w_eff_start).days)
+            w_eff_days = max(1, (w_eff_end - w_eff_start).days + 1)
             st.caption(f"{w_eff_days} days")
 
             st.caption("Meter readings & tariff:")
@@ -478,7 +478,7 @@ def show():
                 key="water_is_pauschale",
             )
 
-            water_bill_days = max(1, (water_bill_end - water_bill_start).days)
+            water_bill_days = max(1, (water_bill_end - water_bill_start).days + 1)
             calc = water_calc_detail(
                 water_start_m3, water_end_m3, water_frischwasser, water_abwasser,
                 num_tenants, water_bill_days, w_eff_days, water_limit_pm,

@@ -18,7 +18,7 @@ init_db()
 
 st.set_page_config(page_title="Landlord Management System", layout="wide")
 
-from pages import (
+from page_modules import (
     dashboard,
     properties,
     apartments,

@@ -57,6 +57,94 @@ def water_calc(cost_flat, tenants, bill_days, eff_days, limit_per_month=0):
     return cost_per_tenant, limit_period, nachzahlung
 
 
+def strom_calc_detail(start_kwh, end_kwh, arbeitspreis, grundpreis_monthly,
+                      num_tenants, bill_days, eff_days, prepay_monthly,
+                      is_pauschale=False):
+    """
+    Detailed Strom calculation from meter readings.
+    Grundpreis is per month; prorated daily to tenant's effective period.
+    """
+    n  = max(1, num_tenants)
+    bd = max(1, bill_days)
+    verbrauch          = max(0.0, end_kwh - start_kwh)
+    verbrauch_tenant   = verbrauch * eff_days / bd / n
+    arbeitskosten      = verbrauch_tenant * arbeitspreis
+    grundkosten        = grundpreis_monthly * 12 / 365 * eff_days / n
+    cost_tenant        = arbeitskosten + grundkosten
+    prepay             = prepay_monthly * 12 / 365 * eff_days
+    nach               = cost_tenant - prepay
+    if is_pauschale:
+        nach = max(0.0, nach)
+    return dict(
+        verbrauch           = round(verbrauch, 2),
+        verbrauch_tenant    = round(verbrauch_tenant, 4),
+        arbeitskosten       = round(arbeitskosten, 2),
+        grundkosten         = round(grundkosten, 2),
+        cost_tenant         = round(cost_tenant, 2),
+        prepay              = round(prepay, 2),
+        nach                = round(nach, 2),
+    )
+
+
+def gas_calc_detail(start_m3, end_m3, umrechnungsfaktor, arbeitspreis, grundpreis_monthly,
+                    num_tenants, bill_days, eff_days, prepay_monthly,
+                    is_pauschale=False):
+    """
+    Detailed Gas calculation from meter readings.
+    umrechnungsfaktor: kWh/m³ (Brennwert × Zustandszahl, from the gas bill).
+    Grundpreis prorated daily.
+    """
+    n  = max(1, num_tenants)
+    bd = max(1, bill_days)
+    verbrauch_m3       = max(0.0, end_m3 - start_m3)
+    verbrauch_kwh      = verbrauch_m3 * umrechnungsfaktor
+    verbrauch_kwh_t    = verbrauch_kwh * eff_days / bd / n
+    arbeitskosten      = verbrauch_kwh_t * arbeitspreis
+    grundkosten        = grundpreis_monthly * 12 / 365 * eff_days / n
+    cost_tenant        = arbeitskosten + grundkosten
+    prepay             = prepay_monthly * 12 / 365 * eff_days
+    nach               = cost_tenant - prepay
+    if is_pauschale:
+        nach = max(0.0, nach)
+    return dict(
+        verbrauch_m3        = round(verbrauch_m3, 3),
+        verbrauch_kwh       = round(verbrauch_kwh, 2),
+        verbrauch_kwh_t     = round(verbrauch_kwh_t, 4),
+        arbeitskosten       = round(arbeitskosten, 2),
+        grundkosten         = round(grundkosten, 2),
+        cost_tenant         = round(cost_tenant, 2),
+        prepay              = round(prepay, 2),
+        nach                = round(nach, 2),
+    )
+
+
+def water_calc_detail(start_m3, end_m3, frischwasser_per_m3, abwasser_per_m3,
+                      num_tenants, bill_days, eff_days, prepay_monthly,
+                      is_pauschale=False):
+    """
+    Detailed cold-water calculation from meter readings.
+    No Grundpreis — water is billed purely by consumption.
+    """
+    n  = max(1, num_tenants)
+    bd = max(1, bill_days)
+    verbrauch_m3   = max(0.0, end_m3 - start_m3)
+    cost_per_m3    = frischwasser_per_m3 + abwasser_per_m3
+    cost_flat      = verbrauch_m3 * cost_per_m3
+    cost_tenant    = cost_flat * eff_days / bd / n
+    prepay         = prepay_monthly * 12 / 365 * eff_days
+    nach           = cost_tenant - prepay
+    if is_pauschale:
+        nach = max(0.0, nach)
+    return dict(
+        verbrauch_m3    = round(verbrauch_m3, 3),
+        cost_per_m3     = round(cost_per_m3, 4),
+        cost_flat       = round(cost_flat, 2),
+        cost_tenant     = round(cost_tenant, 2),
+        prepay          = round(prepay, 2),
+        nach            = round(nach, 2),
+    )
+
+
 def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end, limit_per_month=206):
     num_months = (bk_end.year - bk_start.year) * 12 + (bk_end.month - bk_start.month + 1)
     if num_months == 0:

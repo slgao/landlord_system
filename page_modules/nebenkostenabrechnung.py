@@ -1,17 +1,116 @@
+import json
 import streamlit as st
 import calendar
 from datetime import date, timedelta
 from pathlib import Path
-from db import fetch, get_tenant_address, get_tenant_gender
-from logic import strom_calc, gas_calc, water_calc, betriebskosten_calc
+from db import fetch, execute, get_config, get_tenant_address, get_tenant_gender
+from logic import strom_calc_detail, gas_calc_detail, water_calc_detail, betriebskosten_calc
 from pdfgen import invoice_pdf
 
+
+# ── Profile helpers ────────────────────────────────────────────────────────────
+
+def _load_profile_into_state(data: dict):
+    st.session_state["nk_num_tenants"] = data.get("num_tenants", 1)
+
+    for util in ("strom", "gas", "water"):
+        if data.get(util):
+            d = data[util]
+            bill_s = date.fromisoformat(d["bill_start"])
+            bill_e = date.fromisoformat(d["bill_end"])
+            eff_s  = date.fromisoformat(d["eff_start"])
+            eff_e  = date.fromisoformat(d["eff_end"])
+            st.session_state[f"include_{util}"]       = True
+            st.session_state[f"{util}_start"]         = bill_s
+            st.session_state[f"{util}_end"]           = bill_e
+            st.session_state[f"{util}_eff_start"]     = eff_s
+            st.session_state[f"{util}_eff_end"]       = eff_e
+            st.session_state[f"{util}_limit"]         = float(d.get("prepay_pm", 0))
+            st.session_state[f"_{util}_bill_key"]     = (bill_s, bill_e)
+            if util == "strom":
+                st.session_state["strom_start_kwh"]     = float(d.get("start_kwh", 0))
+                st.session_state["strom_end_kwh"]       = float(d.get("end_kwh", 0))
+                st.session_state["strom_arbeitspreis"]  = float(d.get("arbeitspreis", 0))
+                st.session_state["strom_grundpreis"]    = float(d.get("grundpreis_monthly", 0))
+                st.session_state["strom_is_pauschale"]  = bool(d.get("is_pauschale", False))
+            elif util == "gas":
+                st.session_state["gas_start_m3"]        = float(d.get("start_m3", 0))
+                st.session_state["gas_end_m3"]          = float(d.get("end_m3", 0))
+                st.session_state["gas_umrechnung"]      = float(d.get("umrechnungsfaktor", 10.0))
+                st.session_state["gas_arbeitspreis"]    = float(d.get("arbeitspreis", 0))
+                st.session_state["gas_grundpreis"]      = float(d.get("grundpreis_monthly", 0))
+                st.session_state["gas_is_pauschale"]    = bool(d.get("is_pauschale", False))
+            elif util == "water":
+                st.session_state["water_start_m3"]      = float(d.get("start_m3", 0))
+                st.session_state["water_end_m3"]        = float(d.get("end_m3", 0))
+                st.session_state["water_frischwasser"]  = float(d.get("frischwasser_per_m3", 0))
+                st.session_state["water_abwasser"]      = float(d.get("abwasser_per_m3", 0))
+                st.session_state["water_is_pauschale"]  = bool(d.get("is_pauschale", False))
+        else:
+            st.session_state[f"include_{util}"] = False
+
+    if data.get("bk"):
+        d = data["bk"]
+        st.session_state["include_bk"]      = True
+        st.session_state["bk_s_month"]      = d["bill_s_month"]
+        st.session_state["bk_s_year"]       = d["bill_s_year"]
+        st.session_state["bk_e_month"]      = d["bill_e_month"]
+        st.session_state["bk_e_year"]       = d["bill_e_year"]
+        st.session_state["bk_eff_s_month"]  = d["eff_s_month"]
+        st.session_state["bk_eff_s_year"]   = d["eff_s_year"]
+        st.session_state["bk_eff_e_month"]  = d["eff_e_month"]
+        st.session_state["bk_eff_e_year"]   = d["eff_e_year"]
+        st.session_state["bk_limit"]        = float(d.get("prepay_pm", 0))
+        st.session_state["bk_cost"]         = float(d.get("total_cost", 0))
+        st.session_state["_bk_bill_key"]    = (
+            d["bill_s_month"], d["bill_s_year"],
+            d["bill_e_month"], d["bill_e_year"],
+        )
+    else:
+        st.session_state["include_bk"] = False
+
+    # Extra items + auto-tick checkbox if profile contains them
+    _reset_extra_items(data.get("extra_items", []))
+    st.session_state["include_extra"] = bool(data.get("extra_items"))
+
+
+def _reset_extra_items(items: list):
+    """Replace session-state extra items with the given list."""
+    for iid in st.session_state.get("extra_item_ids", []):
+        st.session_state.pop(f"extra_desc_{iid}", None)
+        st.session_state.pop(f"extra_amt_{iid}", None)
+    st.session_state["extra_item_ids"]     = []
+    st.session_state["extra_item_counter"] = 0
+    for item in items:
+        iid = st.session_state["extra_item_counter"]
+        st.session_state["extra_item_ids"].append(iid)
+        st.session_state[f"extra_desc_{iid}"] = item.get("description", "")
+        st.session_state[f"extra_amt_{iid}"]  = float(item.get("amount", 0.0))
+        st.session_state["extra_item_counter"] += 1
+
+
+def _collect_extra_items() -> list:
+    """Read current extra-item widget values from session state."""
+    items = []
+    for iid in st.session_state.get("extra_item_ids", []):
+        desc = st.session_state.get(f"extra_desc_{iid}", "").strip()
+        amt  = float(st.session_state.get(f"extra_amt_{iid}", 0.0))
+        if desc:
+            items.append({"description": desc, "amount": amt})
+    return items
+
+
+# ── Page ───────────────────────────────────────────────────────────────────────
 
 def show():
     st.header("Nebenkostenabrechnung")
 
     # ── Landlord & Signature ───────────────────────────────────────
-    landlord_name = st.text_input("Landlord name", value="Ihr Vermieter")
+    landlord_name = st.text_input(
+        "Landlord name",
+        value=get_config("landlord_name", "Ihr Vermieter"),
+        key="nk_landlord_name",
+    )
     sig_path = "pdf/signature.png"
     if Path(sig_path).exists():
         st.image(sig_path, width=200, caption="Current signature")
@@ -38,33 +137,69 @@ def show():
     gender  = get_tenant_gender(tenant)
     st.info(f"Address: {address}" if address else "No address found for this tenant.")
 
+    # ── Load Billing Profile ───────────────────────────────────────
+    profiles = fetch(
+        "SELECT id, label, created_date FROM billing_profiles "
+        "WHERE tenant_id=? ORDER BY created_date DESC",
+        (tenant_choice[0],)
+    )
+    if profiles:
+        with st.expander("Load Billing Profile"):
+            sel_prof = st.selectbox(
+                "Select profile", profiles,
+                format_func=lambda x: f"{x[1]}  ({x[2]})",
+                key="sel_profile",
+            )
+            col_load, col_del = st.columns(2)
+            with col_load:
+                if st.button("Load", key="btn_load_profile"):
+                    row = fetch("SELECT data FROM billing_profiles WHERE id=?", (sel_prof[0],))
+                    if row:
+                        _load_profile_into_state(json.loads(row[0][0]))
+                        st.success(f"Profile '{sel_prof[1]}' loaded.")
+                        st.rerun()
+            with col_del:
+                if st.button("Delete profile", key="btn_del_profile"):
+                    execute("DELETE FROM billing_profiles WHERE id=?", (sel_prof[0],))
+                    st.success(f"Profile '{sel_prof[1]}' deleted.")
+                    st.rerun()
+
     # ── Auto-count persons in flat ─────────────────────────────────
     persons_in_flat = fetch("""
         SELECT COUNT(DISTINCT c.tenant_id)
         FROM contracts c
         JOIN apartments a ON c.apartment_id = a.id
-        WHERE (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= date('now'))
+        WHERE COALESCE(c.terminated, 0) = 0
+        AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= date('now'))
         AND a.flat IS NOT NULL AND a.flat != ''
         AND a.property_id = (
             SELECT a2.property_id FROM contracts c2
             JOIN apartments a2 ON c2.apartment_id = a2.id
-            JOIN tenants t ON c2.tenant_id = t.id
-            WHERE t.name = ? LIMIT 1
+            WHERE c2.tenant_id = ? LIMIT 1
         )
         AND a.flat = (
             SELECT a2.flat FROM contracts c2
             JOIN apartments a2 ON c2.apartment_id = a2.id
-            JOIN tenants t ON c2.tenant_id = t.id
-            WHERE t.name = ? AND (a2.flat IS NOT NULL AND a2.flat != '')
+            WHERE c2.tenant_id = ? AND (a2.flat IS NOT NULL AND a2.flat != '')
             LIMIT 1
         )
-    """, (tenant, tenant))
+    """, (tenant_choice[0], tenant_choice[0]))
     auto_count = persons_in_flat[0][0] if persons_in_flat and persons_in_flat[0][0] else 1
 
+    if st.session_state.get("_nk_tenant_id") != tenant_choice[0]:
+        st.session_state["_nk_tenant_id"]  = tenant_choice[0]
+        st.session_state["nk_num_tenants"] = int(auto_count)
+        _reset_extra_items([])
+
+    # Ensure extra-item state is initialised even without a tenant switch
+    if "extra_item_ids" not in st.session_state:
+        st.session_state["extra_item_ids"]     = []
+        st.session_state["extra_item_counter"] = 0
+
     st.divider()
-    num_tenants = st.number_input("Tenants in flat", value=int(auto_count), min_value=1)
+    num_tenants = st.number_input("Tenants in flat", min_value=1, key="nk_num_tenants")
     if auto_count > 1:
-        st.caption(f"ℹ️ Auto-detected {auto_count} active tenants sharing the same flat.")
+        st.caption(f"Auto-detected {auto_count} active tenants sharing the same flat.")
 
     # ── Tenant contract reference ──────────────────────────────────
     st.divider()
@@ -95,12 +230,13 @@ def show():
     # ── Cost type selection ────────────────────────────────────────
     st.divider()
     st.subheader("Select Cost Types to Include")
-    include_strom = st.checkbox("Strom (Electricity)")
-    include_gas   = st.checkbox("Gas")
-    include_water = st.checkbox("Kaltwasser (Cold Water)")
-    include_bk    = st.checkbox("Betriebskosten (Operating costs)")
+    include_strom = st.checkbox("Strom (Electricity)",                           key="include_strom")
+    include_gas   = st.checkbox("Gas",                                            key="include_gas")
+    include_water = st.checkbox("Kaltwasser (Cold Water)",                        key="include_water")
+    include_bk    = st.checkbox("Betriebskosten (Operating costs)",               key="include_bk")
+    include_extra = st.checkbox("Zusätzliche Positionen (damages, agreements…)", key="include_extra")
 
-    strom_data = gas_data = water_data = bk_data = None
+    strom_data = gas_data = water_data = bk_data = extra_data = None
 
     # ── Strom ──────────────────────────────────────────────────────
     if include_strom:
@@ -134,24 +270,60 @@ def show():
                                             key="strom_eff_start")
             with col2:
                 s_eff_end = st.date_input("Effective end", key="strom_eff_end")
-            s_eff_days = (s_eff_end - s_eff_start).days
+            s_eff_days = max(1, (s_eff_end - s_eff_start).days)
             st.caption(f"{s_eff_days} days")
 
-            strom_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0, key="strom_limit")
-            strom_cost     = st.number_input("Total electricity cost for flat (€)", min_value=0.0, key="strom_cost")
+            st.caption("Meter readings & tariff:")
+            col1, col2 = st.columns(2)
+            with col1:
+                strom_start_kwh = st.number_input("Anfang Zählerstand (kWh)",
+                                                  min_value=0.0, format="%.2f",
+                                                  key="strom_start_kwh")
+                strom_arbeitspreis = st.number_input("Arbeitspreis (€/kWh)",
+                                                     min_value=0.0, format="%.4f",
+                                                     key="strom_arbeitspreis")
+            with col2:
+                strom_end_kwh = st.number_input("Ende Zählerstand (kWh)",
+                                                min_value=0.0, format="%.2f",
+                                                key="strom_end_kwh")
+                strom_grundpreis = st.number_input("Grundpreis (€/Monat)",
+                                                   min_value=0.0, format="%.2f",
+                                                   key="strom_grundpreis")
+            strom_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0,
+                                             key="strom_limit")
+            strom_is_pauschale = st.checkbox(
+                "Pauschale — prepayment is a hard limit (no refund if unused, "
+                "Nachzahlung if exceeded)",
+                key="strom_is_pauschale",
+            )
+
             strom_bill_days = max(1, (strom_bill_end - strom_bill_start).days)
-            _, s_limit, s_nach = strom_calc(strom_cost, num_tenants, strom_bill_days,
-                                            s_eff_days, limit_per_month=strom_limit_pm)
+            calc = strom_calc_detail(
+                strom_start_kwh, strom_end_kwh, strom_arbeitspreis, strom_grundpreis,
+                num_tenants, strom_bill_days, s_eff_days, strom_limit_pm,
+                is_pauschale=strom_is_pauschale,
+            )
+            st.info(
+                f"Verbrauch: **{calc['verbrauch']:.2f} kWh**  ·  "
+                f"Ihr Anteil: **{calc['cost_tenant']:.2f} €**  ·  "
+                f"Vorauszahlung: **{calc['prepay']:.2f} €**  ·  "
+                f"Nachzahlung: **{calc['nach']:.2f} €**"
+            )
             strom_data = {
-                "bill_period": f"{strom_bill_start.strftime('%d.%m.%Y')} – {strom_bill_end.strftime('%d.%m.%Y')}",
-                "bill_days":   strom_bill_days,
-                "period":      f"{s_eff_start.strftime('%d.%m.%Y')} – {s_eff_end.strftime('%d.%m.%Y')}",
-                "days":        s_eff_days,
-                "cost":        strom_cost,
-                "limit":       s_limit,
-                "nach":        s_nach,
-                "monthly_limit": strom_limit_pm,
-                "num_tenants": int(num_tenants),
+                "bill_period":         f"{strom_bill_start.strftime('%d.%m.%Y')} – {strom_bill_end.strftime('%d.%m.%Y')}",
+                "bill_days":           strom_bill_days,
+                "period":              f"{s_eff_start.strftime('%d.%m.%Y')} – {s_eff_end.strftime('%d.%m.%Y')}",
+                "days":                s_eff_days,
+                "num_tenants":         int(num_tenants),
+                "monthly_limit":       strom_limit_pm,
+                "start_kwh":           strom_start_kwh,
+                "end_kwh":             strom_end_kwh,
+                "arbeitspreis":        strom_arbeitspreis,
+                "grundpreis_monthly":  strom_grundpreis,
+                **calc,
+                "cost":        calc["cost_tenant"],
+                "limit":       calc["prepay"],
+                "is_pauschale": bool(strom_is_pauschale),
             }
 
     # ── Gas ────────────────────────────────────────────────────────
@@ -186,24 +358,65 @@ def show():
                                             key="gas_eff_start")
             with col2:
                 g_eff_end = st.date_input("Effective end", key="gas_eff_end")
-            g_eff_days = (g_eff_end - g_eff_start).days
+            g_eff_days = max(1, (g_eff_end - g_eff_start).days)
             st.caption(f"{g_eff_days} days")
 
-            gas_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0, key="gas_limit")
-            gas_cost     = st.number_input("Total gas cost for flat (€)", min_value=0.0, key="gas_cost")
+            st.caption("Meter readings & tariff:")
+            col1, col2 = st.columns(2)
+            with col1:
+                gas_start_m3 = st.number_input("Anfang Zählerstand (m³)",
+                                               min_value=0.0, format="%.3f",
+                                               key="gas_start_m3")
+                gas_umrechnung = st.number_input("Umrechnungsfaktor (kWh/m³)",
+                                                 min_value=0.0, value=10.0, format="%.4f",
+                                                 key="gas_umrechnung",
+                                                 help="Brennwert × Zustandszahl — from your gas bill (NBB)")
+                gas_grundpreis = st.number_input("Grundpreis (€/Monat)",
+                                                 min_value=0.0, format="%.2f",
+                                                 key="gas_grundpreis")
+            with col2:
+                gas_end_m3 = st.number_input("Ende Zählerstand (m³)",
+                                             min_value=0.0, format="%.3f",
+                                             key="gas_end_m3")
+                gas_arbeitspreis = st.number_input("Arbeitspreis (€/kWh)",
+                                                   min_value=0.0, format="%.4f",
+                                                   key="gas_arbeitspreis")
+            gas_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0,
+                                           key="gas_limit")
+            gas_is_pauschale = st.checkbox(
+                "Pauschale — prepayment is a hard limit (no refund if unused, "
+                "Nachzahlung if exceeded)",
+                key="gas_is_pauschale",
+            )
+
             gas_bill_days = max(1, (gas_bill_end - gas_bill_start).days)
-            _, g_limit, g_nach = gas_calc(gas_cost, num_tenants, gas_bill_days,
-                                          g_eff_days, limit_per_month=gas_limit_pm)
+            calc = gas_calc_detail(
+                gas_start_m3, gas_end_m3, gas_umrechnung, gas_arbeitspreis, gas_grundpreis,
+                num_tenants, gas_bill_days, g_eff_days, gas_limit_pm,
+                is_pauschale=gas_is_pauschale,
+            )
+            st.info(
+                f"Verbrauch: **{calc['verbrauch_m3']:.3f} m³** = **{calc['verbrauch_kwh']:.2f} kWh**  ·  "
+                f"Ihr Anteil: **{calc['cost_tenant']:.2f} €**  ·  "
+                f"Vorauszahlung: **{calc['prepay']:.2f} €**  ·  "
+                f"Nachzahlung: **{calc['nach']:.2f} €**"
+            )
             gas_data = {
-                "bill_period": f"{gas_bill_start.strftime('%d.%m.%Y')} – {gas_bill_end.strftime('%d.%m.%Y')}",
-                "bill_days":   gas_bill_days,
-                "period":      f"{g_eff_start.strftime('%d.%m.%Y')} – {g_eff_end.strftime('%d.%m.%Y')}",
-                "days":        g_eff_days,
-                "cost":        gas_cost,
-                "limit":       g_limit,
-                "nach":        g_nach,
-                "monthly_limit": gas_limit_pm,
-                "num_tenants": int(num_tenants),
+                "bill_period":         f"{gas_bill_start.strftime('%d.%m.%Y')} – {gas_bill_end.strftime('%d.%m.%Y')}",
+                "bill_days":           gas_bill_days,
+                "period":              f"{g_eff_start.strftime('%d.%m.%Y')} – {g_eff_end.strftime('%d.%m.%Y')}",
+                "days":                g_eff_days,
+                "num_tenants":         int(num_tenants),
+                "monthly_limit":       gas_limit_pm,
+                "start_m3":            gas_start_m3,
+                "end_m3":              gas_end_m3,
+                "umrechnungsfaktor":   gas_umrechnung,
+                "arbeitspreis":        gas_arbeitspreis,
+                "grundpreis_monthly":  gas_grundpreis,
+                **calc,
+                "cost":        calc["cost_tenant"],
+                "limit":       calc["prepay"],
+                "is_pauschale": bool(gas_is_pauschale),
             }
 
     # ── Kaltwasser ─────────────────────────────────────────────────
@@ -238,24 +451,60 @@ def show():
                                             key="water_eff_start")
             with col2:
                 w_eff_end = st.date_input("Effective end", key="water_eff_end")
-            w_eff_days = (w_eff_end - w_eff_start).days
+            w_eff_days = max(1, (w_eff_end - w_eff_start).days)
             st.caption(f"{w_eff_days} days")
 
-            water_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0, key="water_limit")
-            water_cost     = st.number_input("Total cold water cost for flat (€)", min_value=0.0, key="water_cost")
+            st.caption("Meter readings & tariff:")
+            col1, col2 = st.columns(2)
+            with col1:
+                water_start_m3 = st.number_input("Anfang Wasserzählerstand (m³)",
+                                                 min_value=0.0, format="%.3f",
+                                                 key="water_start_m3")
+                water_frischwasser = st.number_input("Frischwasser (€/m³)",
+                                                     min_value=0.0, format="%.4f",
+                                                     key="water_frischwasser")
+            with col2:
+                water_end_m3 = st.number_input("Ende Wasserzählerstand (m³)",
+                                               min_value=0.0, format="%.3f",
+                                               key="water_end_m3")
+                water_abwasser = st.number_input("Abwasser (€/m³)",
+                                                 min_value=0.0, format="%.4f",
+                                                 key="water_abwasser")
+            water_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0,
+                                             key="water_limit")
+            water_is_pauschale = st.checkbox(
+                "Pauschale — prepayment is a hard limit (no refund if unused, "
+                "Nachzahlung if exceeded)",
+                key="water_is_pauschale",
+            )
+
             water_bill_days = max(1, (water_bill_end - water_bill_start).days)
-            _, w_limit, w_nach = water_calc(water_cost, num_tenants, water_bill_days,
-                                            w_eff_days, limit_per_month=water_limit_pm)
+            calc = water_calc_detail(
+                water_start_m3, water_end_m3, water_frischwasser, water_abwasser,
+                num_tenants, water_bill_days, w_eff_days, water_limit_pm,
+                is_pauschale=water_is_pauschale,
+            )
+            st.info(
+                f"Verbrauch: **{calc['verbrauch_m3']:.3f} m³**  ·  "
+                f"Ihr Anteil: **{calc['cost_tenant']:.2f} €**  ·  "
+                f"Vorauszahlung: **{calc['prepay']:.2f} €**  ·  "
+                f"Nachzahlung: **{calc['nach']:.2f} €**"
+            )
             water_data = {
-                "bill_period": f"{water_bill_start.strftime('%d.%m.%Y')} – {water_bill_end.strftime('%d.%m.%Y')}",
-                "bill_days":   water_bill_days,
-                "period":      f"{w_eff_start.strftime('%d.%m.%Y')} – {w_eff_end.strftime('%d.%m.%Y')}",
-                "days":        w_eff_days,
-                "cost":        water_cost,
-                "limit":       w_limit,
-                "nach":        w_nach,
-                "monthly_limit": water_limit_pm,
-                "num_tenants": int(num_tenants),
+                "bill_period":       f"{water_bill_start.strftime('%d.%m.%Y')} – {water_bill_end.strftime('%d.%m.%Y')}",
+                "bill_days":         water_bill_days,
+                "period":            f"{w_eff_start.strftime('%d.%m.%Y')} – {w_eff_end.strftime('%d.%m.%Y')}",
+                "days":              w_eff_days,
+                "num_tenants":       int(num_tenants),
+                "monthly_limit":     water_limit_pm,
+                "start_m3":          water_start_m3,
+                "end_m3":            water_end_m3,
+                "frischwasser_per_m3": water_frischwasser,
+                "abwasser_per_m3":   water_abwasser,
+                **calc,
+                "cost":        calc["cost_tenant"],
+                "limit":       calc["prepay"],
+                "is_pauschale": bool(water_is_pauschale),
             }
 
     # ── Betriebskosten ─────────────────────────────────────────────
@@ -322,23 +571,125 @@ def show():
                                     calendar.monthrange(be_e_year, be_e_month)[1])
             bk_num_months = max(1, (bk_e_year - bk_s_year) * 12 + (bk_e_month - bk_s_month) + 1)
             bk_data = {
-                "bill_period": f"{bk_bill_start.strftime('%d.%m.%Y')} – {bk_bill_end.strftime('%d.%m.%Y')}",
-                "num_months":  bk_num_months,
-                "period":      f"{b_eff_start_date.strftime('%d.%m.%Y')} – {b_eff_end_date.strftime('%d.%m.%Y')}",
-                "months":      int(b_eff_months),
-                "total_cost":  bk_cost,
-                "cost":        bk_period_cost,
-                "limit":       bk_limit,
-                "nach":        bk_nach,
+                "bill_period":   f"{bk_bill_start.strftime('%d.%m.%Y')} – {bk_bill_end.strftime('%d.%m.%Y')}",
+                "num_months":    bk_num_months,
+                "period":        f"{b_eff_start_date.strftime('%d.%m.%Y')} – {b_eff_end_date.strftime('%d.%m.%Y')}",
+                "months":        int(b_eff_months),
+                "total_cost":    bk_cost,
+                "cost":          bk_period_cost,
+                "limit":         bk_limit,
+                "nach":          bk_nach,
                 "monthly_limit": bk_limit_pm,
-                "num_tenants": int(num_tenants),
+                "num_tenants":   int(num_tenants),
             }
 
+    # ── Zusätzliche Positionen ─────────────────────────────────────
+    if include_extra:
+        st.subheader("Zusätzliche Positionen")
+        st.caption(
+            "Add agreed charges or deductions (e.g. damage repairs, cleaning). "
+            "Positive = tenant owes, negative = credit to tenant. "
+            "Use these to document Kaution deductions."
+        )
+
+        # Show Kaution on file for reference
+        kaution_row = fetch("""
+            SELECT kaution_amount FROM contracts
+            WHERE tenant_id=? ORDER BY start_date DESC LIMIT 1
+        """, (tenant_choice[0],))
+        kaution = kaution_row[0][0] if kaution_row and kaution_row[0][0] else None
+        if kaution:
+            deductions_total = sum(
+                float(st.session_state.get(f"extra_amt_{iid}", 0))
+                for iid in st.session_state["extra_item_ids"]
+            )
+            remaining = kaution - deductions_total
+            st.info(
+                f"Kaution on file: **{kaution:.2f} €**  ·  "
+                f"Total deductions below: **{deductions_total:.2f} €**  ·  "
+                f"Remaining Kaution: **{remaining:.2f} €**"
+            )
+
+        # Column headers
+        if st.session_state["extra_item_ids"]:
+            h1, h2, h3 = st.columns([4, 1.5, 0.5])
+            h1.caption("Description")
+            h2.caption("Amount (€)")
+
+        to_delete = None
+        for iid in list(st.session_state["extra_item_ids"]):
+            col1, col2, col3 = st.columns([4, 1.5, 0.5])
+            with col1:
+                st.text_input("Description", key=f"extra_desc_{iid}",
+                              label_visibility="collapsed")
+            with col2:
+                st.number_input("Amount (€)", key=f"extra_amt_{iid}",
+                                format="%.2f", label_visibility="collapsed")
+            with col3:
+                if st.button("✕", key=f"extra_del_{iid}"):
+                    to_delete = iid
+
+        if to_delete is not None:
+            st.session_state["extra_item_ids"].remove(to_delete)
+            st.session_state.pop(f"extra_desc_{to_delete}", None)
+            st.session_state.pop(f"extra_amt_{to_delete}", None)
+            st.rerun()
+
+        if st.button("+ Add line item", key="extra_add"):
+            iid = st.session_state["extra_item_counter"]
+            st.session_state["extra_item_ids"].append(iid)
+            st.session_state["extra_item_counter"] += 1
+            st.rerun()
+
+        items = _collect_extra_items()
+        if items:
+            total_extra = sum(i["amount"] for i in items)
+            st.markdown(f"**Subtotal: {total_extra:.2f} €**")
+            extra_data = {"items": items}
+
     # ── Generate PDF ───────────────────────────────────────────────
+    st.divider()
+    include_landlord_info = st.checkbox(
+        "Include landlord info (address, IBAN, bank) in PDF",
+        key="include_ll_info",
+    )
+
+    # Check for an unreturned Kaution on this tenant's latest contract
+    kaution_row = fetch("""
+        SELECT kaution_amount, kaution_returned_date FROM contracts
+        WHERE tenant_id=? ORDER BY start_date DESC LIMIT 1
+    """, (tenant_choice[0],))
+    kaution_available = (
+        kaution_row
+        and kaution_row[0][0]
+        and not kaution_row[0][1]   # not yet returned
+    )
+    kaution_amount = float(kaution_row[0][0]) if kaution_available else None
+
+    deduct_from_kaution = False
+    if kaution_available:
+        deduct_from_kaution = st.checkbox(
+            f"Deduct Nachzahlung from deposit (Kaution on file: {kaution_amount:.2f} €)",
+            key="deduct_kaution",
+        )
+        if deduct_from_kaution:
+            st.caption(
+                "The PDF will show a Kautionsverrechnung block instead of a payment request. "
+                "If the Nachzahlung exceeds the Kaution, the remaining balance is still shown as payable."
+            )
+
     if st.button("Generate PDF"):
-        if not any([strom_data, gas_data, water_data, bk_data]):
+        if not any([strom_data, gas_data, water_data, bk_data, extra_data]):
             st.warning("Please select at least one cost type.")
         else:
+            ll_info = None
+            if include_landlord_info:
+                ll_info = {
+                    "address": get_config("landlord_address", ""),
+                    "iban":    get_config("landlord_iban", ""),
+                    "bank":    get_config("landlord_bank", ""),
+                }
+            kaution_info = {"kaution_amount": kaution_amount} if deduct_from_kaution else None
             file = invoice_pdf(
                 tenant, address,
                 landlord_name=landlord_name,
@@ -348,6 +699,123 @@ def show():
                 gas=gas_data,
                 water=water_data,
                 bk=bk_data,
+                extra=extra_data,
+                kaution_info=kaution_info,
+                landlord_info=ll_info,
             )
             with open(file, "rb") as f:
                 st.download_button("Download PDF", f, file_name=file)
+
+    # ── Save / Update Billing Profile ─────────────────────────────
+    def _build_profile_data():
+        pd_ = {"num_tenants": int(num_tenants)}
+        if include_strom and strom_data:
+            pd_["strom"] = {
+                "bill_start":          str(st.session_state["strom_start"]),
+                "bill_end":            str(st.session_state["strom_end"]),
+                "eff_start":           str(st.session_state["strom_eff_start"]),
+                "eff_end":             str(st.session_state["strom_eff_end"]),
+                "prepay_pm":           float(st.session_state.get("strom_limit", 0)),
+                "start_kwh":           float(st.session_state.get("strom_start_kwh", 0)),
+                "end_kwh":             float(st.session_state.get("strom_end_kwh", 0)),
+                "arbeitspreis":        float(st.session_state.get("strom_arbeitspreis", 0)),
+                "grundpreis_monthly":  float(st.session_state.get("strom_grundpreis", 0)),
+                "is_pauschale":        bool(st.session_state.get("strom_is_pauschale", False)),
+            }
+        if include_gas and gas_data:
+            pd_["gas"] = {
+                "bill_start":          str(st.session_state["gas_start"]),
+                "bill_end":            str(st.session_state["gas_end"]),
+                "eff_start":           str(st.session_state["gas_eff_start"]),
+                "eff_end":             str(st.session_state["gas_eff_end"]),
+                "prepay_pm":           float(st.session_state.get("gas_limit", 0)),
+                "start_m3":            float(st.session_state.get("gas_start_m3", 0)),
+                "end_m3":              float(st.session_state.get("gas_end_m3", 0)),
+                "umrechnungsfaktor":   float(st.session_state.get("gas_umrechnung", 10.0)),
+                "arbeitspreis":        float(st.session_state.get("gas_arbeitspreis", 0)),
+                "grundpreis_monthly":  float(st.session_state.get("gas_grundpreis", 0)),
+                "is_pauschale":        bool(st.session_state.get("gas_is_pauschale", False)),
+            }
+        if include_water and water_data:
+            pd_["water"] = {
+                "bill_start":          str(st.session_state["water_start"]),
+                "bill_end":            str(st.session_state["water_end"]),
+                "eff_start":           str(st.session_state["water_eff_start"]),
+                "eff_end":             str(st.session_state["water_eff_end"]),
+                "prepay_pm":           float(st.session_state.get("water_limit", 0)),
+                "start_m3":            float(st.session_state.get("water_start_m3", 0)),
+                "end_m3":              float(st.session_state.get("water_end_m3", 0)),
+                "frischwasser_per_m3": float(st.session_state.get("water_frischwasser", 0)),
+                "abwasser_per_m3":     float(st.session_state.get("water_abwasser", 0)),
+                "is_pauschale":        bool(st.session_state.get("water_is_pauschale", False)),
+            }
+        if include_bk and bk_data:
+            pd_["bk"] = {
+                "bill_s_month":  int(st.session_state["bk_s_month"]),
+                "bill_s_year":   int(st.session_state["bk_s_year"]),
+                "bill_e_month":  int(st.session_state["bk_e_month"]),
+                "bill_e_year":   int(st.session_state["bk_e_year"]),
+                "eff_s_month":   int(st.session_state["bk_eff_s_month"]),
+                "eff_s_year":    int(st.session_state["bk_eff_s_year"]),
+                "eff_e_month":   int(st.session_state["bk_eff_e_month"]),
+                "eff_e_year":    int(st.session_state["bk_eff_e_year"]),
+                "prepay_pm":     float(st.session_state.get("bk_limit", 0)),
+                "total_cost":    float(st.session_state.get("bk_cost", 0)),
+            }
+        extra_items = _collect_extra_items()
+        if extra_items:
+            pd_["extra_items"] = extra_items
+        return pd_
+
+    with st.expander("Save / Update Billing Profile"):
+        save_mode = st.radio("", ["Save as new profile", "Update existing profile"],
+                             horizontal=True, key="profile_save_mode")
+
+        if save_mode == "Save as new profile":
+            profile_label = st.text_input("Profile label (e.g. '2023 Abrechnung')",
+                                          key="profile_label")
+            if st.button("Save", key="btn_save_profile"):
+                pd_ = _build_profile_data()
+                if len(pd_) <= 1:
+                    st.warning("No billing data to save. Select at least one cost type first.")
+                elif not profile_label.strip():
+                    st.warning("Please enter a profile label.")
+                else:
+                    execute(
+                        "INSERT INTO billing_profiles (tenant_id, label, created_date, data) "
+                        "VALUES (?, ?, ?, ?)",
+                        (tenant_choice[0], profile_label.strip(), str(date.today()),
+                         json.dumps(pd_))
+                    )
+                    st.success(f"Profile '{profile_label}' saved.")
+                    st.rerun()
+
+        else:  # Update existing
+            profiles_for_update = fetch(
+                "SELECT id, label, created_date FROM billing_profiles "
+                "WHERE tenant_id=? ORDER BY created_date DESC",
+                (tenant_choice[0],)
+            )
+            if not profiles_for_update:
+                st.info("No saved profiles for this tenant yet.")
+            else:
+                to_update = st.selectbox(
+                    "Select profile to overwrite",
+                    profiles_for_update,
+                    format_func=lambda x: f"{x[1]}  ({x[2]})",
+                    key="profile_update_sel",
+                )
+                new_label = st.text_input("Rename (leave unchanged to keep current name)",
+                                          value=to_update[1], key="profile_update_label")
+                if st.button("Update", key="btn_update_profile", type="primary"):
+                    pd_ = _build_profile_data()
+                    if len(pd_) <= 1:
+                        st.warning("No billing data to save. Select at least one cost type first.")
+                    else:
+                        execute(
+                            "UPDATE billing_profiles SET label=?, created_date=?, data=? WHERE id=?",
+                            (new_label.strip() or to_update[1], str(date.today()),
+                             json.dumps(pd_), to_update[0])
+                        )
+                        st.success(f"Profile '{new_label or to_update[1]}' updated.")
+                        st.rerun()

@@ -123,6 +123,16 @@ def init_db():
     """)
 
     c.execute("""
+    CREATE TABLE IF NOT EXISTS billing_profiles(
+        id INTEGER PRIMARY KEY,
+        tenant_id INTEGER,
+        label TEXT,
+        created_date TEXT,
+        data TEXT
+    )
+    """)
+
+    c.execute("""
     CREATE TABLE IF NOT EXISTS config(
         key TEXT PRIMARY KEY,
         value TEXT

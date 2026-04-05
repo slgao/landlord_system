@@ -253,6 +253,9 @@ def invoice_pdf(
     gas=None,
     water=None,
     bk=None,
+    extra=None,
+    kaution_info=None,
+    landlord_info=None,
 ):
     """
     strom / gas / water dict keys: bill_period, bill_days, period, days,
@@ -309,26 +312,41 @@ def invoice_pdf(
     if strom:
         d = strom
         n = d["num_tenants"]
-        cost_per_day   = d["cost"] / d["bill_days"] if d["bill_days"] else 0
-        cost_per_tenant = cost_per_day * d["days"] / n if n else 0
-        daily_limit    = (d["monthly_limit"] * 12) / 365 / n if n else 0
+        daily_gp = d["grundpreis_monthly"] * 12 / 365
+        pauschale_s = d.get("is_pauschale", False)
+        vz_label_s  = "Pauschale" if pauschale_s else "Vorauszahlung"
 
         story.append(_section_header(section_num, "Stromkosten", s))
         story.append(_info_box(
             f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
             f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-            f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
+            f"{vz_label_s}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_s else ""), s
         ))
         story.append(Spacer(1, 8))
         story.append(_calc_table([
             ["Position", "Berechnung", "Betrag"],
-            ["Gesamtkosten Wohnung (Strom)", f"Abrechnungszeitraum {d['bill_days']} Tage", f"{d['cost']:.2f} €"],
-            ["Kosten je Tag (Wohnung)", f"{d['cost']:.2f} € ÷ {d['bill_days']} Tage", f"{cost_per_day:.4f} €"],
-            ["Ihr Anteil (Nutzungsdauer)", f"{cost_per_day:.4f} € × {d['days']} Tage ÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
-            ["Tägliche Vorauszahlung", f"({d['monthly_limit']:.2f} € × 12) ÷ 365 ÷ {n}", f"{daily_limit:.4f} €"],
-            ["Vorauszahlung Zeitraum", f"{daily_limit:.4f} € × {d['days']} Tage", f"{d['limit']:.2f} €"],
-            ["Nachzahlung Strom", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
-        ]))
+            ["Anfang Zählerstand",       "—",
+             f"{d['start_kwh']:.2f} kWh"],
+            ["Ende Zählerstand",         "—",
+             f"{d['end_kwh']:.2f} kWh"],
+            ["Gesamtverbrauch Wohnung",  f"{d['end_kwh']:.2f} − {d['start_kwh']:.2f}",
+             f"{d['verbrauch']:.2f} kWh"],
+            ["Ihr Verbrauchsanteil",     f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+             f"{d['verbrauch_tenant']:.2f} kWh"],
+            ["Arbeitskosten",            f"{d['verbrauch_tenant']:.2f} kWh × {d['arbeitspreis']:.4f} €/kWh",
+             f"{d['arbeitskosten']:.2f} €"],
+            ["Grundpreis (täglich)",     f"{d['grundpreis_monthly']:.2f} €/Mon × 12 ÷ 365",
+             f"{daily_gp:.4f} €/Tag"],
+            ["Grundpreis Ihr Anteil",    f"{daily_gp:.4f} € × {d['days']} Tage ÷ {n} Mieter",
+             f"{d['grundkosten']:.2f} €"],
+            ["Gesamtkosten Ihr Anteil",  "Arbeitskosten + Grundpreis",
+             f"{d['cost']:.2f} €"],
+            [f"{vz_label_s} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
+             f"{d['limit']:.2f} €"],
+            [f"Nachzahlung Strom",       f"Ihr Anteil − {vz_label_s}" + (" (mind. 0 €)" if pauschale_s else ""),
+             f"{d['nach']:.2f} €"],
+        ], col_widths=[175, 215, 78]))
         story.append(Spacer(1, 18))
         total_items.append(("Nachzahlung Strom", d["nach"]))
         section_num += 1
@@ -337,26 +355,43 @@ def invoice_pdf(
     if gas:
         d = gas
         n = d["num_tenants"]
-        cost_per_day    = d["cost"] / d["bill_days"] if d["bill_days"] else 0
-        cost_per_tenant = cost_per_day * d["days"] / n if n else 0
-        daily_limit     = (d["monthly_limit"] * 12) / 365 / n if n else 0
+        daily_gp = d["grundpreis_monthly"] * 12 / 365
+        pauschale_g = d.get("is_pauschale", False)
+        vz_label_g  = "Pauschale" if pauschale_g else "Vorauszahlung"
 
         story.append(_section_header(section_num, "Gaskosten", s))
         story.append(_info_box(
             f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
             f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-            f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
+            f"{vz_label_g}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_g else ""), s
         ))
         story.append(Spacer(1, 8))
         story.append(_calc_table([
             ["Position", "Berechnung", "Betrag"],
-            ["Gesamtkosten Wohnung (Gas)", f"Abrechnungszeitraum {d['bill_days']} Tage", f"{d['cost']:.2f} €"],
-            ["Kosten je Tag (Wohnung)", f"{d['cost']:.2f} € ÷ {d['bill_days']} Tage", f"{cost_per_day:.4f} €"],
-            ["Ihr Anteil (Nutzungsdauer)", f"{cost_per_day:.4f} € × {d['days']} Tage ÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
-            ["Tägliche Vorauszahlung", f"({d['monthly_limit']:.2f} € × 12) ÷ 365 ÷ {n}", f"{daily_limit:.4f} €"],
-            ["Vorauszahlung Zeitraum", f"{daily_limit:.4f} € × {d['days']} Tage", f"{d['limit']:.2f} €"],
-            ["Nachzahlung Gas", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
-        ]))
+            ["Anfang Gaszählerstand",    "—",
+             f"{d['start_m3']:.3f} m³"],
+            ["Ende Gaszählerstand",      "—",
+             f"{d['end_m3']:.3f} m³"],
+            ["Verbrauch (m³)",           f"{d['end_m3']:.3f} − {d['start_m3']:.3f}",
+             f"{d['verbrauch_m3']:.3f} m³"],
+            ["Verbrauch (kWh)",          f"{d['verbrauch_m3']:.3f} m³ × {d['umrechnungsfaktor']:.4f} kWh/m³",
+             f"{d['verbrauch_kwh']:.2f} kWh"],
+            ["Ihr Verbrauchsanteil",     f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+             f"{d['verbrauch_kwh_t']:.2f} kWh"],
+            ["Arbeitskosten",            f"{d['verbrauch_kwh_t']:.2f} kWh × {d['arbeitspreis']:.4f} €/kWh",
+             f"{d['arbeitskosten']:.2f} €"],
+            ["Grundpreis (täglich)",     f"{d['grundpreis_monthly']:.2f} €/Mon × 12 ÷ 365",
+             f"{daily_gp:.4f} €/Tag"],
+            ["Grundpreis Ihr Anteil",    f"{daily_gp:.4f} € × {d['days']} Tage ÷ {n} Mieter",
+             f"{d['grundkosten']:.2f} €"],
+            ["Gesamtkosten Ihr Anteil",  "Arbeitskosten + Grundpreis",
+             f"{d['cost']:.2f} €"],
+            [f"{vz_label_g} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
+             f"{d['limit']:.2f} €"],
+            ["Nachzahlung Gas",          f"Ihr Anteil − {vz_label_g}" + (" (mind. 0 €)" if pauschale_g else ""),
+             f"{d['nach']:.2f} €"],
+        ], col_widths=[175, 215, 78]))
         story.append(Spacer(1, 18))
         total_items.append(("Nachzahlung Gas", d["nach"]))
         section_num += 1
@@ -365,26 +400,40 @@ def invoice_pdf(
     if water:
         d = water
         n = d["num_tenants"]
-        cost_per_day    = d["cost"] / d["bill_days"] if d["bill_days"] else 0
-        cost_per_tenant = cost_per_day * d["days"] / n if n else 0
-        daily_limit     = (d["monthly_limit"] * 12) / 365 / n if n else 0
+        pauschale_w = d.get("is_pauschale", False)
+        vz_label_w  = "Pauschale" if pauschale_w else "Vorauszahlung"
 
         story.append(_section_header(section_num, "Kaltwasser", s))
         story.append(_info_box(
             f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
             f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-            f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
+            f"{vz_label_w}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_w else ""), s
         ))
         story.append(Spacer(1, 8))
         story.append(_calc_table([
             ["Position", "Berechnung", "Betrag"],
-            ["Gesamtkosten Wohnung (Wasser)", f"Abrechnungszeitraum {d['bill_days']} Tage", f"{d['cost']:.2f} €"],
-            ["Kosten je Tag (Wohnung)", f"{d['cost']:.2f} € ÷ {d['bill_days']} Tage", f"{cost_per_day:.4f} €"],
-            ["Ihr Anteil (Nutzungsdauer)", f"{cost_per_day:.4f} € × {d['days']} Tage ÷ {n} Mieter", f"{cost_per_tenant:.2f} €"],
-            ["Tägliche Vorauszahlung", f"({d['monthly_limit']:.2f} € × 12) ÷ 365 ÷ {n}", f"{daily_limit:.4f} €"],
-            ["Vorauszahlung Zeitraum", f"{daily_limit:.4f} € × {d['days']} Tage", f"{d['limit']:.2f} €"],
-            ["Nachzahlung Kaltwasser", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
-        ]))
+            ["Anfang Wasserzählerstand",  "—",
+             f"{d['start_m3']:.3f} m³"],
+            ["Ende Wasserzählerstand",    "—",
+             f"{d['end_m3']:.3f} m³"],
+            ["Verbrauch",                 f"{d['end_m3']:.3f} − {d['start_m3']:.3f}",
+             f"{d['verbrauch_m3']:.3f} m³"],
+            ["Frischwasser",              f"{d['frischwasser_per_m3']:.4f} €/m³",
+             f"{d['frischwasser_per_m3']:.4f} €/m³"],
+            ["Abwasser",                  f"{d['abwasser_per_m3']:.4f} €/m³",
+             f"{d['abwasser_per_m3']:.4f} €/m³"],
+            ["Gesamtpreis je m³",         "Frischwasser + Abwasser",
+             f"{d['cost_per_m3']:.4f} €/m³"],
+            ["Gesamtkosten Wohnung",      f"{d['verbrauch_m3']:.3f} m³ × {d['cost_per_m3']:.4f} €/m³",
+             f"{d['cost_flat']:.2f} €"],
+            ["Ihr Anteil",                f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+             f"{d['cost']:.2f} €"],
+            [f"{vz_label_w} Zeitraum",    f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
+             f"{d['limit']:.2f} €"],
+            ["Nachzahlung Kaltwasser",    f"Ihr Anteil − {vz_label_w}" + (" (mind. 0 €)" if pauschale_w else ""),
+             f"{d['nach']:.2f} €"],
+        ], col_widths=[175, 215, 78]))
         story.append(Spacer(1, 18))
         total_items.append(("Nachzahlung Kaltwasser", d["nach"]))
         section_num += 1
@@ -416,15 +465,131 @@ def invoice_pdf(
         total_items.append(("Nachzahlung Betriebskosten", d["nach"]))
         section_num += 1
 
+    # ── Zusätzliche Positionen ─────────────────────────────────────
+    if extra:
+        items = [i for i in extra.get("items", []) if i.get("description")]
+        if items:
+            subtotal = sum(i["amount"] for i in items)
+            story.append(_section_header(section_num, "Zusätzliche Positionen / Vereinbarte Abzüge", s))
+            story.append(_info_box(
+                "Die folgenden Positionen wurden zwischen Mieter und Vermieter vereinbart "
+                "und sind Teil dieser Abrechnung.", s
+            ))
+            story.append(Spacer(1, 8))
+
+            cell_style = ParagraphStyle("_ec", fontName="Helvetica", fontSize=9,
+                                        leading=13, textColor=C_TEXT)
+            hdr_style  = ParagraphStyle("_eh", fontName="Helvetica-Bold", fontSize=9,
+                                        leading=13, textColor=C_WHITE)
+            tot_style  = ParagraphStyle("_et", fontName="Helvetica-Bold", fontSize=9,
+                                        leading=13, textColor=C_TEXT)
+            amt_style  = ParagraphStyle("_ea", fontName="Helvetica", fontSize=9,
+                                        leading=13, textColor=C_TEXT, alignment=TA_RIGHT)
+            tot_amt_style = ParagraphStyle("_eta", fontName="Helvetica-Bold", fontSize=9,
+                                           leading=13, textColor=C_TEXT, alignment=TA_RIGHT)
+
+            rows = [[Paragraph("Bezeichnung", hdr_style), Paragraph("Betrag", hdr_style)]]
+            for item in items:
+                rows.append([
+                    Paragraph(item["description"], cell_style),
+                    Paragraph(f"{item['amount']:.2f} €", amt_style),
+                ])
+            rows.append([Paragraph("Gesamt", tot_style), Paragraph(f"{subtotal:.2f} €", tot_amt_style)])
+
+            col_w = [390, 78]
+            t = Table(rows, colWidths=col_w)
+            t.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, 0),   C_NAVY),
+                ("ROWBACKGROUNDS",(0, 1), (-1, -2),  [C_WHITE, C_LGRAY]),
+                ("LINEBELOW",     (0, 0), (-1, -2),  0.4, C_MGRAY),
+                ("BACKGROUND",    (0, -1),(-1, -1),  C_LBLUE),
+                ("VALIGN",        (0, 0), (-1, -1),  "TOP"),
+                ("TOPPADDING",    (0, 0), (-1, -1),  7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1),  7),
+                ("LEFTPADDING",   (0, 0), (-1, -1),  10),
+                ("RIGHTPADDING",  (0, 0), (-1, -1),  10),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 18))
+            total_items.append(("Zusätzliche Positionen", subtotal))
+            section_num += 1
+
     # ── Summary box ────────────────────────────────────────────────
     story.append(_accent_line(C_MGRAY, thickness=0.5))
     story.append(Spacer(1, 10))
     story.append(_total_box(total_items))
     story.append(Spacer(1, 26))
 
-    # ── Closing paragraph ──────────────────────────────────────────
+    # ── Kautionsverrechnung block (optional) ───────────────────────
     total = sum(v for _, v in total_items)
-    if total > 0:
+
+    if kaution_info and total > 0:
+        k_amt      = kaution_info["kaution_amount"]
+        remaining  = k_amt - total
+        still_owed = max(0.0, -remaining)
+        k_return   = max(0.0, remaining)
+
+        lbl  = ParagraphStyle("_kl", fontName="Helvetica",      fontSize=10, leading=15, textColor=C_TEXT)
+        lbl_b= ParagraphStyle("_klb",fontName="Helvetica-Bold", fontSize=10, leading=15, textColor=C_TEXT)
+        amt  = ParagraphStyle("_ka", fontName="Helvetica",      fontSize=10, leading=15, alignment=TA_RIGHT, textColor=C_TEXT)
+        amt_g= ParagraphStyle("_kg", fontName="Helvetica-Bold", fontSize=11, leading=15, alignment=TA_RIGHT, textColor=C_GREEN)
+        amt_r= ParagraphStyle("_kr", fontName="Helvetica-Bold", fontSize=11, leading=15, alignment=TA_RIGHT, textColor=C_RED)
+
+        k_rows = [
+            [Paragraph("Kautionsverrechnung", lbl_b), Paragraph("", amt)],
+            [Paragraph("Hinterlegte Kaution", lbl),   Paragraph(f"{k_amt:.2f} €", amt)],
+            [Paragraph("Abzug (diese Abrechnung)", lbl), Paragraph(f"− {total:.2f} €", amt)],
+        ]
+        if k_return > 0:
+            k_rows.append([
+                Paragraph("Verbleibende Kaution (wird erstattet)", lbl_b),
+                Paragraph(f"{k_return:.2f} €", amt_g),
+            ])
+        else:
+            k_rows.append([
+                Paragraph("Verbleibende Kaution", lbl_b),
+                Paragraph("0.00 €", amt),
+            ])
+        if still_owed > 0:
+            k_rows.append([
+                Paragraph("Noch zu zahlen (Kaution nicht ausreichend)", lbl_b),
+                Paragraph(f"{still_owed:.2f} €", amt_r),
+            ])
+
+        kt = Table(k_rows, colWidths=[390, 78])
+        kt.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),   C_SECBG),
+            ("LINEBELOW",     (0, 0), (-1, 0),   1.0, C_BLUE),
+            ("BACKGROUND",    (0, 1), (-1, -1),  C_LGRAY),
+            ("LINEBELOW",     (0, 1), (-1, -2),  0.4, C_MGRAY),
+            ("BACKGROUND",    (0, -1),(-1, -1),  C_SECBG),
+            ("LINEABOVE",     (0, -1),(-1, -1),  1.0, C_MGRAY),
+            ("TOPPADDING",    (0, 0), (-1, -1),  8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1),  8),
+            ("LEFTPADDING",   (0, 0), (-1, -1),  12),
+            ("RIGHTPADDING",  (0, 0), (-1, -1),  12),
+            ("VALIGN",        (0, 0), (-1, -1),  "MIDDLE"),
+        ]))
+        story.append(Spacer(1, 10))
+        story.append(kt)
+        story.append(Spacer(1, 20))
+
+        # Closing paragraph for Kautionsverrechnung mode
+        if still_owed > 0:
+            closing = (
+                f"Der Nachzahlungsbetrag von <b>{total:.2f} €</b> übersteigt die hinterlegte Kaution. "
+                f"Die Kaution von {k_amt:.2f} € wird vollständig verrechnet. "
+                f"Den verbleibenden Betrag von <b>{still_owed:.2f} €</b> bitten wir Sie innerhalb von "
+                "<b>7 Tagen</b> auf das Ihnen bekannte Konto zu überweisen."
+            )
+        else:
+            closing = (
+                f"Der Nachzahlungsbetrag von <b>{total:.2f} €</b> wird mit Ihrer Kaution verrechnet. "
+                f"Die verbleibende Kaution in Höhe von <b>{k_return:.2f} €</b> "
+                "wird Ihnen in Kürze zurückerstattet. "
+                "Bei Fragen zur Abrechnung stehen wir Ihnen gerne zur Verfügung."
+            )
+    elif total > 0:
         closing = (
             f"Wir bitten Sie, den Nachzahlungsbetrag von <b>{total:.2f} €</b> innerhalb von <b>7 Tagen</b> "
             "nach Erhalt dieses Schreibens auf das Ihnen bekannte Konto zu überweisen. "
@@ -439,6 +604,28 @@ def invoice_pdf(
     story.append(Paragraph(closing, s["body"]))
     story.append(Spacer(1, 30))
     story.extend(_signature_block(landlord_name, signature_path, s))
+
+    # ── Optional landlord info footer ──────────────────────────────
+    if landlord_info:
+        parts = []
+        if landlord_info.get("address"):
+            parts.append(f"Adresse: {landlord_info['address']}")
+        if landlord_info.get("iban"):
+            parts.append(f"IBAN: {landlord_info['iban']}")
+        if landlord_info.get("bank"):
+            parts.append(f"Bank: {landlord_info['bank']}")
+        if parts:
+            story.append(Spacer(1, 16))
+            info_t = Table([[Paragraph("  ·  ".join(parts), s["small"])]], colWidths=[W])
+            info_t.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, -1), C_SECBG),
+                ("LINEABOVE",     (0, 0), (-1, -1), 0.5, C_MGRAY),
+                ("TOPPADDING",    (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 12),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 12),
+            ]))
+            story.append(info_t)
 
     doc = SimpleDocTemplate(
         file, pagesize=A4, title=f"Abrechnung_{tenant}",

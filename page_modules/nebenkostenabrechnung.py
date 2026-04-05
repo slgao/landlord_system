@@ -4,7 +4,7 @@ import calendar
 from datetime import date, timedelta
 from pathlib import Path
 from db import fetch, execute, get_config, get_tenant_address, get_tenant_gender
-from logic import strom_calc_detail, gas_calc_detail, water_calc_detail, betriebskosten_calc
+from logic import strom_calc_detail, gas_calc_detail, water_calc_detail, betriebskosten_calc, heizung_calc_detail
 from pdfgen import invoice_pdf
 
 
@@ -69,9 +69,32 @@ def _load_profile_into_state(data: dict):
     else:
         st.session_state["include_bk"] = False
 
-    # Extra items + auto-tick checkbox if profile contains them
+    # Extra items
     _reset_extra_items(data.get("extra_items", []))
     st.session_state["include_extra"] = bool(data.get("extra_items"))
+
+    # Heizkosten
+    if data.get("heizung"):
+        h = data["heizung"]
+        bill_s = date.fromisoformat(h["bill_start"])
+        bill_e = date.fromisoformat(h["bill_end"])
+        eff_s  = date.fromisoformat(h["eff_start"])
+        eff_e  = date.fromisoformat(h["eff_end"])
+        st.session_state["include_heiz"]      = True
+        st.session_state["heiz_start"]        = bill_s
+        st.session_state["heiz_end"]          = bill_e
+        st.session_state["heiz_eff_start"]    = eff_s
+        st.session_state["heiz_eff_end"]      = eff_e
+        st.session_state["heiz_limit"]        = float(h.get("prepay_pm", 0))
+        st.session_state["heiz_is_pauschale"] = bool(h.get("is_pauschale", False))
+        st.session_state["_heiz_bill_key"]    = (bill_s, bill_e)
+        for m in h.get("meters", []):
+            mid = m["meter_id"]
+            st.session_state[f"heiz_start_{mid}"] = float(m.get("start", 0))
+            st.session_state[f"heiz_end_{mid}"]   = float(m.get("end", 0))
+            st.session_state[f"heiz_price_{mid}"] = float(m.get("unit_price", 0))
+    else:
+        st.session_state["include_heiz"] = False
 
 
 def _reset_extra_items(items: list):
@@ -233,10 +256,11 @@ def show():
     include_strom = st.checkbox("Strom (Electricity)",                           key="include_strom")
     include_gas   = st.checkbox("Gas",                                            key="include_gas")
     include_water = st.checkbox("Kaltwasser (Cold Water)",                        key="include_water")
+    include_heiz  = st.checkbox("Heizkosten (Heizkostenverteiler)",              key="include_heiz")
     include_bk    = st.checkbox("Betriebskosten (Operating costs)",               key="include_bk")
     include_extra = st.checkbox("Zusätzliche Positionen (damages, agreements…)", key="include_extra")
 
-    strom_data = gas_data = water_data = bk_data = extra_data = None
+    strom_data = gas_data = water_data = heiz_data = bk_data = extra_data = None
 
     # ── Strom ──────────────────────────────────────────────────────
     if include_strom:
@@ -507,6 +531,135 @@ def show():
                 "is_pauschale": bool(water_is_pauschale),
             }
 
+    # ── Heizkosten ─────────────────────────────────────────────────
+    if include_heiz:
+        st.subheader("Heizkosten (Heizkostenverteiler)")
+
+        # Look up the apartment for this tenant
+        apt_row = fetch("""
+            SELECT a.id, a.name FROM contracts c
+            JOIN apartments a ON c.apartment_id = a.id
+            WHERE c.tenant_id=? ORDER BY c.start_date DESC LIMIT 1
+        """, (tenant_choice[0],))
+        apt_id = apt_row[0][0] if apt_row else None
+
+        reg_meters = fetch(
+            "SELECT id, serial_number, description, unit_price, unit_label "
+            "FROM heizung_meters WHERE apartment_id=? ORDER BY id",
+            (apt_id,)
+        ) if apt_id else []
+
+        if not reg_meters:
+            st.warning(
+                "No Heizkostenverteiler registered for this tenant's apartment. "
+                "Please add meters in the Apartments page first."
+            )
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                heiz_bill_start = st.date_input("Billing period start",
+                                                value=date.today().replace(month=1, day=1),
+                                                min_value=date.today() - timedelta(days=365*20),
+                                                key="heiz_start")
+            with col2:
+                heiz_bill_end = st.date_input("Billing period end",
+                                              value=date.today().replace(month=12, day=31),
+                                              key="heiz_end")
+
+            heiz_eff = _effective(heiz_bill_start, heiz_bill_end)
+            if heiz_eff is None:
+                st.warning("Tenant's contract does not overlap with the Heizkosten billing period.")
+            else:
+                h_auto_s, h_auto_e = heiz_eff
+                _hk = (heiz_bill_start, heiz_bill_end)
+                if st.session_state.get("_heiz_bill_key") != _hk:
+                    st.session_state["heiz_eff_start"] = h_auto_s
+                    st.session_state["heiz_eff_end"]   = h_auto_e
+                    st.session_state["_heiz_bill_key"] = _hk
+                st.caption("Tenant's effective period (auto-detected, editable):")
+                col1, col2 = st.columns(2)
+                with col1:
+                    h_eff_start = st.date_input("Effective start",
+                                                min_value=date.today() - timedelta(days=365*20),
+                                                key="heiz_eff_start")
+                with col2:
+                    h_eff_end = st.date_input("Effective end", key="heiz_eff_end")
+                h_eff_days = max(1, (h_eff_end - h_eff_start).days + 1)
+                st.caption(f"{h_eff_days} days")
+
+                st.caption("Meter readings:")
+                # Header row
+                hc1, hc2, hc3, hc4, hc5 = st.columns([2, 2, 1, 1, 1])
+                hc1.caption("Serial / Description")
+                hc2.caption("Description")
+                hc3.caption("Start reading")
+                hc4.caption("End reading")
+                hc5.caption("Unit price")
+
+                meter_inputs = []
+                for mid, serial, desc, default_price, unit_label in reg_meters:
+                    c1, c2, c3, c4, c5 = st.columns([2, 2, 1, 1, 1])
+                    c1.markdown(f"**{serial}**")
+                    c2.markdown(desc or "—")
+                    with c3:
+                        m_start = st.number_input("Start", min_value=0.0, format="%.3f",
+                                                  key=f"heiz_start_{mid}",
+                                                  label_visibility="collapsed")
+                    with c4:
+                        m_end = st.number_input("End", min_value=0.0, format="%.3f",
+                                                key=f"heiz_end_{mid}",
+                                                label_visibility="collapsed")
+                    with c5:
+                        m_price = st.number_input("€/unit", min_value=0.0,
+                                                  value=float(st.session_state.get(
+                                                      f"heiz_price_{mid}", default_price)),
+                                                  format="%.4f",
+                                                  key=f"heiz_price_{mid}",
+                                                  label_visibility="collapsed")
+                    meter_inputs.append({
+                        "meter_id":    mid,
+                        "serial":      serial,
+                        "description": desc or "",
+                        "unit_label":  unit_label or "Einheiten",
+                        "start":       m_start,
+                        "end":         m_end,
+                        "unit_price":  m_price,
+                    })
+
+                unit_label_display = reg_meters[0][4] if reg_meters else "Einheiten"
+                heiz_limit_pm  = st.number_input("Prepayment per month (€)",
+                                                 min_value=0.0, key="heiz_limit")
+                heiz_is_pauschale = st.checkbox(
+                    "Pauschale — prepayment is a hard limit (no refund if unused)",
+                    key="heiz_is_pauschale",
+                )
+
+                heiz_bill_days = max(1, (heiz_bill_end - heiz_bill_start).days + 1)
+                calc_h = heizung_calc_detail(
+                    meter_inputs, num_tenants, heiz_bill_days, h_eff_days,
+                    heiz_limit_pm, is_pauschale=heiz_is_pauschale,
+                )
+                st.info(
+                    f"Gesamtverbrauch: **{calc_h['total_units']:.3f} {unit_label_display}**  ·  "
+                    f"Gesamtkosten Wohnung: **{calc_h['total_cost_flat']:.2f} €**  ·  "
+                    f"Ihr Anteil: **{calc_h['cost_tenant']:.2f} €**  ·  "
+                    f"Vorauszahlung: **{calc_h['prepay']:.2f} €**  ·  "
+                    f"Nachzahlung: **{calc_h['nach']:.2f} €**"
+                )
+                heiz_data = {
+                    "bill_period":    f"{heiz_bill_start.strftime('%d.%m.%Y')} – {heiz_bill_end.strftime('%d.%m.%Y')}",
+                    "bill_days":      heiz_bill_days,
+                    "period":         f"{h_eff_start.strftime('%d.%m.%Y')} – {h_eff_end.strftime('%d.%m.%Y')}",
+                    "days":           h_eff_days,
+                    "num_tenants":    int(num_tenants),
+                    "monthly_limit":  heiz_limit_pm,
+                    "unit_label":     unit_label_display,
+                    "is_pauschale":   bool(heiz_is_pauschale),
+                    **calc_h,
+                    "cost":  calc_h["cost_tenant"],
+                    "limit": calc_h["prepay"],
+                }
+
     # ── Betriebskosten ─────────────────────────────────────────────
     if include_bk:
         st.subheader("Betriebskosten")
@@ -679,7 +832,7 @@ def show():
             )
 
     if st.button("Generate PDF"):
-        if not any([strom_data, gas_data, water_data, bk_data, extra_data]):
+        if not any([strom_data, gas_data, water_data, heiz_data, bk_data, extra_data]):
             st.warning("Please select at least one cost type.")
         else:
             ll_info = None
@@ -698,6 +851,7 @@ def show():
                 strom=strom_data,
                 gas=gas_data,
                 water=water_data,
+                heizung=heiz_data,
                 bk=bk_data,
                 extra=extra_data,
                 kaution_info=kaution_info,
@@ -761,6 +915,26 @@ def show():
                 "eff_e_year":    int(st.session_state["bk_eff_e_year"]),
                 "prepay_pm":     float(st.session_state.get("bk_limit", 0)),
                 "total_cost":    float(st.session_state.get("bk_cost", 0)),
+            }
+        if include_heiz and heiz_data:
+            pd_["heizung"] = {
+                "bill_start":   str(st.session_state["heiz_start"]),
+                "bill_end":     str(st.session_state["heiz_end"]),
+                "eff_start":    str(st.session_state["heiz_eff_start"]),
+                "eff_end":      str(st.session_state["heiz_eff_end"]),
+                "prepay_pm":    float(st.session_state.get("heiz_limit", 0)),
+                "is_pauschale": bool(st.session_state.get("heiz_is_pauschale", False)),
+                "meters": [
+                    {
+                        "meter_id":   m["meter_id"],
+                        "serial":     m["serial"],
+                        "description": m["description"],
+                        "start":      float(st.session_state.get(f"heiz_start_{m['meter_id']}", 0)),
+                        "end":        float(st.session_state.get(f"heiz_end_{m['meter_id']}", 0)),
+                        "unit_price": float(st.session_state.get(f"heiz_price_{m['meter_id']}", 0)),
+                    }
+                    for m in heiz_data.get("meter_details", [])
+                ],
             }
         extra_items = _collect_extra_items()
         if extra_items:

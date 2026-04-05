@@ -123,6 +123,17 @@ def init_db():
     """)
 
     c.execute("""
+    CREATE TABLE IF NOT EXISTS heizung_meters(
+        id INTEGER PRIMARY KEY,
+        apartment_id INTEGER,
+        serial_number TEXT,
+        description TEXT,
+        unit_price REAL DEFAULT 0.0,
+        unit_label TEXT DEFAULT 'Einheiten'
+    )
+    """)
+
+    c.execute("""
     CREATE TABLE IF NOT EXISTS billing_profiles(
         id INTEGER PRIMARY KEY,
         tenant_id INTEGER,

@@ -145,6 +145,46 @@ def water_calc_detail(start_m3, end_m3, frischwasser_per_m3, abwasser_per_m3,
     )
 
 
+def heizung_calc_detail(meters, num_tenants, bill_days, eff_days,
+                        prepay_monthly, is_pauschale=False):
+    """
+    meters: list of dicts with keys start, end, unit_price
+    Computes heating cost from Heizkostenverteiler readings.
+    """
+    n  = max(1, num_tenants)
+    bd = max(1, bill_days)
+    meter_details = []
+    total_cost_flat = 0.0
+    total_units = 0.0
+    for m in meters:
+        units = max(0.0, m["end"] - m["start"])
+        cost  = round(units * m["unit_price"], 2)
+        total_units     += units
+        total_cost_flat += cost
+        meter_details.append({
+            "serial":      m.get("serial", ""),
+            "description": m.get("description", ""),
+            "start":       m["start"],
+            "end":         m["end"],
+            "units":       round(units, 3),
+            "unit_price":  m["unit_price"],
+            "cost":        cost,
+        })
+    cost_tenant = total_cost_flat * eff_days / bd / n
+    prepay      = prepay_monthly * 12 / 365 * eff_days
+    nach        = cost_tenant - prepay
+    if is_pauschale:
+        nach = max(0.0, nach)
+    return dict(
+        total_units     = round(total_units, 3),
+        total_cost_flat = round(total_cost_flat, 2),
+        cost_tenant     = round(cost_tenant, 2),
+        prepay          = round(prepay, 2),
+        nach            = round(nach, 2),
+        meter_details   = meter_details,
+    )
+
+
 def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end, limit_per_month=206):
     num_months = (bk_end.year - bk_start.year) * 12 + (bk_end.month - bk_start.month + 1)
     if num_months == 0:

@@ -65,6 +65,65 @@ def show():
                 st.success("Apartment updated.")
                 st.rerun()
 
+        with st.expander("Heizkostenverteiler"):
+            st.caption("Register heat cost allocators (Heizkostenverteiler) per apartment. "
+                       "Readings are entered in the Nebenkostenabrechnung.")
+            apt_heiz = st.selectbox(
+                "Select apartment", apt_data,
+                format_func=lambda x: f"#{x[0]} — {x[2]}  ({x[1]})",
+                key="apt_heiz_sel"
+            )
+            meters = fetch(
+                "SELECT id, serial_number, description, unit_price, unit_label "
+                "FROM heizung_meters WHERE apartment_id=? ORDER BY id",
+                (apt_heiz[0],)
+            )
+            if meters:
+                df_m = pd.DataFrame(meters,
+                                    columns=["ID", "Serial No.", "Description",
+                                             "Unit Price", "Unit"])
+                st.dataframe(df_m, hide_index=True)
+            else:
+                st.info("No meters registered for this apartment.")
+
+            st.markdown("**Add meter**")
+            col1, col2 = st.columns(2)
+            with col1:
+                m_serial = st.text_input("Serial number", key="m_serial",
+                                         placeholder="e.g. ISTA-00123456")
+                m_price  = st.number_input("Unit price (€/unit or €/kWh)",
+                                           min_value=0.0, format="%.4f", key="m_price")
+            with col2:
+                m_desc   = st.text_input("Description / Location", key="m_desc",
+                                         placeholder="e.g. Wohnzimmer Heizkörper")
+                m_unit   = st.text_input("Unit label", value="Einheiten", key="m_unit",
+                                         placeholder="e.g. Einheiten / kWh")
+            if st.button("Add Meter", key="btn_add_meter"):
+                if not m_serial.strip():
+                    st.warning("Serial number is required.")
+                else:
+                    execute(
+                        "INSERT INTO heizung_meters "
+                        "(apartment_id, serial_number, description, unit_price, unit_label) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (apt_heiz[0], m_serial.strip(), m_desc.strip(),
+                         m_price, m_unit.strip() or "Einheiten")
+                    )
+                    st.success("Meter added.")
+                    st.rerun()
+
+            if meters:
+                st.markdown("**Delete meter**")
+                to_del_m = st.selectbox(
+                    "Select meter", meters,
+                    format_func=lambda x: f"{x[1]} — {x[2]}",
+                    key="apt_meter_del"
+                )
+                if st.button("Delete Meter", key="btn_del_meter", type="primary"):
+                    execute("DELETE FROM heizung_meters WHERE id=?", (to_del_m[0],))
+                    st.success("Meter deleted.")
+                    st.rerun()
+
         with st.expander("Delete Apartment"):
             to_del = st.selectbox(
                 "Select apartment", apt_data,

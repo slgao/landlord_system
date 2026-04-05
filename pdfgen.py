@@ -253,6 +253,7 @@ def invoice_pdf(
     gas=None,
     water=None,
     bk=None,
+    heizung=None,
     extra=None,
     kaution_info=None,
     landlord_info=None,
@@ -463,6 +464,88 @@ def invoice_pdf(
         ]))
         story.append(Spacer(1, 18))
         total_items.append(("Nachzahlung Betriebskosten", d["nach"]))
+        section_num += 1
+
+    # ── Heizkosten ─────────────────────────────────────────────────
+    if heizung:
+        d = heizung
+        n = d["num_tenants"]
+        unit  = d.get("unit_label", "Einheiten")
+        pauschale_h = d.get("is_pauschale", False)
+        vz_label_h  = "Pauschale" if pauschale_h else "Vorauszahlung"
+
+        story.append(_section_header(section_num, "Heizkosten (Heizkostenverteiler)", s))
+        story.append(_info_box(
+            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+            f"{vz_label_h}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_h else ""), s
+        ))
+        story.append(Spacer(1, 8))
+
+        # ── Per-meter breakdown table ─────────────────────────────
+        meter_style  = ParagraphStyle("_ms",  fontName="Helvetica",      fontSize=8, leading=11, textColor=C_TEXT)
+        meter_hdr    = ParagraphStyle("_mh",  fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_WHITE)
+        meter_right  = ParagraphStyle("_mr",  fontName="Helvetica",      fontSize=8, leading=11, textColor=C_TEXT, alignment=TA_RIGHT)
+        meter_hdr_r  = ParagraphStyle("_mhr", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_WHITE, alignment=TA_RIGHT)
+        meter_tot    = ParagraphStyle("_mt",  fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_TEXT)
+        meter_tot_r  = ParagraphStyle("_mtr", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_TEXT, alignment=TA_RIGHT)
+
+        mw = [120, 120, 50, 50, 60, 68]  # Serial | Description | Start | End | Verbrauch | Kosten
+        m_rows = [[
+            Paragraph("Seriennummer",  meter_hdr),
+            Paragraph("Beschreibung",  meter_hdr),
+            Paragraph(f"Start ({unit})", meter_hdr_r),
+            Paragraph(f"Ende ({unit})",  meter_hdr_r),
+            Paragraph(f"Verbrauch",    meter_hdr_r),
+            Paragraph("Kosten",        meter_hdr_r),
+        ]]
+        for m in d.get("meter_details", []):
+            m_rows.append([
+                Paragraph(m["serial"],      meter_style),
+                Paragraph(m["description"], meter_style),
+                Paragraph(f"{m['start']:.3f}", meter_right),
+                Paragraph(f"{m['end']:.3f}",   meter_right),
+                Paragraph(f"{m['units']:.3f}", meter_right),
+                Paragraph(f"{m['cost']:.2f} €", meter_right),
+            ])
+        m_rows.append([
+            Paragraph("Gesamt", meter_tot),
+            Paragraph("", meter_tot),
+            Paragraph("", meter_tot),
+            Paragraph("", meter_tot),
+            Paragraph(f"{d['total_units']:.3f}", meter_tot_r),
+            Paragraph(f"{d['total_cost_flat']:.2f} €", meter_tot_r),
+        ])
+        mt = Table(m_rows, colWidths=mw)
+        mt.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),   C_NAVY),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -2),  [C_WHITE, C_LGRAY]),
+            ("LINEBELOW",     (0, 0), (-1, -2),  0.4, C_MGRAY),
+            ("BACKGROUND",    (0, -1),(-1, -1),  C_LBLUE),
+            ("VALIGN",        (0, 0), (-1, -1),  "TOP"),
+            ("TOPPADDING",    (0, 0), (-1, -1),  5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1),  5),
+            ("LEFTPADDING",   (0, 0), (-1, -1),  6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1),  6),
+        ]))
+        story.append(mt)
+        story.append(Spacer(1, 8))
+
+        # ── Proration calculation table ───────────────────────────
+        story.append(_calc_table([
+            ["Position", "Berechnung", "Betrag"],
+            ["Gesamtkosten Wohnung",    f"Σ Verteiler × Einheitspreis",
+             f"{d['total_cost_flat']:.2f} €"],
+            ["Ihr Anteil (Zeitraum)",   f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+             f"{d['cost']:.2f} €"],
+            [f"{vz_label_h} Zeitraum",  f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
+             f"{d['limit']:.2f} €"],
+            [f"Nachzahlung Heizkosten", f"Ihr Anteil − {vz_label_h}" + (" (mind. 0 €)" if pauschale_h else ""),
+             f"{d['nach']:.2f} €"],
+        ], col_widths=[175, 215, 78]))
+        story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Heizkosten", d["nach"]))
         section_num += 1
 
     # ── Zusätzliche Positionen ─────────────────────────────────────

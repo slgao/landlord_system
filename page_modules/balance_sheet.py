@@ -145,7 +145,6 @@ def show():
               .map(_color_net, subset=["Expected net (€)", "Actual net (€)"])
               .map(lambda v: "color:#e74c3c" if v < 0 else "color:#27ae60",
                    subset=["Variance (€)"]),
-            use_container_width=True,
             hide_index=True,
         )
 
@@ -298,7 +297,6 @@ def show():
                         .map(_color_net, subset=["Net / mo (€)", "Net / yr  (€)"])
                         .map(lambda v: "color:#27ae60" if v > 0 else "color:#8395a7",
                              subset=[received_col]),
-                    use_container_width=True,
                     hide_index=True,
                 )
 
@@ -324,13 +322,13 @@ def show():
                         ).reset_index()
                         tenant_cols = [c for c in df_pivot.columns if c != "Month"]
                         df_pivot["Total (€)"] = df_pivot[tenant_cols].sum(axis=1)
-                        st.dataframe(df_pivot, use_container_width=True, hide_index=True)
+                        st.dataframe(df_pivot, hide_index=True)
                     else:
                         df_simple = (
                             df_d.groupby("Month", sort=False)["Amount (€)"]
                             .sum().reset_index()
                         )
-                        st.dataframe(df_simple, use_container_width=True, hide_index=True)
+                        st.dataframe(df_simple, hide_index=True)
 
                 # ── Property totals ────────────────────────────────
                 total_net_mo   = sum(r["Net / mo (€)"] for r in flat_rows)

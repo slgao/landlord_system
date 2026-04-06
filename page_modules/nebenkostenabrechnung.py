@@ -996,8 +996,8 @@ def show():
         return pd_
 
     with st.expander("Save / Update Billing Profile"):
-        save_mode = st.radio("", ["Save as new profile", "Update existing profile"],
-                             horizontal=True, key="profile_save_mode")
+        save_mode = st.radio("Action", ["Save as new profile", "Update existing profile"],
+                             horizontal=True, key="profile_save_mode", label_visibility="collapsed")
 
         if save_mode == "Save as new profile":
             profile_label = st.text_input("Profile label (e.g. '2023 Abrechnung')",

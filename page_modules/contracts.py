@@ -259,7 +259,7 @@ def show():
                     columns=["ID", "Name", "Gender", "Email", "In Contract"],
                 )
                 df_ct["In Contract"] = df_ct["In Contract"].apply(lambda x: "Yes" if x else "No")
-                st.dataframe(df_ct, hide_index=True, use_container_width=True)
+                st.dataframe(df_ct, hide_index=True)
 
                 to_del_ct = st.selectbox(
                     "Remove co-tenant", existing_ct,

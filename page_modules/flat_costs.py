@@ -68,7 +68,7 @@ def show():
 
         df_summary = pd.DataFrame(summary_rows)
         st.subheader("Summary — all flats")
-        st.dataframe(df_summary, use_container_width=True, hide_index=True)
+        st.dataframe(df_summary, hide_index=True)
 
         # Grand total metric row
         col1, col2 = st.columns(2)
@@ -114,7 +114,6 @@ def show():
                         ] if col.name == "Status" else [""] * len(col),
                         axis=0,
                     ),
-                    use_container_width=True,
                     hide_index=True,
                 )
 

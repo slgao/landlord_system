@@ -8,12 +8,12 @@ from db import fetch
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _expected_rent(prop_id, m_start, m_end):
-    """Sum of contracted rent for all active, non-terminated contracts in a month."""
+    """Sum of contracted rent for all contracts active during the given month.
+    Terminated contracts are included — their end_date already caps the active period."""
     rows = fetch("""
         SELECT c.rent FROM contracts c
         JOIN apartments a ON c.apartment_id = a.id
         WHERE a.property_id = ?
-          AND COALESCE(c.terminated, 0) = 0
           AND c.start_date <= ?
           AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
     """, (prop_id, m_end, m_start))

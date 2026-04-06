@@ -159,62 +159,159 @@ def show():
                   delta=f"Expected {tot_expected - tot_costs:+.2f} €")
 
         # ── Per-flat breakdown ─────────────────────────────────────
-        with st.expander("Per-flat breakdown (current active contracts)"):
-            flats = fetch("""
+        y_start = f"{y}-01-01"
+        y_end   = f"{y}-{max_month:02d}-{calendar.monthrange(y, max_month)[1]:02d}"
+
+        with st.expander(f"Per-flat breakdown ({y})"):
+            apts = fetch("""
                 SELECT a.id, a.name, a.flat FROM apartments a
                 WHERE a.property_id = ? ORDER BY a.flat, a.name
             """, (prop_id,))
 
-            flat_rows = []
-            for apt_id, apt_name, flat in flats:
-                # active contract rent
-                rent_row = fetch("""
-                    SELECT c.rent, c.start_date, c.end_date, t.name
-                    FROM contracts c JOIN tenants t ON t.id = c.tenant_id
-                    WHERE c.apartment_id = ?
-                      AND COALESCE(c.terminated, 0) = 0
-                      AND c.start_date <= ?
-                      AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
-                    ORDER BY c.start_date DESC LIMIT 1
-                """, (apt_id, str(today), str(today)))
+            # Group apartments by flat label; apartments without a flat label
+            # are each their own group
+            groups = {}
+            for apt_id, apt_name, flat in apts:
+                key = flat.strip() if flat and flat.strip() else f"\x00{apt_id}"
+                groups.setdefault(key, []).append((apt_id, apt_name, flat))
 
-                rent    = rent_row[0][0] if rent_row else 0.0
-                tenant  = rent_row[0][3] if rent_row else "—  (vacant)"
+            flat_rows    = []
+            group_detail = []   # parallel list for per-flat payment breakdowns
 
-                apt_costs = fetch("""
-                    SELECT fc.amount, fc.frequency FROM flat_costs fc
-                    WHERE fc.apartment_id = ?
-                      AND fc.valid_from <= ?
-                      AND (fc.valid_to IS NULL OR fc.valid_to = 'None' OR fc.valid_to >= ?)
-                      AND fc.frequency != 'one-time'
-                """, (apt_id, str(today), str(today)))
+            for key, members in groups.items():
+                is_wg      = len(members) > 1
+                flat_label = members[0][2] or members[0][1]
 
-                monthly_costs = sum(
-                    r[0] if r[1] == "monthly" else r[0] / 12
-                    for r in apt_costs
-                )
-                net = rent - monthly_costs
+                total_rent     = 0.0
+                total_received = 0.0
+                total_costs    = 0.0
+                tenants        = []
+                apt_ids        = [m[0] for m in members]
+
+                for apt_id, apt_name, _ in members:
+                    rent_row = fetch("""
+                        SELECT c.rent, t.name
+                        FROM contracts c JOIN tenants t ON t.id = c.tenant_id
+                        WHERE c.apartment_id = ?
+                          AND COALESCE(c.terminated, 0) = 0
+                          AND c.start_date <= ?
+                          AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
+                        ORDER BY c.start_date DESC LIMIT 1
+                    """, (apt_id, str(today), str(today)))
+                    if rent_row:
+                        total_rent += rent_row[0][0]
+                        tenants.append(rent_row[0][1])
+
+                    rec = fetch("""
+                        SELECT COALESCE(SUM(p.amount), 0)
+                        FROM payments p
+                        JOIN contracts c ON p.contract_id = c.id
+                        WHERE c.apartment_id = ? AND p.payment_date BETWEEN ? AND ?
+                    """, (apt_id, y_start, y_end))
+                    total_received += rec[0][0] if rec else 0.0
+
+                    costs = fetch("""
+                        SELECT fc.amount, fc.frequency FROM flat_costs fc
+                        WHERE fc.apartment_id = ?
+                          AND fc.valid_from <= ?
+                          AND (fc.valid_to IS NULL OR fc.valid_to = 'None' OR fc.valid_to >= ?)
+                          AND fc.frequency != 'one-time'
+                    """, (apt_id, str(today), str(today)))
+                    total_costs += sum(
+                        r[0] if r[1] == "monthly" else r[0] / 12 for r in costs
+                    )
+
+                # Monthly payment breakdown for this flat (all rooms combined)
+                ph = ",".join("?" * len(apt_ids))
+                pay_detail = fetch(f"""
+                    SELECT strftime('%Y-%m', p.payment_date) AS month,
+                           t.name                            AS tenant,
+                           SUM(p.amount)                     AS amount
+                    FROM payments p
+                    JOIN contracts c ON p.contract_id = c.id
+                    JOIN tenants  t ON t.id = c.tenant_id
+                    WHERE c.apartment_id IN ({ph})
+                      AND p.payment_date BETWEEN ? AND ?
+                    GROUP BY month, t.name
+                    ORDER BY month, t.name
+                """, tuple(apt_ids) + (y_start, y_end))
+
+                tenant_str = ", ".join(tenants) if tenants else "— (vacant)"
+                net = total_rent - total_costs
                 flat_rows.append({
-                    "Flat":             flat or "—",
-                    "Room / Unit":      apt_name,
-                    "Tenant":           tenant,
-                    "Rent / mo (€)":    round(rent, 2),
-                    "Costs / mo (€)":   round(monthly_costs, 2),
-                    "Net / mo (€)":     round(net, 2),
-                    "Net / yr  (€)":    round(net * 12, 2),
+                    "Flat":               flat_label,
+                    "Type":               "WG" if is_wg else "Wohnung",
+                    "Tenant(s)":          tenant_str,
+                    "Rent / mo (€)":      round(total_rent, 2),
+                    f"Received {y} (€)":  round(total_received, 2),
+                    "Costs / mo (€)":     round(total_costs, 2),
+                    "Net / mo (€)":       round(net, 2),
+                    "Net / yr  (€)":      round(net * 12, 2),
+                })
+                group_detail.append({
+                    "label":  flat_label,
+                    "is_wg":  is_wg,
+                    "detail": pay_detail,
                 })
 
             if flat_rows:
+                received_col = f"Received {y} (€)"
                 df_f = pd.DataFrame(flat_rows)
                 st.dataframe(
-                    df_f.style.map(_color_net, subset=["Net / mo (€)", "Net / yr  (€)"]),
+                    df_f.style
+                        .map(_color_net, subset=["Net / mo (€)", "Net / yr  (€)"])
+                        .map(lambda v: "color:#27ae60" if v > 0 else "color:#8395a7",
+                             subset=[received_col]),
                     use_container_width=True,
                     hide_index=True,
                 )
-                total_net_mo = sum(r["Net / mo (€)"] for r in flat_rows)
-                st.markdown(
+
+                # ── Per-flat monthly payment detail ────────────────
+                st.markdown("---")
+                st.markdown(f"**Monthly payment breakdown — {y}**")
+                for grp in group_detail:
+                    st.caption(grp["label"] + (" (WG)" if grp["is_wg"] else ""))
+                    rows = grp["detail"]
+                    if not rows:
+                        st.caption("  No payments recorded.")
+                        continue
+
+                    df_d = pd.DataFrame(rows, columns=["Month", "Tenant", "Amount (€)"])
+                    # Pretty month label
+                    df_d["Month"] = df_d["Month"].apply(
+                        lambda s: date(int(s[:4]), int(s[5:7]), 1).strftime("%b %Y")
+                    )
+                    if grp["is_wg"]:
+                        df_pivot = df_d.pivot_table(
+                            index="Month", columns="Tenant",
+                            values="Amount (€)", aggfunc="sum", fill_value=0,
+                        ).reset_index()
+                        tenant_cols = [c for c in df_pivot.columns if c != "Month"]
+                        df_pivot["Total (€)"] = df_pivot[tenant_cols].sum(axis=1)
+                        st.dataframe(df_pivot, use_container_width=True, hide_index=True)
+                    else:
+                        df_simple = (
+                            df_d.groupby("Month", sort=False)["Amount (€)"]
+                            .sum().reset_index()
+                        )
+                        st.dataframe(df_simple, use_container_width=True, hide_index=True)
+
+                # ── Property totals ────────────────────────────────
+                total_net_mo   = sum(r["Net / mo (€)"] for r in flat_rows)
+                total_received = sum(r[received_col] for r in flat_rows)
+                c1, c2 = st.columns(2)
+                c1.markdown(
                     _metric_html(
-                        "Property net / month (active contracts only)",
+                        f"Total received {y}",
+                        f"{total_received:+.2f} €",
+                        "Sum across all flats in this property",
+                        "#27ae60" if total_received > 0 else "#8395a7",
+                    ),
+                    unsafe_allow_html=True,
+                )
+                c2.markdown(
+                    _metric_html(
+                        "Net / month (active contracts)",
                         f"{total_net_mo:+.2f} €",
                         f"Annual: {total_net_mo * 12:+.2f} €",
                         "#27ae60" if total_net_mo >= 0 else "#e74c3c",

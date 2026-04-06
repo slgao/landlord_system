@@ -67,6 +67,24 @@ def _salutation(gender, name):
         return f"Sehr geehrte/r {name},"
 
 
+def _salutation_multi(primary_name, primary_gender, co_tenants):
+    """Gender-aware salutation for one or more tenants."""
+    persons = [{"name": primary_name, "gender": primary_gender}] + list(co_tenants)
+    if len(persons) >= 3:
+        return "Sehr geehrte Damen und Herren,"
+    parts = []
+    for p in persons:
+        g, n = p["gender"], p["name"]
+        if g == "male":
+            parts.append(f"sehr geehrter Herr {n}")
+        elif g == "female":
+            parts.append(f"sehr geehrte Frau {n}")
+        else:
+            parts.append(f"sehr geehrte/r {n}")
+    salutation = ", ".join(parts) + ","
+    return salutation[0].upper() + salutation[1:]
+
+
 # ── Shared building blocks ──────────────────────────────────────────────────────
 
 def _header_banner(title, subtitle, sender, today_str, accent=None):
@@ -102,9 +120,11 @@ def _accent_line(color=None, thickness=3):
     return HRFlowable(width="100%", thickness=thickness, color=color, spaceAfter=0, spaceBefore=0)
 
 
-def _address_block(name, address_lines, today_str, s):
+def _address_block(name, address_lines, today_str, s, co_tenants=None):
     """Recipient address left, date right."""
     left = [Paragraph(f"<b>{name}</b>", s["body"])]
+    for ct in (co_tenants or []):
+        left.append(Paragraph(f"<b>{ct['name']}</b>", s["body"]))
     for ln in address_lines:
         left.append(Paragraph(ln, s["body"]))
     right = [Spacer(1, 2), Paragraph(today_str, s["date_right"])]
@@ -257,6 +277,7 @@ def invoice_pdf(
     extra=None,
     kaution_info=None,
     landlord_info=None,
+    co_tenants=None,
 ):
     """
     strom / gas / water dict keys: bill_period, bill_days, period, days,
@@ -273,10 +294,11 @@ def invoice_pdf(
 
     # Period subtitle for header (show tenant's effective periods)
     period_parts = []
-    if strom: period_parts.append(f"Strom: {strom['period']} ({strom['days']} Tage)")
-    if gas:   period_parts.append(f"Gas: {gas['period']} ({gas['days']} Tage)")
-    if water: period_parts.append(f"Wasser: {water['period']} ({water['days']} Tage)")
-    if bk:    period_parts.append(f"BK: {bk['period']} ({bk['months']} Monate)")
+    if strom:   period_parts.append(f"Strom: {strom['period']} ({strom['days']} Tage)")
+    if gas:     period_parts.append(f"Gas: {gas['period']} ({gas['days']} Tage)")
+    if water:   period_parts.append(f"Wasser: {water['period']} ({water['days']} Tage)")
+    if heizung: period_parts.append(f"Heizung: {heizung['period']} ({heizung['days']} Tage)")
+    if bk:      period_parts.append(f"BK: {bk['period']} ({bk['months']} Monate)")
     period_str = "  ·  ".join(period_parts)
 
     # ── Header banner ──────────────────────────────────────────────
@@ -291,13 +313,13 @@ def invoice_pdf(
             l = line.strip()
             if l:
                 addr_lines.append(l)
-    story.append(_address_block(tenant, addr_lines, today_str, s))
+    story.append(_address_block(tenant, addr_lines, today_str, s, co_tenants=co_tenants))
     story.append(Spacer(1, 18))
     story.append(_accent_line(C_MGRAY, thickness=0.5))
     story.append(Spacer(1, 14))
 
     # ── Salutation + intro ─────────────────────────────────────────
-    story.append(Paragraph(_salutation(gender, tenant), s["body"]))
+    story.append(Paragraph(_salutation_multi(tenant, gender, co_tenants or []), s["body"]))
     story.append(Spacer(1, 8))
     story.append(Paragraph(
         "anbei erhalten Sie Ihre Nebenkostenabrechnung für den oben genannten Zeitraum. "
@@ -762,7 +784,7 @@ def invoice_pdf(
 
 # ── Mahnung ────────────────────────────────────────────────────────────────────
 
-def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signature_path=None):
+def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signature_path=None, co_tenants=None):
     safe_name = tenant_name.replace("/", "-").replace("\\", "-")
     file = f"pdf/Mahnung_{safe_name}.pdf"
     s = _styles()
@@ -785,13 +807,13 @@ def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signat
             l = line.strip()
             if l:
                 addr_lines.append(l)
-    story.append(_address_block(tenant_name, addr_lines, today_str, s))
+    story.append(_address_block(tenant_name, addr_lines, today_str, s, co_tenants=co_tenants))
     story.append(Spacer(1, 18))
     story.append(_accent_line(C_MGRAY, thickness=0.5))
     story.append(Spacer(1, 14))
 
     # ── Salutation ─────────────────────────────────────────────────
-    story.append(Paragraph(_salutation(gender, tenant_name), s["body"]))
+    story.append(Paragraph(_salutation_multi(tenant_name, gender, co_tenants or []), s["body"]))
     story.append(Spacer(1, 10))
     story.append(Paragraph(
         "für den oben genannten Abrechnungszeitraum ergibt sich folgender ausstehender Betrag:",

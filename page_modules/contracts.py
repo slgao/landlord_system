@@ -236,6 +236,72 @@ def show():
                 st.success("Kaution saved.")
                 st.rerun()
 
+        # ── Co-Tenants ─────────────────────────────────────────────
+        with st.expander("Co-Tenants"):
+            st.caption(
+                "Add additional occupants to a contract (e.g. partners, flatmates). "
+                "Those marked **In Contract** appear in the address block and salutation of the PDF. "
+                "Others (e.g. partners not on the lease) are stored for reference only."
+            )
+            ct_contract = st.selectbox(
+                "Select contract", contract_data,
+                format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
+                key="ct_contract_sel",
+            )
+            existing_ct = fetch(
+                "SELECT id, name, gender, email, in_contract FROM co_tenants "
+                "WHERE contract_id=? ORDER BY id",
+                (ct_contract[0],)
+            )
+            if existing_ct:
+                df_ct = pd.DataFrame(
+                    existing_ct,
+                    columns=["ID", "Name", "Gender", "Email", "In Contract"],
+                )
+                df_ct["In Contract"] = df_ct["In Contract"].apply(lambda x: "Yes" if x else "No")
+                st.dataframe(df_ct, hide_index=True, use_container_width=True)
+
+                to_del_ct = st.selectbox(
+                    "Remove co-tenant", existing_ct,
+                    format_func=lambda x: f"{x[1]} ({x[2]}){' — in contract' if x[4] else ''}",
+                    key="ct_del_sel",
+                )
+                if st.button("Remove", key="btn_del_ct", type="primary"):
+                    execute("DELETE FROM co_tenants WHERE id=?", (to_del_ct[0],))
+                    st.success(f"Removed {to_del_ct[1]}.")
+                    st.rerun()
+            else:
+                st.info("No co-tenants for this contract.")
+
+            st.markdown("**Add co-tenant**")
+            col1, col2 = st.columns(2)
+            with col1:
+                ct_name   = st.text_input("Name", key="ct_name_input",
+                                          placeholder="e.g. Maria Müller")
+                ct_email  = st.text_input("Email (optional)", key="ct_email_input",
+                                          placeholder="e.g. maria@example.com")
+            with col2:
+                ct_gender      = st.selectbox("Gender", ["diverse", "female", "male"],
+                                              key="ct_gender_input")
+                ct_in_contract = st.toggle(
+                    "In contract (Mitmieter)",
+                    key="ct_in_contract_input",
+                    help="Enable if this person is named on the rental contract. "
+                         "They will appear in the Nebenkostenabrechnung PDF.",
+                )
+            if st.button("Add Co-Tenant", key="btn_add_ct"):
+                if not ct_name.strip():
+                    st.warning("Name is required.")
+                else:
+                    execute(
+                        "INSERT INTO co_tenants (contract_id, name, gender, email, in_contract) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (ct_contract[0], ct_name.strip(), ct_gender,
+                         ct_email.strip() or None, int(ct_in_contract)),
+                    )
+                    st.success(f"Added {ct_name.strip()}.")
+                    st.rerun()
+
         # ── Delete Contract (last) ─────────────────────────────────
         with st.expander("Delete Contract"):
             to_del = st.selectbox("Select contract", contract_data,

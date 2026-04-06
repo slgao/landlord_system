@@ -226,24 +226,48 @@ def show():
     """, (selected_apartment_id,))
     address = addr_row[0][0] if addr_row and addr_row[0][0] else ""
 
-    st.info(
-        f"**Contract:** {contract_row[3]}  ·  "
-        f"{contract_start.strftime('%d.%m.%Y')} — {end_display}  \n"
-        + (f"**Address:** {address}" if address else "No address found for this property.")
+    # ── Co-tenants for this contract ───────────────────────────────
+    co_tenants_rows = fetch(
+        "SELECT name, gender, in_contract FROM co_tenants WHERE contract_id=? ORDER BY id",
+        (selected_contract_id,)
     )
+    # All co-tenants (for person count and info display)
+    all_co_tenants = [{"name": r[0], "gender": r[1], "in_contract": bool(r[2])}
+                      for r in co_tenants_rows]
+    # Only those named on the contract go into the PDF
+    co_tenants = [c for c in all_co_tenants if c["in_contract"]]
+
+    info_lines = (
+        f"**Contract:** {contract_row[3]}  ·  "
+        f"{contract_start.strftime('%d.%m.%Y')} — {end_display}"
+    )
+    if co_tenants:
+        info_lines += "  \n**Mitmieter (in contract → appear in PDF):** " + \
+                      ", ".join(c["name"] for c in co_tenants)
+    other_occupants = [c for c in all_co_tenants if not c["in_contract"]]
+    if other_occupants:
+        info_lines += "  \n**Other occupants (not in PDF):** " + \
+                      ", ".join(c["name"] for c in other_occupants)
+    info_lines += "  \n" + (f"**Address:** {address}" if address else "No address found for this property.")
+    st.info(info_lines)
 
     # ── Auto-count persons in flat ─────────────────────────────────
-    persons_in_flat = fetch("""
-        SELECT COUNT(DISTINCT c.tenant_id)
-        FROM contracts c
-        JOIN apartments a ON c.apartment_id = a.id
-        WHERE COALESCE(c.terminated, 0) = 0
-        AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= date('now'))
-        AND a.flat IS NOT NULL AND a.flat != ''
-        AND a.property_id = (SELECT property_id FROM apartments WHERE id=?)
-        AND a.flat = (SELECT flat FROM apartments WHERE id=?)
-    """, (selected_apartment_id, selected_apartment_id))
-    auto_count = persons_in_flat[0][0] if persons_in_flat and persons_in_flat[0][0] else 1
+    # Primary tenant + all co-tenants (regardless of contract status)
+    co_tenant_count = len(all_co_tenants)
+    if co_tenant_count > 0:
+        auto_count = 1 + co_tenant_count
+    else:
+        persons_in_flat = fetch("""
+            SELECT COUNT(DISTINCT c.tenant_id)
+            FROM contracts c
+            JOIN apartments a ON c.apartment_id = a.id
+            WHERE COALESCE(c.terminated, 0) = 0
+            AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= date('now'))
+            AND a.flat IS NOT NULL AND a.flat != ''
+            AND a.property_id = (SELECT property_id FROM apartments WHERE id=?)
+            AND a.flat = (SELECT flat FROM apartments WHERE id=?)
+        """, (selected_apartment_id, selected_apartment_id))
+        auto_count = persons_in_flat[0][0] if persons_in_flat and persons_in_flat[0][0] else 1
 
     # Reset when tenant OR contract changes
     _nk_key = (tenant_choice[0], selected_contract_id)
@@ -260,7 +284,14 @@ def show():
     st.divider()
     num_tenants = st.number_input("Tenants in flat", min_value=1, key="nk_num_tenants")
     if auto_count > 1:
-        st.caption(f"Auto-detected {auto_count} active tenants sharing the same flat.")
+        if co_tenant_count > 0:
+            in_contract_count = len(co_tenants)
+            st.caption(
+                f"Auto-detected {auto_count} persons (primary tenant + {co_tenant_count} co-tenant(s); "
+                f"{in_contract_count} named in contract → appear in PDF)."
+            )
+        else:
+            st.caption(f"Auto-detected {auto_count} active tenants sharing the same flat.")
 
     def _effective(bill_start, bill_end):
         c_end = contract_end if contract_end else bill_end
@@ -877,6 +908,7 @@ def show():
                 extra=extra_data,
                 kaution_info=kaution_info,
                 landlord_info=ll_info,
+                co_tenants=co_tenants if co_tenants else None,
             )
             with open(file, "rb") as f:
                 st.download_button("Download PDF", f, file_name=file)

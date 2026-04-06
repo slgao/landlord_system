@@ -140,6 +140,23 @@ def init_db():
         pass
 
     c.execute("""
+    CREATE TABLE IF NOT EXISTS co_tenants(
+        id INTEGER PRIMARY KEY,
+        contract_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        gender TEXT DEFAULT 'diverse',
+        email TEXT,
+        in_contract INTEGER DEFAULT 0
+    )
+    """)
+    for col, typ in [("email", "TEXT"), ("in_contract", "INTEGER DEFAULT 0")]:
+        try:
+            c.execute(f"ALTER TABLE co_tenants ADD COLUMN {col} {typ}")
+            conn.commit()
+        except Exception:
+            pass
+
+    c.execute("""
     CREATE TABLE IF NOT EXISTS billing_profiles(
         id INTEGER PRIMARY KEY,
         tenant_id INTEGER,

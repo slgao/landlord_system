@@ -185,13 +185,12 @@ def show():
                 total_rent     = 0.0
                 total_received = 0.0
                 total_costs    = 0.0
-                tenants        = []
                 apt_ids        = [m[0] for m in members]
 
+                # Per-apartment: rent, received payments, costs
                 for apt_id, apt_name, _ in members:
                     rent_row = fetch("""
-                        SELECT c.rent, t.name
-                        FROM contracts c JOIN tenants t ON t.id = c.tenant_id
+                        SELECT c.rent FROM contracts c
                         WHERE c.apartment_id = ?
                           AND COALESCE(c.terminated, 0) = 0
                           AND c.start_date <= ?
@@ -200,7 +199,6 @@ def show():
                     """, (apt_id, str(today), str(today)))
                     if rent_row:
                         total_rent += rent_row[0][0]
-                        tenants.append(rent_row[0][1])
 
                     rec = fetch("""
                         SELECT COALESCE(SUM(p.amount), 0)
@@ -221,6 +219,44 @@ def show():
                         r[0] if r[1] == "monthly" else r[0] / 12 for r in costs
                     )
 
+                # Tenants whose contracts overlapped with the selected year
+                ph = ",".join("?" * len(apt_ids))
+                year_tenant_rows = fetch(f"""
+                    SELECT DISTINCT t.name,
+                           MAX(CASE WHEN COALESCE(c.terminated, 0) = 0
+                                         AND (c.end_date IS NULL OR c.end_date = 'None'
+                                              OR c.end_date >= ?)
+                                    THEN 1 ELSE 0 END) AS still_active
+                    FROM contracts c
+                    JOIN tenants t ON c.tenant_id = t.id
+                    WHERE c.apartment_id IN ({ph})
+                      AND c.start_date <= ?
+                      AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
+                    GROUP BY t.name
+                    ORDER BY t.name
+                """, (str(today),) + tuple(apt_ids) + (y_end, y_start))
+                year_tenants = {r[0]: bool(r[1]) for r in year_tenant_rows}
+
+                # Also catch tenants with payments but no contract overlap found
+                paid_rows = fetch(f"""
+                    SELECT DISTINCT t.name
+                    FROM payments p
+                    JOIN contracts c ON p.contract_id = c.id
+                    JOIN tenants t ON c.tenant_id = t.id
+                    WHERE c.apartment_id IN ({ph})
+                      AND p.payment_date BETWEEN ? AND ?
+                    ORDER BY t.name
+                """, tuple(apt_ids) + (y_start, y_end))
+                for r in paid_rows:
+                    if r[0] not in year_tenants:
+                        year_tenants[r[0]] = False
+
+                # Build display names
+                all_names = [
+                    name if still_active else f"{name} (moved out)"
+                    for name, still_active in sorted(year_tenants.items())
+                ]
+
                 # Monthly payment breakdown for this flat (all rooms combined)
                 ph = ",".join("?" * len(apt_ids))
                 pay_detail = fetch(f"""
@@ -236,7 +272,7 @@ def show():
                     ORDER BY month, t.name
                 """, tuple(apt_ids) + (y_start, y_end))
 
-                tenant_str = ", ".join(tenants) if tenants else "— (vacant)"
+                tenant_str = ", ".join(all_names) if all_names else "— (vacant)"
                 net = total_rent - total_costs
                 flat_rows.append({
                     "Flat":               flat_label,

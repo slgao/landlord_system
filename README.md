@@ -10,13 +10,21 @@ A web-based property management application tailored for landlords in Germany. B
 |---|---|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Properties](docs/screenshots/properties.png) |
 
-| Contracts | Rent Tracking |
+| Apartments | Contracts |
 |---|---|
-| ![Contracts](docs/screenshots/contracts.jpg) | ![Rent Tracking](docs/screenshots/rent_tracking.png) |
+| ![Apartments](docs/screenshots/apartments.png) | ![Contracts](docs/screenshots/contracts.png) |
 
-| Nebenkostenabrechnung | Mahnung Generator |
+| Rent Tracking | Flat Costs |
 |---|---|
-| ![Nebenkostenabrechnung](docs/screenshots/nebenkostenabrechnung.png) | ![Mahnung Generator](docs/screenshots/mahnung_generator.jpg) |
+| ![Rent Tracking](docs/screenshots/rent_tracking.png) | ![Flat Costs](docs/screenshots/flat_costs.png) |
+
+| Balance Sheet | Nebenkostenabrechnung |
+|---|---|
+| ![Balance Sheet](docs/screenshots/balance_sheet.png) | ![Nebenkostenabrechnung](docs/screenshots/nebenkostenabrechnung.png) |
+
+| Mahnung Generator | |
+|---|---|
+| ![Mahnung Generator](docs/screenshots/mahnung_generator.png) | |
 
 ---
 
@@ -39,6 +47,7 @@ A web-based property management application tailored for landlords in Germany. B
 - **Flat grouping**: assign rooms to a named flat (e.g. "Wohnung 1") to group WG rooms together
 - Edit existing apartments: room name and flat label
 - Table shows property name alongside each apartment
+- **Heizkostenverteiler**: register heat cost allocator meters per apartment with serial number, description, unit label (e.g. "Einheiten"), and ISTA conversion factor (Einheiten → kWh)
 
 ### Tenants
 - Register tenants with name, email, and gender
@@ -79,30 +88,34 @@ A web-based property management application tailored for landlords in Germany. B
 - Set frequency: monthly, annual, or one-time
 - Set validity period (valid from / valid to)
 - Edit and delete existing cost entries
-- **Monthly cost summary** per flat: shows the current monthly equivalent (monthly entries + annual ÷ 12), with one-time costs noted separately
-- Costs grouped by property and flat for easy overview
+- **Grand summary table**: all flats listed with their active monthly equivalent, annual total, and one-time count
+- **Grand total metrics**: total monthly and annual costs across all flats at a glance
+- **Per-flat detail expanders**: itemized list with active/expired status, monthly equivalent per entry, and flat-level totals
 
 ### Balance Sheet
-- Monthly income vs. costs breakdown per property
-- Income: rent payments recorded in the selected year
-- Costs: flat costs prorated per month (annual ÷ 12, one-time in start month)
-- Net per month color-coded (green = profit, red = loss)
+- **Current monthly snapshot**: metric cards per property showing expected rent minus costs for the current month
+- **Annual view** (year selector): per-property table with Expected rent, Actual received, Variance, Costs, Expected net, Actual net — all color-coded (green = profit/surplus, red = loss/shortfall)
 - For the current year, only shows months up to the current month
-- Annual totals: total income, total costs, annual net
+- **Annual summary metrics**: expected rent, actual received (with delta vs expected), total costs, and net actual (with expected net delta)
+- **Per-flat breakdown expander**: current active contracts per apartment showing tenant name, rent/month, costs/month, net/month, net/year
 
 ### Nebenkostenabrechnung
-- Freely select which utilities to include per Abrechnung: **Strom**, **Gas**, **Kaltwasser**, **Betriebskosten** — each is independent and optional
+- Freely select which utilities to include per Abrechnung: **Strom**, **Gas**, **Kaltwasser**, **Betriebskosten**, **Heizkosten** — each is independent and optional
+- **Multi-contract tenant support**: if a tenant has contracts for multiple apartments, a contract selector appears to choose which apartment to bill; address is auto-resolved from the selected contract's property
 - Each utility has its **own billing period** from the provider, separate from the tenant's contract period
 - Tenant's **effective period** is auto-detected as the intersection of the utility billing period and the tenant's contract dates — editable after auto-detection
 - Changing a billing period automatically updates the effective period inputs
 - **Correct proration**: `(total_flat_cost / bill_days) × eff_days / tenants` — accounts for partial occupancy within the billing period
 - Strom, Gas, and Kaltwasser use day-based billing; Betriebskosten uses month-based billing with month/year selectors
 - Auto-detects number of persons sharing the same flat via flat grouping (can be overridden)
+- **Heizkostenverteiler (Heizkosten)**: enter meter start/end readings in ISTA units per Heizkörper; conversion factor (Einheiten → kWh) is taken from the meter registration; single €/kWh price from the ISTA bill applies to all meters; cost = units × factor × €/kWh
+- Save and reload billing profiles to avoid re-entering data each year
 - Generates a polished A4 letter-style PDF with:
   - Recipient address block and landlord name
   - Gender-aware salutation (Sehr geehrter Herr / Sehr geehrte Frau / Sehr geehrte/r)
   - Per-utility sections showing both the provider billing period and the tenant's effective period
   - Itemized step-by-step calculation tables (cost per day → tenant share → prepayment → Nachzahlung)
+  - Heizkosten table with per-meter readings, kWh conversion, and costs
   - Color-coded total (red = Nachzahlung, green = Guthaben)
   - Landlord signature image
   - 7-day payment deadline for Nachzahlungen
@@ -131,16 +144,16 @@ A web-based property management application tailored for landlords in Germany. B
 
 ```
 landlord_system/
-├── app.py              # Entry point — sidebar routing only
-├── db.py               # Database initialization, CRUD helpers (insert, fetch, delete, execute)
-├── logic.py            # Business logic: strom_calc, gas_calc, water_calc,
-│                       #   betriebskosten_calc, tenant_ledger
-├── pdfgen.py           # PDF generation: Nebenkostenabrechnung and Mahnung
-├── requirements.txt    # Python dependencies
-├── pages/              # One module per menu page
+├── app.py                  # Entry point — sidebar routing only
+├── db.py                   # Database initialization, CRUD helpers (insert, fetch, delete, execute)
+├── logic.py                # Business logic: strom_calc, gas_calc, water_calc,
+│                           #   betriebskosten_calc, heizung_calc_detail, tenant_ledger
+├── pdfgen.py               # PDF generation: Nebenkostenabrechnung and Mahnung
+├── requirements.txt        # Python dependencies
+├── page_modules/           # One module per menu page
 │   ├── dashboard.py
 │   ├── properties.py
-│   ├── apartments.py
+│   ├── apartments.py       # Includes Heizkostenverteiler meter management
 │   ├── tenants.py
 │   ├── tenant_ledger.py
 │   ├── contracts.py
@@ -148,24 +161,27 @@ landlord_system/
 │   ├── flat_costs.py
 │   ├── balance_sheet.py
 │   ├── nebenkostenabrechnung.py
+│   ├── payment_reminders.py
 │   └── mahnung.py
 ├── data/
-│   └── landlord.db     # SQLite database (auto-created on first run, git-ignored)
-└── pdf/                # Output directory for generated PDFs (git-ignored)
+│   └── landlord.db         # SQLite database (auto-created on first run, git-ignored)
+└── pdf/                    # Output directory for generated PDFs (git-ignored)
 ```
 
 ---
 
 ## Database Schema
 
-| Table        | Key Fields                                              |
-|--------------|---------------------------------------------------------|
-| `properties` | id, name, address                                       |
-| `apartments` | id, property_id, name, flat                             |
-| `tenants`    | id, name, email, gender                                 |
-| `contracts`  | id, tenant_id, apartment_id, rent, start_date, end_date, terminated, kaution_amount, kaution_paid_date, kaution_returned_date, kaution_returned_amount |
-| `payments`   | id, contract_id, amount, payment_date                   |
-| `flat_costs` | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to |
+| Table              | Key Fields                                              |
+|--------------------|---------------------------------------------------------|
+| `properties`       | id, name, address                                       |
+| `apartments`       | id, property_id, name, flat                             |
+| `tenants`          | id, name, email, gender                                 |
+| `contracts`        | id, tenant_id, apartment_id, rent, start_date, end_date, terminated, kaution_amount, kaution_paid_date, kaution_returned_date, kaution_returned_amount |
+| `payments`         | id, contract_id, amount, payment_date                   |
+| `flat_costs`       | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to |
+| `heizung_meters`   | id, apartment_id, serial_number, description, unit_label, conversion_factor |
+| `nk_profiles`      | id, tenant_id, label, data_json                         |
 
 ---
 

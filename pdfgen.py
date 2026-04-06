@@ -266,7 +266,8 @@ def invoice_pdf(
     Pass None to omit a section entirely.
     """
     s = _styles()
-    file = f"pdf/Abrechnung_{tenant}.pdf"
+    safe_tenant = tenant.replace("/", "-").replace("\\", "-")
+    file = f"pdf/Abrechnung_{safe_tenant}.pdf"
     story = []
     today_str = date.today().strftime("%d.%m.%Y")
 
@@ -762,7 +763,8 @@ def invoice_pdf(
 # ── Mahnung ────────────────────────────────────────────────────────────────────
 
 def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signature_path=None):
-    file = f"pdf/Mahnung_{tenant_name}.pdf"
+    safe_name = tenant_name.replace("/", "-").replace("\\", "-")
+    file = f"pdf/Mahnung_{safe_name}.pdf"
     s = _styles()
     today_str = date.today().strftime("%d.%m.%Y")
     due_str   = (date.today() + timedelta(days=7)).strftime("%d.%m.%Y")

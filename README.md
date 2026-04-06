@@ -71,6 +71,9 @@ A web-based property management application tailored for landlords in Germany. B
   - *Close — tenant has moved out* → marks as terminated, removes from alerts
   - *Reopen — tenant is still living there* → clears end date, restores to active
 - **Kaution (deposit) tracking**: record deposit amount, date received, date and amount returned
+- **Co-Tenants**: add additional occupants per contract with name, gender, and email
+  - Toggle **In contract (Mitmieter)** for each person — those marked appear in the address block and salutation of all generated PDFs; others are stored for reference only
+  - Person count for Nebenkostenabrechnung is auto-derived from primary tenant + all co-tenants
 
 ### Rent Tracking
 - Monthly overview at the top: all payments across all properties for a selected month
@@ -107,12 +110,13 @@ A web-based property management application tailored for landlords in Germany. B
 - Changing a billing period automatically updates the effective period inputs
 - **Correct proration**: `(total_flat_cost / bill_days) × eff_days / tenants` — accounts for partial occupancy within the billing period
 - Strom, Gas, and Kaltwasser use day-based billing; Betriebskosten uses month-based billing with month/year selectors
-- Auto-detects number of persons sharing the same flat via flat grouping (can be overridden)
+- Person count auto-derived from primary tenant + co-tenants (can be overridden)
 - **Heizkostenverteiler (Heizkosten)**: enter meter start/end readings in ISTA units per Heizkörper; conversion factor (Einheiten → kWh) is taken from the meter registration; single €/kWh price from the ISTA bill applies to all meters; cost = units × factor × €/kWh
 - Save and reload billing profiles to avoid re-entering data each year
 - Generates a polished A4 letter-style PDF with:
-  - Recipient address block and landlord name
-  - Gender-aware salutation (Sehr geehrter Herr / Sehr geehrte Frau / Sehr geehrte/r)
+  - Recipient address block listing primary tenant and all Mitmieter (in-contract co-tenants only)
+  - Gender-aware salutation for one or multiple named tenants; falls back to "Sehr geehrte Damen und Herren" for 3+
+  - Header banner shows billing periods for all included utilities (Strom, Gas, Wasser, Heizung, BK)
   - Per-utility sections showing both the provider billing period and the tenant's effective period
   - Itemized step-by-step calculation tables (cost per day → tenant share → prepayment → Nachzahlung)
   - Heizkosten table with per-meter readings, kWh conversion, and costs
@@ -122,7 +126,9 @@ A web-based property management application tailored for landlords in Germany. B
 
 ### Mahnung Generator (Payment Reminder)
 - Generate a formal payment reminder PDF for a tenant
-- Gender-aware salutation
+- **Multi-contract support**: contract selector appears for tenants with multiple apartments; address auto-resolved from selected contract's property
+- All Mitmieter (in-contract co-tenants) appear in the address block and salutation
+- Gender-aware salutation for one or multiple named tenants
 - Highlighted outstanding amount with due date
 - Landlord signature embedded
 - Ready to print or send digitally
@@ -181,6 +187,7 @@ landlord_system/
 | `payments`         | id, contract_id, amount, payment_date                   |
 | `flat_costs`       | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to |
 | `heizung_meters`   | id, apartment_id, serial_number, description, unit_label, conversion_factor |
+| `co_tenants`       | id, contract_id, name, gender, email, in_contract       |
 | `nk_profiles`      | id, tenant_id, label, data_json                         |
 
 ---

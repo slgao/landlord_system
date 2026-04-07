@@ -67,6 +67,65 @@ def _metric_html(label, value, sub=None, color="#ffffff"):
     )
 
 
+def _suggestions(flat_label, is_wg, all_names, total_rent, total_received,
+                 total_costs, net, max_month, y):
+    """Return a list of (level, message) insight strings for one flat.
+    level: 'success' | 'warning' | 'error' | 'info'
+    """
+    hints = []
+    vacant = total_rent == 0.0 and not all_names
+
+    # ── Vacancy ───────────────────────────────────────────────────
+    if vacant:
+        hints.append(("error",
+            f"**{flat_label}** is currently vacant with no active contract. "
+            "Every empty month is lost income — consider advertising or reviewing "
+            "the asking rent."))
+        return hints   # no further metrics meaningful for vacant flat
+
+    # ── Negative net ─────────────────────────────────────────────
+    if net < 0:
+        hints.append(("warning",
+            f"**{flat_label}**: monthly costs ({total_costs:.2f} €) exceed rent income "
+            f"({total_rent:.2f} €) by **{abs(net):.2f} €/month** "
+            f"({abs(net) * 12:.2f} €/year). "
+            "Consider reviewing ongoing costs or adjusting rent at the next "
+            "contract renewal."))
+
+    # ── YTD collection rate ───────────────────────────────────────
+    ytd_expected = total_rent * max_month   # approximate (ignores mid-year move-ins)
+    if ytd_expected > 0:
+        collection_rate = total_received / ytd_expected * 100
+        arrears = ytd_expected - total_received
+        if collection_rate < 80:
+            hints.append(("error",
+                f"**{flat_label}**: YTD collection rate is only "
+                f"**{collection_rate:.0f}%** — {total_received:.2f} € received vs "
+                f"{ytd_expected:.2f} € expected. Outstanding: **{arrears:.2f} €**. "
+                "Issue a Mahnung or arrange a payment plan promptly."))
+        elif collection_rate < 95:
+            hints.append(("warning",
+                f"**{flat_label}**: YTD collection rate is **{collection_rate:.0f}%** "
+                f"({total_received:.2f} € of {ytd_expected:.2f} € expected). "
+                f"Outstanding: {arrears:.2f} €. Consider sending a reminder."))
+        elif net >= 0:
+            hints.append(("success",
+                f"**{flat_label}**: performing well — "
+                f"{collection_rate:.0f}% YTD collection rate, "
+                f"net {net:+.2f} €/month."))
+
+    # ── Low rent vs costs ─────────────────────────────────────────
+    if total_rent > 0 and total_costs > 0:
+        cost_ratio = total_costs / total_rent * 100
+        if cost_ratio > 60 and net >= 0:
+            hints.append(("info",
+                f"**{flat_label}**: costs are {cost_ratio:.0f}% of rent income "
+                f"({total_costs:.2f} €/{total_rent:.2f} €). Margins are thin — "
+                "check if any recurring costs can be reduced or passed on."))
+
+    return hints
+
+
 def show():
     st.header("Balance Sheet")
 
@@ -87,20 +146,40 @@ def show():
     snap_start = str(today.replace(day=1))
     snap_end   = str(today.replace(day=calendar.monthrange(today.year, today.month)[1]))
 
-    snap_cols = st.columns(len(properties) if len(properties) <= 4 else 4)
-    for i, (pid, pname) in enumerate(properties):
+    snap_data = []
+    for pid, pname in properties:
         exp   = _expected_rent(pid, snap_start, snap_end)
         costs = _flat_costs_month(pid, snap_start, snap_end, today.year, today.month)
-        net   = exp - costs
-        col   = snap_cols[i % 4]
+        snap_data.append((pname, exp, costs, exp - costs))
+
+    total_snap_exp   = sum(s[1] for s in snap_data)
+    total_snap_costs = sum(s[2] for s in snap_data)
+    total_snap_net   = sum(s[3] for s in snap_data)
+
+    # Property cards + grand total
+    n_cols = min(len(properties) + 1, 4)
+    snap_cols = st.columns(n_cols)
+    for i, (pname, exp, costs, net) in enumerate(snap_data):
         net_color = "#27ae60" if net >= 0 else "#e74c3c"
-        col.markdown(
+        snap_cols[i % n_cols].markdown(
             _metric_html(pname,
                          f"{net:+.2f} €",
                          f"Rent {exp:.2f} € − Costs {costs:.2f} €",
                          net_color),
             unsafe_allow_html=True,
         )
+    # Grand total card (last column or new row)
+    total_col = snap_cols[len(snap_data) % n_cols] if len(snap_data) < n_cols else None
+    total_html = _metric_html(
+        f"All properties — {today.strftime('%b %Y')}",
+        f"{total_snap_net:+.2f} €",
+        f"Rent {total_snap_exp:.2f} € − Costs {total_snap_costs:.2f} €",
+        "#27ae60" if total_snap_net >= 0 else "#e74c3c",
+    )
+    if total_col:
+        total_col.markdown(total_html, unsafe_allow_html=True)
+    else:
+        st.markdown(total_html, unsafe_allow_html=True)
 
     st.divider()
 
@@ -176,6 +255,7 @@ def show():
 
             flat_rows    = []
             group_detail = []   # parallel list for per-flat payment breakdowns
+            all_insights = []   # collect suggestions across all flats
 
             for key, members in groups.items():
                 is_wg      = len(members) > 1
@@ -273,6 +353,14 @@ def show():
 
                 tenant_str = ", ".join(all_names) if all_names else "— (vacant)"
                 net = total_rent - total_costs
+
+                # YTD collection rate
+                ytd_expected = total_rent * max_month
+                if ytd_expected > 0:
+                    collection_pct = round(total_received / ytd_expected * 100, 1)
+                else:
+                    collection_pct = None
+
                 flat_rows.append({
                     "Flat":               flat_label,
                     "Type":               "WG" if is_wg else "Wohnung",
@@ -282,6 +370,7 @@ def show():
                     "Costs / mo (€)":     round(total_costs, 2),
                     "Net / mo (€)":       round(net, 2),
                     "Net / yr  (€)":      round(net * 12, 2),
+                    f"Collection {y} (%)": collection_pct if collection_pct is not None else "—",
                 })
                 group_detail.append({
                     "label":  flat_label,
@@ -289,8 +378,16 @@ def show():
                     "detail": pay_detail,
                 })
 
+                # Collect insights
+                hints = _suggestions(
+                    flat_label, is_wg, all_names,
+                    total_rent, total_received, total_costs, net, max_month, y
+                )
+                all_insights.extend(hints)
+
             if flat_rows:
-                received_col = f"Received {y} (€)"
+                received_col    = f"Received {y} (€)"
+                collection_col  = f"Collection {y} (%)"
                 df_f = pd.DataFrame(flat_rows)
                 st.dataframe(
                     df_f.style
@@ -352,6 +449,20 @@ def show():
                     ),
                     unsafe_allow_html=True,
                 )
+
+                # ── Performance insights & suggestions ─────────────
+                if all_insights:
+                    st.markdown("---")
+                    st.markdown(f"**Performance insights & suggestions — {y}**")
+                    for level, msg in all_insights:
+                        if level == "success":
+                            st.success(msg)
+                        elif level == "warning":
+                            st.warning(msg)
+                        elif level == "error":
+                            st.error(msg)
+                        else:
+                            st.info(msg)
             else:
                 st.info("No apartments found for this property.")
 

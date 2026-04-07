@@ -410,18 +410,20 @@ def show():
             "FROM gas_meters WHERE apartment_id=? ORDER BY id",
             (selected_apartment_id,)
         )
+        _gm_factor_default = 10.0
         if _apt_gas_meters:
             _gm = _apt_gas_meters[0]
-            _gm_factor = _gm[3] * _gm[4]
-            _gm_key = (_gm[0], selected_apartment_id)
-            if st.session_state.get("_gas_meter_key") != _gm_key:
-                st.session_state["gas_umrechnung"] = round(_gm_factor, 4)
-                st.session_state["_gas_meter_key"] = _gm_key
+            _gm_factor_default = round(_gm[3] * _gm[4], 4)
+            # Always sync session state to the registered meter value so the
+            # number_input below shows the correct factor on every render.
+            # The registered meter is the source of truth; the user can edit
+            # the field for one-off overrides within the current rerun.
+            st.session_state["gas_umrechnung"] = _gm_factor_default
             meter_label = _gm[1] or "—"
             st.info(
                 f"Gaszähler registriert: **{meter_label}** ({_gm[2] or '—'})  ·  "
                 f"Z-Zahl: **{_gm[3]}**  ·  Brennwert: **{_gm[4]}**  ·  "
-                f"Umrechnungsfaktor: **{_gm_factor:.4f} kWh/m³**"
+                f"Umrechnungsfaktor: **{_gm_factor_default:.4f} kWh/m³**"
             )
 
         col1, col2 = st.columns(2)
@@ -463,7 +465,8 @@ def show():
                                                min_value=0.0, format="%.3f",
                                                key="gas_start_m3")
                 gas_umrechnung = st.number_input("Umrechnungsfaktor (kWh/m³)",
-                                                 min_value=0.0, value=10.0, format="%.4f",
+                                                 min_value=0.0, value=_gm_factor_default,
+                                                 format="%.4f",
                                                  key="gas_umrechnung",
                                                  help="Z-Zahl × Brennwert — auto-filled from registered "
                                                       "Gaszähler, or enter manually from your NBB gas bill")

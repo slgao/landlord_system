@@ -138,6 +138,81 @@ def show():
                     st.success("Meter deleted.")
                     st.rerun()
 
+        with st.expander("Gaszähler"):
+            st.caption("Register gas meters (Gaszähler) per apartment. "
+                       "Z-Zahl and Brennwert are taken from the NBB gas bill; "
+                       "the Umrechnungsfaktor (m³ → kWh) is computed automatically.")
+            apt_gas = st.selectbox(
+                "Select apartment", apt_data,
+                format_func=lambda x: f"#{x[0]} — {x[2]}  ({x[1]})",
+                key="apt_gas_sel"
+            )
+            gas_meters = fetch(
+                "SELECT id, serial_number, description, z_zahl, brennwert "
+                "FROM gas_meters WHERE apartment_id=? ORDER BY id",
+                (apt_gas[0],)
+            )
+            if gas_meters:
+                gm_rows = [
+                    {
+                        "ID":               r[0],
+                        "Serial No.":       r[1] or "—",
+                        "Description":      r[2] or "—",
+                        "Z-Zahl":           r[3],
+                        "Brennwert":        r[4],
+                        "Factor (m³→kWh)":  round(r[3] * r[4], 4),
+                    }
+                    for r in gas_meters
+                ]
+                st.dataframe(pd.DataFrame(gm_rows), hide_index=True)
+            else:
+                st.info("No gas meters registered for this apartment.")
+
+            st.caption(
+                "**How it works:** Verbrauch (m³) × Z-Zahl × Brennwert = kWh → "
+                "× Arbeitspreis (€/kWh) = cost. "
+                "Both values are printed on the NBB annual gas bill."
+            )
+            st.markdown("**Add gas meter**")
+            col1, col2 = st.columns(2)
+            with col1:
+                gm_serial = st.text_input("Serial number (Zählernummer)", key="gm_serial",
+                                          placeholder="e.g. 12345678")
+                gm_desc   = st.text_input("Description / Location", key="gm_desc",
+                                          placeholder="e.g. Keller")
+            with col2:
+                gm_z_zahl   = st.number_input("Z-Zahl (Zustandszahl)", min_value=0.0,
+                                               value=1.0, format="%.4f", key="gm_z_zahl",
+                                               help="Zustandszahl from the NBB gas bill.")
+                gm_brennwert = st.number_input("Brennwert (kWh/m³)", min_value=0.0,
+                                               value=10.0, format="%.4f", key="gm_brennwert",
+                                               help="Brennwert from the NBB gas bill.")
+            computed = gm_z_zahl * gm_brennwert
+            st.caption(f"Computed Umrechnungsfaktor: **{computed:.4f} kWh/m³**")
+            if st.button("Add Gas Meter", key="btn_add_gm"):
+                execute(
+                    "INSERT INTO gas_meters "
+                    "(apartment_id, serial_number, description, z_zahl, brennwert) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (apt_gas[0], gm_serial.strip() or None, gm_desc.strip() or None,
+                     gm_z_zahl, gm_brennwert)
+                )
+                st.success("Gas meter added.")
+                st.rerun()
+
+            if gas_meters:
+                st.markdown("**Delete gas meter**")
+                to_del_gm = st.selectbox(
+                    "Select gas meter", gas_meters,
+                    format_func=lambda x: f"{x[1] or '—'} — {x[2] or '—'} "
+                                          f"(Z={x[3]}, Bw={x[4]})",
+                    key="apt_gm_del"
+                )
+                if st.button("Delete Gas Meter", key="btn_del_gm", type="primary"):
+                    execute("DELETE FROM gas_meters WHERE id=?", (to_del_gm[0],))
+                    st.success("Gas meter deleted.")
+                    st.rerun()
+
         with st.expander("Delete Apartment"):
             to_del = st.selectbox(
                 "Select apartment", apt_data,

@@ -403,6 +403,27 @@ def show():
     # ── Gas ────────────────────────────────────────────────────────
     if include_gas:
         st.subheader("Gas")
+
+        # Auto-fill Umrechnungsfaktor from registered Gaszähler for this apartment
+        _apt_gas_meters = fetch(
+            "SELECT id, serial_number, description, z_zahl, brennwert "
+            "FROM gas_meters WHERE apartment_id=? ORDER BY id",
+            (selected_apartment_id,)
+        )
+        if _apt_gas_meters:
+            _gm = _apt_gas_meters[0]
+            _gm_factor = _gm[3] * _gm[4]
+            _gm_key = (_gm[0], selected_apartment_id)
+            if st.session_state.get("_gas_meter_key") != _gm_key:
+                st.session_state["gas_umrechnung"] = round(_gm_factor, 4)
+                st.session_state["_gas_meter_key"] = _gm_key
+            meter_label = _gm[1] or "—"
+            st.info(
+                f"Gaszähler registriert: **{meter_label}** ({_gm[2] or '—'})  ·  "
+                f"Z-Zahl: **{_gm[3]}**  ·  Brennwert: **{_gm[4]}**  ·  "
+                f"Umrechnungsfaktor: **{_gm_factor:.4f} kWh/m³**"
+            )
+
         col1, col2 = st.columns(2)
         with col1:
             gas_bill_start = st.date_input("Billing period start",
@@ -442,9 +463,10 @@ def show():
                                                min_value=0.0, format="%.3f",
                                                key="gas_start_m3")
                 gas_umrechnung = st.number_input("Umrechnungsfaktor (kWh/m³)",
-                                                 min_value=0.0, value=10.0, format="%.3f",
+                                                 min_value=0.0, value=10.0, format="%.4f",
                                                  key="gas_umrechnung",
-                                                 help="Brennwert × Zustandszahl — from your gas bill (NBB)")
+                                                 help="Z-Zahl × Brennwert — auto-filled from registered "
+                                                      "Gaszähler, or enter manually from your NBB gas bill")
                 gas_grundpreis = st.number_input("Grundpreis (€/Monat)",
                                                  min_value=0.0, format="%.2f",
                                                  key="gas_grundpreis")

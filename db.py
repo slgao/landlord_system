@@ -140,6 +140,17 @@ def init_db():
         pass
 
     c.execute("""
+    CREATE TABLE IF NOT EXISTS gas_meters(
+        id INTEGER PRIMARY KEY,
+        apartment_id INTEGER NOT NULL,
+        serial_number TEXT,
+        description TEXT,
+        z_zahl REAL DEFAULT 1.0,
+        brennwert REAL DEFAULT 10.0
+    )
+    """)
+
+    c.execute("""
     CREATE TABLE IF NOT EXISTS co_tenants(
         id INTEGER PRIMARY KEY,
         contract_id INTEGER NOT NULL,

@@ -422,7 +422,7 @@ docker exec landlord-pg pg_dump -U landlord landlord_dev | gzip > backup_$(date 
 
 ### Automated daily backup
 
-A backup script is included at `~/landlord_backups/backup.sh`. It runs every night at 2:00 AM via cron, keeps the last 30 backups, and logs results.
+A backup script is included at `~/landlord_backups/backup.sh`. It runs every night at 22:00 (Europe/Berlin) via cron, keeps the last 30 backups, and logs results.
 
 **First-time setup:**
 
@@ -437,8 +437,8 @@ chmod +x ~/landlord_backups/backup.sh
 # 3. Test it manually
 ~/landlord_backups/backup.sh
 
-# 4. Schedule via cron (runs daily at 2:00 AM)
-(crontab -l 2>/dev/null; echo "0 2 * * * /Users/$(whoami)/landlord_backups/backup.sh >> /Users/$(whoami)/landlord_backups/backup.log 2>&1") | crontab -
+# 4. Schedule via cron (runs daily at 22:00 Europe/Berlin)
+(crontab -l 2>/dev/null; echo "CRON_TZ=Europe/Berlin"; echo "0 22 * * * /Users/$(whoami)/landlord_backups/backup.sh >> /Users/$(whoami)/landlord_backups/backup.log 2>&1") | crontab -
 ```
 
 **Check backup log:**
@@ -463,7 +463,7 @@ gunzip -c ~/landlord_backups/landlord_20260408_203842.sql.gz \
 | What | Detail |
 |---|---|
 | Backup location | `~/landlord_backups/landlord_YYYYMMDD_HHMMSS.sql.gz` |
-| Schedule | Daily at 2:00 AM |
+| Schedule | Daily at 22:00 (Europe/Berlin) |
 | Retention | Last 30 days |
 | Log | `~/landlord_backups/backup.log` |
 

@@ -1,6 +1,7 @@
 #!/bin/bash
 # PostgreSQL backup script for landlord_system
-# Keeps the last 30 daily backups, then weekly backups for 6 months
+# Scheduled: daily at 22:00 Europe/Berlin
+# Keeps the last 30 daily backups
 
 BACKUP_DIR="$HOME/landlord_backups"
 DATE=$(date +%Y%m%d_%H%M%S)

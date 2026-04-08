@@ -380,6 +380,66 @@ All PDFs are saved to the `pdf/` directory and can be downloaded directly from t
 
 ---
 
+## Database Backups
+
+### Manual backup
+
+```bash
+# Create a compressed dump
+docker exec landlord-pg pg_dump -U landlord landlord_dev | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
+```
+
+### Automated daily backup
+
+A backup script is included at `~/landlord_backups/backup.sh`. It runs every night at 2:00 AM via cron, keeps the last 30 backups, and logs results.
+
+**First-time setup:**
+
+```bash
+# 1. Create the backup directory
+mkdir -p ~/landlord_backups
+
+# 2. Copy the backup script
+cp utils/backup.sh ~/landlord_backups/backup.sh
+chmod +x ~/landlord_backups/backup.sh
+
+# 3. Test it manually
+~/landlord_backups/backup.sh
+
+# 4. Schedule via cron (runs daily at 2:00 AM)
+(crontab -l 2>/dev/null; echo "0 2 * * * /Users/$(whoami)/landlord_backups/backup.sh >> /Users/$(whoami)/landlord_backups/backup.log 2>&1") | crontab -
+```
+
+**Check backup log:**
+
+```bash
+cat ~/landlord_backups/backup.log
+```
+
+### Restore from a backup
+
+```bash
+# List available backups
+ls -lh ~/landlord_backups/landlord_*.sql.gz
+
+# Restore (CAUTION: overwrites current data)
+gunzip -c ~/landlord_backups/landlord_20260408_203842.sql.gz \
+  | docker exec -i landlord-pg psql -U landlord -d landlord_dev
+```
+
+### Backup summary
+
+| What | Detail |
+|---|---|
+| Backup location | `~/landlord_backups/landlord_YYYYMMDD_HHMMSS.sql.gz` |
+| Schedule | Daily at 2:00 AM |
+| Retention | Last 30 days |
+| Log | `~/landlord_backups/backup.log` |
+
+> **macOS note:** cron only runs while the Mac is awake. If reliability matters, schedule the backup for a time the Mac is normally on.
+
+---
+
 ## License
 
 MIT

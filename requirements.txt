@@ -3,3 +3,8 @@ reportlab
 psycopg2-binary
 alembic
 python-dotenv
+fastapi
+uvicorn[standard]
+python-jose[cryptography]
+passlib[bcrypt]
+honcho

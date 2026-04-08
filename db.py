@@ -13,7 +13,6 @@
 
 import os
 import psycopg2
-from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,9 +25,28 @@ def get_conn():
 
 
 def _adapt(query: str) -> str:
-    """Convert SQLite-style ? placeholders to psycopg2-style %s.
-    This lets all existing query strings work without modification."""
-    return query.replace("?", "%s")
+    """Convert SQLite-style syntax to PostgreSQL / psycopg2-compatible syntax.
+    - Escape literal % → %% so psycopg2 doesn't treat them as format specifiers
+    - ? placeholders → %s
+    - date('now') → CURRENT_DATE::TEXT  (TEXT so it compares cleanly with TEXT columns)
+    Order matters: escape % first, then add %s placeholders.
+    """
+    return (
+        query
+        .replace("%", "%%")
+        .replace("?", "%s")
+        .replace("date('now')", "CURRENT_DATE::TEXT")
+    )
+
+
+def _normalize(rows):
+    """Convert Decimal → float in every cell so existing arithmetic works unchanged.
+    PostgreSQL returns NUMERIC columns as decimal.Decimal; SQLite returned float."""
+    from decimal import Decimal
+    return [
+        tuple(float(v) if isinstance(v, Decimal) else v for v in row)
+        for row in rows
+    ]
 
 
 def init_db():
@@ -202,7 +220,7 @@ def fetch(query, params=()):
     conn = get_conn()
     c = conn.cursor()
     c.execute(_adapt(query), params)
-    rows = c.fetchall()
+    rows = _normalize(c.fetchall())
     conn.close()
     return rows
 

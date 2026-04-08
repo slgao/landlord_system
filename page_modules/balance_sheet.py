@@ -339,9 +339,9 @@ def show():
                 # Monthly payment breakdown for this flat (all rooms combined)
                 ph = ",".join("?" * len(apt_ids))
                 pay_detail = fetch(f"""
-                    SELECT strftime('%Y-%m', p.payment_date) AS month,
-                           t.name                            AS tenant,
-                           SUM(p.amount)                     AS amount
+                    SELECT TO_CHAR(p.payment_date::date, 'YYYY-MM') AS month,
+                           t.name                                   AS tenant,
+                           SUM(p.amount)                            AS amount
                     FROM payments p
                     JOIN contracts c ON p.contract_id = c.id
                     JOIN tenants  t ON t.id = c.tenant_id

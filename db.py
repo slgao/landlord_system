@@ -4,182 +4,159 @@
 #   Copyright (C) 2026 * Ltd. All rights reserved.
 #
 #   Editor      : EMACS
-#   File name   : database.py
+#   File name   : db.py
 #   Author      : slgao
 #   Created date: Sun Mar 08 2026 16:20:20
-#   Description :
+#   Description : PostgreSQL backend (migrated from SQLite)
 #
 # ================================================================
 
-import sqlite3
-from pathlib import Path
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
 
-DB_PATH = Path("data/landlord.db")
+load_dotenv()
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    return conn
+    return psycopg2.connect(DATABASE_URL)
+
+
+def _adapt(query: str) -> str:
+    """Convert SQLite-style ? placeholders to psycopg2-style %s.
+    This lets all existing query strings work without modification."""
+    return query.replace("?", "%s")
+
 
 def init_db():
-
     conn = get_conn()
     c = conn.cursor()
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS properties(
-        id INTEGER PRIMARY KEY,
-        name TEXT,
+        id      SERIAL PRIMARY KEY,
+        name    TEXT,
         address TEXT
     )
     """)
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS apartments(
-        id INTEGER PRIMARY KEY,
+        id          SERIAL PRIMARY KEY,
         property_id INTEGER,
-        name TEXT,
-        flat TEXT
+        name        TEXT,
+        flat        TEXT
     )
     """)
-    try:
-        c.execute("ALTER TABLE apartments ADD COLUMN flat TEXT")
-        conn.commit()
-    except Exception:
-        pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS tenants(
-        id INTEGER PRIMARY KEY,
-        name TEXT,
-        email TEXT,
+        id     SERIAL PRIMARY KEY,
+        name   TEXT,
+        email  TEXT,
         gender TEXT DEFAULT 'diverse'
     )
     """)
-    # migrate existing db
-    try:
-        c.execute("ALTER TABLE tenants ADD COLUMN gender TEXT DEFAULT 'diverse'")
-        conn.commit()
-    except Exception:
-        pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS contracts(
-        id INTEGER PRIMARY KEY,
-        tenant_id INTEGER,
-        apartment_id INTEGER,
-        rent REAL,
-        start_date TEXT,
-        end_date TEXT,
-        kaution_amount REAL,
-        kaution_paid_date TEXT,
-        kaution_returned_date TEXT,
-        kaution_returned_amount REAL
+        id                      SERIAL PRIMARY KEY,
+        tenant_id               INTEGER,
+        apartment_id            INTEGER,
+        rent                    NUMERIC(10,2),
+        start_date              TEXT,
+        end_date                TEXT,
+        kaution_amount          NUMERIC(10,2),
+        kaution_paid_date       TEXT,
+        kaution_returned_date   TEXT,
+        kaution_returned_amount NUMERIC(10,2),
+        terminated              INTEGER DEFAULT 0
     )
     """)
-    for col, typ in [
-        ("kaution_amount", "REAL"),
-        ("kaution_paid_date", "TEXT"),
-        ("kaution_returned_date", "TEXT"),
-        ("kaution_returned_amount", "REAL"),
-        ("terminated", "INTEGER DEFAULT 0"),
-    ]:
-        try:
-            c.execute(f"ALTER TABLE contracts ADD COLUMN {col} {typ}")
-            conn.commit()
-        except Exception:
-            pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS payments(
-        id INTEGER PRIMARY KEY,
-        contract_id INTEGER,
-        amount REAL,
+        id           SERIAL PRIMARY KEY,
+        contract_id  INTEGER,
+        amount       NUMERIC(10,2),
         payment_date TEXT
     )
     """)
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS flat_costs(
-        id INTEGER PRIMARY KEY,
+        id           SERIAL PRIMARY KEY,
         apartment_id INTEGER,
-        cost_type TEXT,
-        amount REAL,
-        frequency TEXT,
-        valid_from TEXT,
-        valid_to TEXT
+        cost_type    TEXT,
+        amount       NUMERIC(10,2),
+        frequency    TEXT,
+        valid_from   TEXT,
+        valid_to     TEXT
     )
     """)
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS reminders(
-        id INTEGER PRIMARY KEY,
-        contract_id INTEGER,
-        sent_date TEXT,
-        months_due TEXT,
-        amount_due REAL,
-        channel TEXT,
-        note TEXT
+        id           SERIAL PRIMARY KEY,
+        contract_id  INTEGER,
+        sent_date    TEXT,
+        months_due   TEXT,
+        amount_due   NUMERIC(10,2),
+        channel      TEXT,
+        note         TEXT
     )
     """)
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS heizung_meters(
-        id INTEGER PRIMARY KEY,
-        apartment_id INTEGER,
-        serial_number TEXT,
-        description TEXT,
-        unit_price REAL DEFAULT 0.0,
-        unit_label TEXT DEFAULT 'Einheiten',
-        conversion_factor REAL DEFAULT 1.0
+        id                SERIAL PRIMARY KEY,
+        apartment_id      INTEGER,
+        serial_number     TEXT,
+        description       TEXT,
+        unit_price        NUMERIC(10,4) DEFAULT 0.0,
+        unit_label        TEXT DEFAULT 'Einheiten',
+        conversion_factor NUMERIC(10,4) DEFAULT 1.0
     )
     """)
-    try:
-        c.execute("ALTER TABLE heizung_meters ADD COLUMN conversion_factor REAL DEFAULT 1.0")
-        conn.commit()
-    except Exception:
-        pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS gas_meters(
-        id INTEGER PRIMARY KEY,
+        id           SERIAL PRIMARY KEY,
         apartment_id INTEGER NOT NULL,
         serial_number TEXT,
-        description TEXT,
-        z_zahl REAL DEFAULT 1.0,
-        brennwert REAL DEFAULT 10.0
+        description  TEXT,
+        z_zahl       NUMERIC(10,4) DEFAULT 1.0,
+        brennwert    NUMERIC(10,4) DEFAULT 10.0
     )
     """)
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS co_tenants(
-        id INTEGER PRIMARY KEY,
+        id          SERIAL PRIMARY KEY,
         contract_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        gender TEXT DEFAULT 'diverse',
-        email TEXT,
+        name        TEXT NOT NULL,
+        gender      TEXT DEFAULT 'diverse',
+        email       TEXT,
         in_contract INTEGER DEFAULT 0
     )
     """)
-    for col, typ in [("email", "TEXT"), ("in_contract", "INTEGER DEFAULT 0")]:
-        try:
-            c.execute(f"ALTER TABLE co_tenants ADD COLUMN {col} {typ}")
-            conn.commit()
-        except Exception:
-            pass
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS billing_profiles(
-        id INTEGER PRIMARY KEY,
-        tenant_id INTEGER,
-        label TEXT,
+        id           SERIAL PRIMARY KEY,
+        tenant_id    INTEGER,
+        label        TEXT,
         created_date TEXT,
-        data TEXT
+        data         TEXT
     )
     """)
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS config(
-        key TEXT PRIMARY KEY,
+        key   TEXT PRIMARY KEY,
         value TEXT
     )
     """)
@@ -194,54 +171,47 @@ def get_config(key, default=None):
 
 
 def set_config(key, value):
-    execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value))
+    execute(
+        "INSERT INTO config (key, value) VALUES (%s, %s) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+        (key, value)
+    )
 
 
 def insert(table, values):
-
     conn = get_conn()
     c = conn.cursor()
-
-    placeholders = ",".join(["?"]*len(values))
-
+    placeholders = ",".join(["%s"] * len(values))
     c.execute(
-        f"INSERT INTO {table} VALUES (NULL,{placeholders})",
+        f"INSERT INTO {table} VALUES (DEFAULT,{placeholders})",
         values
     )
-
     conn.commit()
     conn.close()
+
 
 def delete(table, entry_id):
     conn = get_conn()
     c = conn.cursor()
-    
-    c.execute(f"DELETE FROM {table} WHERE id = ?", (entry_id,))
-    
+    c.execute(f"DELETE FROM {table} WHERE id = %s", (entry_id,))
     conn.commit()
     conn.close()
 
-def fetch(query, params=()):
 
+def fetch(query, params=()):
     conn = get_conn()
     c = conn.cursor()
-
-    c.execute(query, params)
+    c.execute(_adapt(query), params)
     rows = c.fetchall()
-
     conn.close()
-
     return rows
 
 
 def execute(query, params=()):
-
     conn = get_conn()
     c = conn.cursor()
-
-    c.execute(query, params)
+    c.execute(_adapt(query), params)
     conn.commit()
-
     conn.close()
 
 

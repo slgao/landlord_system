@@ -1,2 +1,5 @@
 streamlit
 reportlab
+psycopg2-binary
+alembic
+python-dotenv

@@ -514,6 +514,69 @@ Both services share the same `db.py` layer and PostgreSQL database. The FastAPI 
 
 ---
 
+## Roadmap
+
+### Phase 1 — Multi-user & Authentication
+- [ ] Add `landlord_id` column to all tables (Alembic migration)
+- [ ] Add `landlords` table with hashed passwords
+- [ ] Wrap Streamlit with `streamlit-authenticator` — login/logout per landlord
+- [ ] Filter all queries by `landlord_id` so each landlord sees only their own data
+- [ ] Admin page to create/manage landlord accounts
+
+### Phase 2 — API Security
+- [ ] JWT authentication on FastAPI endpoints (`/api/auth/login` → token)
+- [ ] Protect all API routes with `Depends(get_current_user)`
+- [ ] Rate limiting and request logging
+- [ ] PostgreSQL Row-Level Security (RLS) — enforce data isolation at DB level
+
+### Phase 3 — Tenant Portal (Next.js)
+- [ ] Next.js frontend consuming the FastAPI backend
+- [ ] Tenant login — view own contract, payment history, NK-Abrechnung PDFs
+- [ ] Submit maintenance requests
+- [ ] Receive and acknowledge Mahnungen digitally
+- [ ] Mobile-responsive layout (Tailwind CSS + shadcn/ui)
+
+### Phase 4 — Migrate Landlord UI from Streamlit to Next.js
+> Streamlit is a great tool for internal dashboards but has limitations for a production SaaS:
+> no real URL routing, no mobile-first layout, no real-time features, and auth is bolted on.
+> Once the FastAPI backend is mature and a tenant portal exists in Next.js, the landlord
+> admin dashboard should be migrated page-by-page to Next.js as well.
+- [ ] Migrate Dashboard page to Next.js
+- [ ] Migrate Properties / Apartments / Tenants / Contracts pages
+- [ ] Migrate Rent Tracking and Balance Sheet
+- [ ] Migrate Nebenkostenabrechnung and Mahnung Generator (PDF preview in browser)
+- [ ] Retire Streamlit once all pages are migrated
+- [ ] Full Keycloak or Supabase Auth (OIDC/OAuth2, Google login) replacing streamlit-authenticator
+
+### Phase 5 — Automation & Integrations
+- [ ] Email delivery — send NK-Abrechnung and Mahnung PDFs directly to tenants (Brevo / Postal)
+- [ ] Automated rent reminder scheduler (Celery + Redis) — trigger Mahnung if payment overdue
+- [ ] Bank integration via FinTS/HBCI (`python-fints`) — auto-import and reconcile payments
+- [ ] SEPA direct debit via GoCardless — pull rent automatically from tenant accounts
+
+### Phase 6 — Document & Contract Management
+- [ ] E-signature for rental contracts (Documenso — open-source DocuSign alternative)
+- [ ] Document storage per tenant/contract (MinIO or S3-compatible)
+- [ ] Certified e-delivery tracking for NK-Abrechnungen (BGB 12-month deadline)
+
+### Phase 7 — Reporting & Tax
+- [ ] Anlage V export — structured annual income/cost summary for German tax return
+- [ ] Depreciation (AfA) tracking per property
+- [ ] Annual profit/loss report per property with downloadable PDF
+
+### Phase 8 — Market Intelligence
+- [ ] Market rent benchmarking — compare current rents to local listings
+- [ ] Alert when a flat's rent is significantly below market rate
+- [ ] Yield calculator per property (annual net / estimated property value)
+
+### Phase 9 — Deployment
+- [ ] Docker Compose for local dev (app + API + PostgreSQL + Redis in one command)
+- [ ] Deploy to Hetzner VPS with Coolify (Git push → auto deploy)
+- [ ] SSL via Let's Encrypt / Traefik reverse proxy
+- [ ] CI/CD pipeline (GitHub Actions — run tests on every push)
+
+---
+
 ## License
 
 MIT

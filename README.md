@@ -48,6 +48,7 @@ A web-based property management application tailored for landlords in Germany. B
 - Edit existing apartments: room name and flat label
 - Table shows property name alongside each apartment
 - **Heizkostenverteiler**: register heat cost allocator meters per apartment with serial number, description, unit label (e.g. "Einheiten"), and ISTA conversion factor (Einheiten → kWh)
+- **Gaszähler**: register gas meters per apartment with serial number, Z-Zahl (Zustandszahl) and Brennwert from the NBB bill; Umrechnungsfaktor (m³ → kWh) is computed automatically as Z-Zahl × Brennwert
 
 ### Tenants
 - Register tenants with name, email, and gender
@@ -96,53 +97,54 @@ A web-based property management application tailored for landlords in Germany. B
 - **Per-flat detail expanders**: itemized list with active/expired status, monthly equivalent per entry, and flat-level totals
 
 ### Balance Sheet
-- **Current monthly snapshot**: metric cards per property showing expected rent minus costs for the current month
+- **Current monthly snapshot**: metric cards per property + grand total across all properties showing expected rent minus costs for the current month
 - **Annual view** (year selector): per-property table with Expected rent, Actual received, Variance, Costs, Expected net, Actual net — all color-coded (green = profit/surplus, red = loss/shortfall)
 - For the current year, only shows months up to the current month
 - **Annual summary metrics**: expected rent, actual received (with delta vs expected), total costs, and net actual (with expected net delta)
-- **Per-flat breakdown expander**: current active contracts per apartment showing tenant name, rent/month, costs/month, net/month, net/year
+- **Per-flat breakdown expander**: current active contracts per apartment showing tenant name, rent/month, received for the year, costs/month, net/month, net/year, and YTD collection rate %
+- **WG auto-detection**: flats sharing the same label are grouped; monthly payment pivot table per tenant is shown for WG tenancies
+- **Performance insights & suggestions**: auto-generated per-flat observations — vacancy alerts, negative-net warnings, arrears detection (with Mahnung recommendation), and thin-margin notices
 
 ### Nebenkostenabrechnung
 - Freely select which utilities to include per Abrechnung: **Strom**, **Gas**, **Kaltwasser**, **Betriebskosten**, **Heizkosten** — each is independent and optional
-- **Multi-contract tenant support**: if a tenant has contracts for multiple apartments, a contract selector appears to choose which apartment to bill; address is auto-resolved from the selected contract's property
+- **Multi-contract tenant support**: contract selector appears for tenants with multiple apartments; address auto-resolved from selected contract's property
 - Each utility has its **own billing period** from the provider, separate from the tenant's contract period
 - Tenant's **effective period** is auto-detected as the intersection of the utility billing period and the tenant's contract dates — editable after auto-detection
-- Changing a billing period automatically updates the effective period inputs
+- **Gas Umrechnungsfaktor** is auto-filled from the registered Gaszähler (Z-Zahl × Brennwert)
 - **Correct proration**: `(total_flat_cost / bill_days) × eff_days / tenants` — accounts for partial occupancy within the billing period
 - Strom, Gas, and Kaltwasser use day-based billing; Betriebskosten uses month-based billing with month/year selectors
 - Person count auto-derived from primary tenant + co-tenants (can be overridden)
-- **Heizkostenverteiler (Heizkosten)**: enter meter start/end readings in ISTA units per Heizkörper; conversion factor (Einheiten → kWh) is taken from the meter registration; single €/kWh price from the ISTA bill applies to all meters; cost = units × factor × €/kWh
+- **Heizkostenverteiler (Heizkosten)**: enter meter start/end readings in ISTA units per Heizkörper; conversion factor (Einheiten → kWh) is taken from the meter registration
 - Save and reload billing profiles to avoid re-entering data each year
 - Generates a polished A4 letter-style PDF with:
   - Recipient address block listing primary tenant and all Mitmieter (in-contract co-tenants only)
   - Gender-aware salutation for one or multiple named tenants; falls back to "Sehr geehrte Damen und Herren" for 3+
-  - Header banner shows billing periods for all included utilities (Strom, Gas, Wasser, Heizung, BK)
+  - Header banner shows billing periods for all included utilities
   - Per-utility sections showing both the provider billing period and the tenant's effective period
-  - Itemized step-by-step calculation tables (cost per day → tenant share → prepayment → Nachzahlung)
-  - Heizkosten table with per-meter readings, kWh conversion, and costs
+  - Itemized step-by-step calculation tables
   - Color-coded total (red = Nachzahlung, green = Guthaben)
-  - Landlord signature image
-  - 7-day payment deadline for Nachzahlungen
+  - Landlord signature image and 7-day payment deadline for Nachzahlungen
 
 ### Mahnung Generator (Payment Reminder)
 - Generate a formal payment reminder PDF for a tenant
-- **Multi-contract support**: contract selector appears for tenants with multiple apartments; address auto-resolved from selected contract's property
+- **Multi-contract support**: contract selector appears for tenants with multiple apartments
 - All Mitmieter (in-contract co-tenants) appear in the address block and salutation
 - Gender-aware salutation for one or multiple named tenants
 - Highlighted outstanding amount with due date
 - Landlord signature embedded
-- Ready to print or send digitally
 
 ---
 
 ## Tech Stack
 
-| Layer       | Technology         |
-|-------------|--------------------|
-| UI          | Streamlit          |
-| Database    | SQLite3            |
-| PDF Engine  | ReportLab          |
-| Language    | Python 3.10+       |
+| Layer          | Technology               |
+|----------------|--------------------------|
+| UI             | Streamlit                |
+| Database       | PostgreSQL 16 (Docker)   |
+| DB Driver      | psycopg2                 |
+| Migrations     | Alembic                  |
+| PDF Engine     | ReportLab                |
+| Language       | Python 3.10+             |
 
 ---
 
@@ -150,45 +152,51 @@ A web-based property management application tailored for landlords in Germany. B
 
 ```
 landlord_system/
-├── app.py                  # Entry point — sidebar routing only
-├── db.py                   # Database initialization, CRUD helpers (insert, fetch, delete, execute)
-├── logic.py                # Business logic: strom_calc, gas_calc, water_calc,
-│                           #   betriebskosten_calc, heizung_calc_detail, tenant_ledger
-├── pdfgen.py               # PDF generation: Nebenkostenabrechnung and Mahnung
-├── requirements.txt        # Python dependencies
-├── page_modules/           # One module per menu page
+├── app.py                      # Entry point — sidebar routing only
+├── db.py                       # PostgreSQL connection, CRUD helpers (insert, fetch, execute)
+├── logic.py                    # Business logic: strom_calc, gas_calc, water_calc,
+│                               #   betriebskosten_calc, heizung_calc_detail
+├── pdfgen.py                   # PDF generation: Nebenkostenabrechnung and Mahnung
+├── requirements.txt            # Python dependencies
+├── .env                        # Database connection string (git-ignored, see Setup)
+├── alembic.ini                 # Alembic configuration
+├── alembic/
+│   └── versions/               # Schema migration files
+├── page_modules/               # One module per menu page
 │   ├── dashboard.py
 │   ├── properties.py
-│   ├── apartments.py       # Includes Heizkostenverteiler meter management
+│   ├── apartments.py           # Heizkostenverteiler + Gaszähler meter management
 │   ├── tenants.py
 │   ├── tenant_ledger.py
-│   ├── contracts.py
+│   ├── contracts.py            # Co-tenant management
 │   ├── rent_tracking.py
 │   ├── flat_costs.py
 │   ├── balance_sheet.py
 │   ├── nebenkostenabrechnung.py
 │   ├── payment_reminders.py
 │   └── mahnung.py
-├── data/
-│   └── landlord.db         # SQLite database (auto-created on first run, git-ignored)
-└── pdf/                    # Output directory for generated PDFs (git-ignored)
+├── utils/
+│   └── migrate_sqlite_to_pg.py # One-shot data migration script (SQLite → PostgreSQL)
+└── pdf/                        # Output directory for generated PDFs (git-ignored)
 ```
 
 ---
 
 ## Database Schema
 
-| Table              | Key Fields                                              |
-|--------------------|---------------------------------------------------------|
-| `properties`       | id, name, address                                       |
-| `apartments`       | id, property_id, name, flat                             |
-| `tenants`          | id, name, email, gender                                 |
-| `contracts`        | id, tenant_id, apartment_id, rent, start_date, end_date, terminated, kaution_amount, kaution_paid_date, kaution_returned_date, kaution_returned_amount |
-| `payments`         | id, contract_id, amount, payment_date                   |
-| `flat_costs`       | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to |
+| Table              | Key Fields                                                                 |
+|--------------------|----------------------------------------------------------------------------|
+| `properties`       | id, name, address                                                          |
+| `apartments`       | id, property_id, name, flat                                                |
+| `tenants`          | id, name, email, gender                                                    |
+| `contracts`        | id, tenant_id, apartment_id, rent, start_date, end_date, terminated, kaution_* |
+| `payments`         | id, contract_id, amount, payment_date                                      |
+| `flat_costs`       | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to       |
 | `heizung_meters`   | id, apartment_id, serial_number, description, unit_label, conversion_factor |
-| `co_tenants`       | id, contract_id, name, gender, email, in_contract       |
-| `nk_profiles`      | id, tenant_id, label, data_json                         |
+| `gas_meters`       | id, apartment_id, serial_number, description, z_zahl, brennwert            |
+| `co_tenants`       | id, contract_id, name, gender, email, in_contract                         |
+| `billing_profiles` | id, tenant_id, label, created_date, data                                   |
+| `config`           | key, value                                                                 |
 
 ---
 
@@ -196,7 +204,7 @@ landlord_system/
 
 ### Prerequisites
 - Python 3.10 or higher
-- pip
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (for PostgreSQL)
 
 ### Installation
 
@@ -213,11 +221,92 @@ source venv/bin/activate        # macOS/Linux
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Run the application
+# 4. Start the PostgreSQL database (first time only)
+docker run -d \
+  --name landlord-pg \
+  -e POSTGRES_USER=landlord \
+  -e POSTGRES_PASSWORD=secret \
+  -e POSTGRES_DB=landlord_dev \
+  -p 5432:5432 \
+  --restart unless-stopped \
+  postgres:16
+
+# 5. Create .env with the database connection string
+echo "DATABASE_URL=postgresql://landlord:secret@localhost:5432/landlord_dev" > .env
+
+# 6. Initialise the database schema
+python3 -c "from db import init_db; init_db()"
+
+# 7. Run the application
 streamlit run app.py
 ```
 
 The app will be available at `http://localhost:8501`.
+
+### Daily Use
+
+**You do not need to run `docker run` again.** The container was created with `--restart unless-stopped`, so it starts automatically whenever Docker Desktop is open.
+
+Your daily workflow is simply:
+
+1. Open **Docker Desktop** (the container starts automatically)
+2. Activate your virtual environment: `source venv/bin/activate`
+3. Run the app: `streamlit run app.py`
+
+---
+
+## Inspecting the Database
+
+### Option 1 — psql CLI (no extra install needed)
+
+```bash
+docker exec -it landlord-pg psql -U landlord -d landlord_dev
+```
+
+Useful psql commands:
+```sql
+\dt                        -- list all tables
+\d contracts               -- describe a table's columns
+SELECT * FROM properties;  -- query any table
+SELECT COUNT(*) FROM payments;
+\q                         -- quit
+```
+
+### Option 2 — GUI client
+
+Connect any database GUI to:
+
+| Setting  | Value        |
+|----------|--------------|
+| Host     | `localhost`  |
+| Port     | `5432`       |
+| User     | `landlord`   |
+| Password | `secret`     |
+| Database | `landlord_dev` |
+
+Recommended free GUI tools:
+- **[TablePlus](https://tableplus.com/)** — native Mac app, clean UI (free tier available)
+- **[DBeaver](https://dbeaver.io/)** — cross-platform, fully free
+- **[pgAdmin](https://www.pgadmin.org/)** — official PostgreSQL tool, web-based
+
+---
+
+## Schema Migrations
+
+Database schema changes are managed with [Alembic](https://alembic.sqlalchemy.org/).
+
+```bash
+# Check current migration status
+alembic current
+
+# Apply any pending migrations
+alembic upgrade head
+
+# Create a new migration after a schema change
+alembic revision -m "add_phone_to_tenants"
+# Edit the generated file in alembic/versions/, then:
+alembic upgrade head
+```
 
 ---
 

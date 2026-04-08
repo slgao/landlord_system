@@ -139,7 +139,8 @@ A web-based property management application tailored for landlords in Germany. B
 
 | Layer          | Technology               |
 |----------------|--------------------------|
-| UI             | Streamlit                |
+| UI (admin)     | Streamlit                |
+| API            | FastAPI + Uvicorn        |
 | Database       | PostgreSQL 16 (Docker)   |
 | DB Driver      | psycopg2                 |
 | Migrations     | Alembic                  |
@@ -152,17 +153,32 @@ A web-based property management application tailored for landlords in Germany. B
 
 ```
 landlord_system/
-├── app.py                      # Entry point — sidebar routing only
+├── app.py                      # Streamlit entry point — sidebar routing
 ├── db.py                       # PostgreSQL connection, CRUD helpers (insert, fetch, execute)
 ├── logic.py                    # Business logic: strom_calc, gas_calc, water_calc,
 │                               #   betriebskosten_calc, heizung_calc_detail
 ├── pdfgen.py                   # PDF generation: Nebenkostenabrechnung and Mahnung
 ├── requirements.txt            # Python dependencies
+├── Procfile                    # Run both services with `honcho start`
 ├── .env                        # Database connection string (git-ignored, see Setup)
 ├── alembic.ini                 # Alembic configuration
 ├── alembic/
 │   └── versions/               # Schema migration files
-├── page_modules/               # One module per menu page
+├── api/                        # FastAPI backend
+│   ├── main.py                 # App factory, CORS, router registration
+│   ├── routers/
+│   │   ├── properties.py       # CRUD /api/properties
+│   │   ├── apartments.py       # GET  /api/apartments
+│   │   ├── tenants.py          # CRUD /api/tenants
+│   │   ├── contracts.py        # GET  /api/contracts
+│   │   └── payments.py         # CRUD /api/payments
+│   └── schemas/                # Pydantic request/response models
+│       ├── property.py
+│       ├── apartment.py
+│       ├── tenant.py
+│       ├── contract.py
+│       └── payment.py
+├── page_modules/               # Streamlit — one module per menu page
 │   ├── dashboard.py
 │   ├── properties.py
 │   ├── apartments.py           # Heizkostenverteiler + Gaszähler meter management
@@ -176,7 +192,8 @@ landlord_system/
 │   ├── payment_reminders.py
 │   └── mahnung.py
 ├── utils/
-│   └── migrate_sqlite_to_pg.py # One-shot data migration script (SQLite → PostgreSQL)
+│   ├── migrate_sqlite_to_pg.py # One-shot data migration script (SQLite → PostgreSQL)
+│   └── backup.sh               # Daily backup script
 └── pdf/                        # Output directory for generated PDFs (git-ignored)
 ```
 
@@ -237,11 +254,25 @@ echo "DATABASE_URL=postgresql://landlord:secret@localhost:5432/landlord_dev" > .
 # 6. Initialise the database schema
 python3 -c "from db import init_db; init_db()"
 
-# 7. Run the application
-streamlit run app.py
+# 7. Run both services (Streamlit + FastAPI)
+honcho start
 ```
 
-The app will be available at `http://localhost:8501`.
+| Service | URL |
+|---|---|
+| Streamlit admin UI | `http://localhost:8501` |
+| FastAPI backend | `http://localhost:8000` |
+| API docs (Swagger) | `http://localhost:8000/docs` |
+| API docs (ReDoc) | `http://localhost:8000/redoc` |
+
+Or run them separately in two terminals:
+```bash
+# Terminal 1 — API
+uvicorn api.main:app --reload --port 8000
+
+# Terminal 2 — Streamlit
+streamlit run app.py
+```
 
 ### Daily Use
 
@@ -437,6 +468,49 @@ gunzip -c ~/landlord_backups/landlord_20260408_203842.sql.gz \
 | Log | `~/landlord_backups/backup.log` |
 
 > **macOS note:** cron only runs while the Mac is awake. If reliability matters, schedule the backup for a time the Mac is normally on.
+
+---
+
+## REST API
+
+The FastAPI backend runs on port 8000 and exposes the core data as a REST API — ready to be consumed by a future Next.js frontend or tenant portal.
+
+Interactive docs are auto-generated at **`http://localhost:8000/docs`**.
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/properties/` | List all properties |
+| POST | `/api/properties/` | Create a property |
+| GET | `/api/properties/{id}` | Get a property |
+| PUT | `/api/properties/{id}` | Update a property |
+| DELETE | `/api/properties/{id}` | Delete a property |
+| GET | `/api/apartments/` | List apartments (filter: `?property_id=`) |
+| GET | `/api/apartments/{id}` | Get an apartment |
+| GET | `/api/tenants/` | List all tenants |
+| POST | `/api/tenants/` | Create a tenant |
+| GET | `/api/tenants/{id}` | Get a tenant |
+| PUT | `/api/tenants/{id}` | Update a tenant |
+| DELETE | `/api/tenants/{id}` | Delete a tenant |
+| GET | `/api/contracts/` | List contracts (filter: `?active_only=true`) |
+| GET | `/api/contracts/{id}` | Get a contract |
+| GET | `/api/contracts/tenant/{tenant_id}` | Contracts for a tenant |
+| GET | `/api/payments/` | List payments (filter: `?contract_id=` or `?tenant_id=`) |
+| POST | `/api/payments/` | Record a payment |
+| DELETE | `/api/payments/{id}` | Delete a payment |
+
+### Architecture
+
+```
+Streamlit (port 8501)  ←──── direct db.py calls (current)
+                                       │
+FastAPI   (port 8000)  ←──── same db.py + logic.py reused
+                                       │
+                              PostgreSQL (port 5432)
+```
+
+Both services share the same `db.py` layer and PostgreSQL database. The FastAPI layer is the foundation for a future Next.js tenant portal or mobile app.
 
 ---
 

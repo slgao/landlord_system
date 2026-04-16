@@ -71,7 +71,10 @@ A web-based property management application tailored for landlords in Germany. B
 - **Handle Expired Contracts**: single expander for all unresolved expired contracts with a radio choice:
   - *Close — tenant has moved out* → marks as terminated, removes from alerts
   - *Reopen — tenant is still living there* → clears end date, restores to active
-- **Kaution (deposit) tracking**: record deposit amount, date received, date and amount returned
+- **Kaution (deposit) tracking**: record deposit amount and date received, log partial deductions (NK Nachzahlung verrechnet, Schaden, Reinigung, Mietrückstand, Sonstiges) with free-text reason, and mark the remaining balance returned
+  - Per-contract overview shows received / deducted / **open balance** / returned
+  - Returned amount auto-defaults to the open balance and is blocked if it exceeds it
+  - Once marked returned, balance switches to *settled* and further deductions are blocked until the return record is cleared
 - **Co-Tenants**: add additional occupants per contract with name, gender, and email
   - Toggle **In contract (Mitmieter)** for each person — those marked appear in the address block and salutation of all generated PDFs; others are stored for reference only
   - Person count for Nebenkostenabrechnung is auto-derived from primary tenant + all co-tenants
@@ -207,6 +210,7 @@ landlord_system/
 | `apartments`       | id, property_id, name, flat                                                |
 | `tenants`          | id, name, email, gender                                                    |
 | `contracts`        | id, tenant_id, apartment_id, rent, start_date, end_date, terminated, kaution_* |
+| `kaution_deductions` | id, contract_id, date, amount, category, reason, reference_type, reference_id |
 | `payments`         | id, contract_id, amount, payment_date                                      |
 | `flat_costs`       | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to       |
 | `heizung_meters`   | id, apartment_id, serial_number, description, unit_label, conversion_factor |

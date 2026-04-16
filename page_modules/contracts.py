@@ -199,42 +199,179 @@ def show():
 
         # ── Kaution (Deposit) ──────────────────────────────────────
         with st.expander("Kaution (Deposit)"):
-            kaution_data = fetch("""
+            kaution_overview = fetch("""
                 SELECT c.id, t.name, a.name,
                        c.kaution_amount, c.kaution_paid_date,
+                       COALESCE((SELECT SUM(amount) FROM kaution_deductions
+                                  WHERE contract_id = c.id), 0) AS deducted,
                        c.kaution_returned_date, c.kaution_returned_amount
                 FROM contracts c
                 JOIN tenants t ON c.tenant_id = t.id
                 JOIN apartments a ON c.apartment_id = a.id
+                ORDER BY c.start_date DESC
             """)
-            df_k = pd.DataFrame(kaution_data,
-                                columns=["Contract ID", "Tenant", "Apartment",
-                                         "Kaution (€)", "Paid Date", "Returned Date", "Returned (€)"])
+
+            def _balance(row):
+                amt, deducted, ret = row[3] or 0.0, row[5] or 0.0, row[7]
+                if ret is not None:
+                    return 0.0
+                return float(amt) - float(deducted)
+
+            df_k = pd.DataFrame([
+                (r[0], r[1], r[2],
+                 r[3], r[4], r[5], _balance(r),
+                 r[6], r[7])
+                for r in kaution_overview
+            ], columns=["Contract ID", "Tenant", "Apartment",
+                        "Kaution (€)", "Paid Date", "Deducted (€)", "Open Balance (€)",
+                        "Returned Date", "Returned (€)"])
             st.dataframe(df_k, width="stretch", hide_index=True)
 
-            st.markdown("**Record / Update Kaution**")
+            st.markdown("---")
             k_contract = st.selectbox("Contract", contract_data,
                                       format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
                                       key="kaution_contract")
+            cid = k_contract[0]
+
+            current = fetch(
+                "SELECT kaution_amount, kaution_paid_date, "
+                "kaution_returned_date, kaution_returned_amount "
+                "FROM contracts WHERE id=?",
+                (cid,)
+            )[0]
+            cur_amount = float(current[0]) if current[0] is not None else 0.0
+            cur_paid   = current[1]
+            cur_ret_d  = current[2]
+            cur_ret_a  = float(current[3]) if current[3] is not None else None
+
+            deductions = fetch(
+                "SELECT id, date, amount, category, reason "
+                "FROM kaution_deductions WHERE contract_id=? ORDER BY date, id",
+                (cid,)
+            )
+            total_deducted = sum(float(d[2] or 0) for d in deductions)
+            balance = cur_amount - total_deducted
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Kaution received", f"{cur_amount:,.2f} €")
+            m2.metric("Deductions", f"{total_deducted:,.2f} €")
+            m3.metric("Open balance", f"{balance:,.2f} €")
+
+            # ── Record / update received Kaution ──
+            st.markdown("**1. Record / update received Kaution**")
             col1, col2 = st.columns(2)
             with col1:
-                k_amount = st.number_input("Kaution amount (€)", min_value=0.0, key="k_amount")
-                k_paid   = st.date_input("Date received", key="k_paid")
+                k_amount = st.number_input(
+                    "Kaution amount (€)", min_value=0.0,
+                    value=cur_amount, key=f"k_amount_{cid}"
+                )
             with col2:
-                k_returned     = st.date_input("Date returned (if applicable)", key="k_returned")
-                k_returned_amt = st.number_input("Amount returned (€)", min_value=0.0, key="k_returned_amt")
-
-            if st.button("Save Kaution", key="btn_kaution"):
-                execute("""UPDATE contracts SET
-                               kaution_amount=?, kaution_paid_date=?,
-                               kaution_returned_date=?, kaution_returned_amount=?
-                           WHERE id=?""",
-                        (k_amount, str(k_paid),
-                         str(k_returned) if k_returned_amt > 0 else None,
-                         k_returned_amt if k_returned_amt > 0 else None,
-                         k_contract[0]))
-                st.success("Kaution saved.")
+                k_paid = st.date_input(
+                    "Date received",
+                    value=date.fromisoformat(cur_paid) if cur_paid else date.today(),
+                    key=f"k_paid_{cid}"
+                )
+            if st.button("Save received Kaution", key=f"btn_save_kaution_{cid}"):
+                execute(
+                    "UPDATE contracts SET kaution_amount=?, kaution_paid_date=? WHERE id=?",
+                    (k_amount, str(k_paid), cid)
+                )
+                st.success("Kaution received recorded.")
                 st.rerun()
+
+            # ── Deductions ledger ──
+            st.markdown("**2. Deductions (e.g. NK Nachzahlung verrechnet, Schaden, Reinigung)**")
+            if deductions:
+                df_d = pd.DataFrame(deductions,
+                                    columns=["ID", "Date", "Amount (€)", "Category", "Reason"])
+                st.dataframe(df_d, width="stretch", hide_index=True)
+
+                del_choice = st.selectbox(
+                    "Delete deduction", deductions,
+                    format_func=lambda d: f"#{d[0]} — {d[1]} — {d[3] or ''} — {float(d[2] or 0):.2f} €",
+                    key=f"k_del_choice_{cid}"
+                )
+                if st.button("Delete selected deduction", key=f"btn_k_del_{cid}"):
+                    execute("DELETE FROM kaution_deductions WHERE id=?", (del_choice[0],))
+                    st.success("Deduction removed.")
+                    st.rerun()
+            else:
+                st.caption("No deductions yet.")
+
+            st.markdown("**Add deduction**")
+            d1, d2, d3 = st.columns([1, 1, 2])
+            with d1:
+                d_date = st.date_input("Date", value=date.today(), key=f"k_d_date_{cid}")
+                d_amount = st.number_input("Amount (€)", min_value=0.0,
+                                           step=10.0, key=f"k_d_amount_{cid}")
+            with d2:
+                d_category = st.selectbox(
+                    "Category",
+                    ["NK Nachzahlung", "Schaden", "Reinigung", "Mietrückstand", "Sonstiges"],
+                    key=f"k_d_category_{cid}"
+                )
+            with d3:
+                d_reason = st.text_area("Reason / note", height=80, key=f"k_d_reason_{cid}",
+                                        placeholder="z.B. Nebenkostenabrechnung 2024 verrechnet")
+            if st.button("Add deduction", key=f"btn_k_add_{cid}"):
+                if d_amount <= 0:
+                    st.warning("Enter a positive amount.")
+                elif d_amount > balance:
+                    st.warning(
+                        f"Deduction ({d_amount:.2f} €) exceeds open balance "
+                        f"({balance:.2f} €). Adjust the amount or increase the Kaution."
+                    )
+                else:
+                    execute(
+                        "INSERT INTO kaution_deductions "
+                        "(contract_id, date, amount, category, reason) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (cid, str(d_date), d_amount, d_category, d_reason or None)
+                    )
+                    st.success("Deduction recorded.")
+                    st.rerun()
+
+            # ── Return remaining balance to tenant ──
+            st.markdown("**3. Return remaining balance to tenant**")
+            if cur_ret_d:
+                st.info(
+                    f"Already returned **{cur_ret_a:.2f} €** on **{cur_ret_d}**. "
+                    "Use the button below to clear and re-record."
+                )
+                if st.button("Clear return record", key=f"btn_k_clear_ret_{cid}"):
+                    execute(
+                        "UPDATE contracts SET kaution_returned_date=NULL, "
+                        "kaution_returned_amount=NULL WHERE id=?",
+                        (cid,)
+                    )
+                    st.rerun()
+            else:
+                r1, r2 = st.columns(2)
+                with r1:
+                    r_date = st.date_input("Return date", value=date.today(),
+                                           key=f"k_r_date_{cid}")
+                with r2:
+                    r_amount = st.number_input(
+                        "Returned amount (€)", min_value=0.0,
+                        value=max(balance, 0.0), step=10.0,
+                        key=f"k_r_amount_{cid}",
+                        help="Defaults to the open balance. Override if you returned a different amount."
+                    )
+                if st.button("Mark Kaution returned", key=f"btn_k_return_{cid}"):
+                    if r_amount > balance + 1e-9:
+                        st.warning(
+                            f"Returned amount ({r_amount:.2f} €) exceeds the open "
+                            f"balance ({balance:.2f} €). Either lower the amount, "
+                            "remove a deduction, or increase the recorded Kaution."
+                        )
+                    else:
+                        execute(
+                            "UPDATE contracts SET kaution_returned_date=?, "
+                            "kaution_returned_amount=? WHERE id=?",
+                            (str(r_date), r_amount, cid)
+                        )
+                        st.success(f"Returned {r_amount:.2f} € on {r_date}.")
+                        st.rerun()
 
         # ── Co-Tenants ─────────────────────────────────────────────
         with st.expander("Co-Tenants"):

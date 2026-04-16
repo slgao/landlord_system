@@ -105,6 +105,23 @@ def init_db():
     """)
 
     c.execute("""
+    CREATE TABLE IF NOT EXISTS kaution_deductions(
+        id             SERIAL PRIMARY KEY,
+        contract_id    INTEGER NOT NULL,
+        date           TEXT,
+        amount         NUMERIC(10,2),
+        category       TEXT,
+        reason         TEXT,
+        reference_type TEXT,
+        reference_id   INTEGER
+    )
+    """)
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS ix_kaution_deductions_contract_id "
+        "ON kaution_deductions(contract_id)"
+    )
+
+    c.execute("""
     CREATE TABLE IF NOT EXISTS flat_costs(
         id           SERIAL PRIMARY KEY,
         apartment_id INTEGER,

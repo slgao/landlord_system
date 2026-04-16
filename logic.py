@@ -145,6 +145,46 @@ def water_calc_detail(start_m3, end_m3, frischwasser_per_m3, abwasser_per_m3,
     )
 
 
+def warmwasser_calc_detail(meters, frischwasser_per_m3, abwasser_per_m3,
+                           heizenergie_per_m3, num_tenants, bill_days, eff_days,
+                           prepay_monthly, is_pauschale=False):
+    """
+    Hot-water calculation. Total Verbrauch = sum over all Warmwasserzähler.
+    Cost per m³ = Frischwasser + Abwasser + Heizenergie (each landlord-supplied).
+    """
+    n  = max(1, num_tenants)
+    bd = max(1, bill_days)
+    meter_details = []
+    total_m3 = 0.0
+    for m in meters:
+        v = max(0.0, m["end"] - m["start"])
+        total_m3 += v
+        meter_details.append({
+            "meter_id":    m.get("meter_id"),
+            "serial":      m.get("serial", ""),
+            "description": m.get("description", ""),
+            "start":       m["start"],
+            "end":         m["end"],
+            "verbrauch":   round(v, 3),
+        })
+    cost_per_m3 = frischwasser_per_m3 + abwasser_per_m3 + heizenergie_per_m3
+    cost_flat   = total_m3 * cost_per_m3
+    cost_tenant = cost_flat * eff_days / bd / n
+    prepay      = prepay_monthly * 12 / 365 * eff_days
+    nach        = cost_tenant - prepay
+    if is_pauschale:
+        nach = max(0.0, nach)
+    return dict(
+        verbrauch_m3    = round(total_m3, 3),
+        cost_per_m3     = round(cost_per_m3, 3),
+        cost_flat       = round(cost_flat, 2),
+        cost_tenant     = round(cost_tenant, 2),
+        prepay          = round(prepay, 2),
+        nach            = round(nach, 2),
+        meter_details   = meter_details,
+    )
+
+
 def heizung_calc_detail(meters, num_tenants, bill_days, eff_days,
                         prepay_monthly, is_pauschale=False):
     """

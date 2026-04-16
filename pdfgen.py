@@ -272,6 +272,7 @@ def invoice_pdf(
     strom=None,
     gas=None,
     water=None,
+    warmwater=None,
     bk=None,
     heizung=None,
     extra=None,
@@ -294,11 +295,12 @@ def invoice_pdf(
 
     # Period subtitle for header (show tenant's effective periods)
     period_parts = []
-    if strom:   period_parts.append(f"Strom: {strom['period']} ({strom['days']} Tage)")
-    if gas:     period_parts.append(f"Gas: {gas['period']} ({gas['days']} Tage)")
-    if water:   period_parts.append(f"Wasser: {water['period']} ({water['days']} Tage)")
-    if heizung: period_parts.append(f"Heizung: {heizung['period']} ({heizung['days']} Tage)")
-    if bk:      period_parts.append(f"BK: {bk['period']} ({bk['months']} Monate)")
+    if strom:     period_parts.append(f"Strom: {strom['period']} ({strom['days']} Tage)")
+    if gas:       period_parts.append(f"Gas: {gas['period']} ({gas['days']} Tage)")
+    if water:     period_parts.append(f"Kaltwasser: {water['period']} ({water['days']} Tage)")
+    if warmwater: period_parts.append(f"Warmwasser: {warmwater['period']} ({warmwater['days']} Tage)")
+    if heizung:   period_parts.append(f"Heizung: {heizung['period']} ({heizung['days']} Tage)")
+    if bk:        period_parts.append(f"BK: {bk['period']} ({bk['months']} Monate)")
     period_str = "  ·  ".join(period_parts)
 
     # ── Header banner ──────────────────────────────────────────────
@@ -341,7 +343,14 @@ def invoice_pdf(
         vz_label_s  = "Pauschale" if pauschale_s else "Vorauszahlung"
 
         story.append(_section_header(section_num, "Stromkosten", s))
+        meter_line_s = ""
+        if d.get("meter_serial"):
+            meter_line_s = f"Stromzähler: {d['meter_serial']}"
+            if d.get("meter_description"):
+                meter_line_s += f" ({d['meter_description']})"
+            meter_line_s += "  |  "
         story.append(_info_box(
+            f"{meter_line_s}"
             f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
             f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
             f"{vz_label_s}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
@@ -428,7 +437,14 @@ def invoice_pdf(
         vz_label_w  = "Pauschale" if pauschale_w else "Vorauszahlung"
 
         story.append(_section_header(section_num, "Kaltwasser", s))
+        meter_line_w = ""
+        if d.get("meter_serial"):
+            meter_line_w = f"Kaltwasserzähler: {d['meter_serial']}"
+            if d.get("meter_description"):
+                meter_line_w += f" ({d['meter_description']})"
+            meter_line_w += "  |  "
         story.append(_info_box(
+            f"{meter_line_w}"
             f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
             f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
             f"{vz_label_w}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
@@ -460,6 +476,66 @@ def invoice_pdf(
         ], col_widths=[175, 215, 78]))
         story.append(Spacer(1, 18))
         total_items.append(("Nachzahlung Kaltwasser", d["nach"]))
+        section_num += 1
+
+    # ── Warmwasser ─────────────────────────────────────────────────
+    if warmwater:
+        d = warmwater
+        n = d["num_tenants"]
+        pauschale_ww = d.get("is_pauschale", False)
+        vz_label_ww  = "Pauschale" if pauschale_ww else "Vorauszahlung"
+        meters_ww    = d.get("meter_details", [])
+
+        story.append(_section_header(section_num, "Warmwasser", s))
+        story.append(_info_box(
+            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+            f"{vz_label_ww}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_ww else ""), s
+        ))
+        story.append(Spacer(1, 8))
+
+        rows_ww = [["Position", "Berechnung", "Betrag"]]
+        for m in meters_ww:
+            label = f"Zähler {m['serial'] or '—'}"
+            if m.get("description"):
+                label += f" ({m['description']})"
+            rows_ww.append([
+                label,
+                f"{m['end']:.3f} − {m['start']:.3f} m³",
+                f"{m['verbrauch']:.3f} m³",
+            ])
+        rows_ww.append([
+            "Verbrauch (Summe)",
+            "Σ alle Zähler" if len(meters_ww) > 1 else "—",
+            f"{d['verbrauch_m3']:.3f} m³",
+        ])
+        rows_ww.append(["Frischwasser",  f"{d['frischwasser_per_m3']:.3f} €/m³",
+                        f"{d['frischwasser_per_m3']:.3f} €/m³"])
+        rows_ww.append(["Abwasser",      f"{d['abwasser_per_m3']:.3f} €/m³",
+                        f"{d['abwasser_per_m3']:.3f} €/m³"])
+        rows_ww.append(["Heizenergie",   f"{d['heizenergie_per_m3']:.3f} €/m³",
+                        f"{d['heizenergie_per_m3']:.3f} €/m³"])
+        rows_ww.append(["Gesamtpreis je m³",
+                        "Frischwasser + Abwasser + Heizenergie",
+                        f"{d['cost_per_m3']:.3f} €/m³"])
+        rows_ww.append(["Gesamtkosten Wohnung",
+                        f"{d['verbrauch_m3']:.3f} m³ × {d['cost_per_m3']:.3f} €/m³",
+                        f"{d['cost_flat']:.2f} €"])
+        rows_ww.append(["Ihr Anteil",
+                        f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+                        f"{d['cost']:.2f} €"])
+        rows_ww.append([f"{vz_label_ww} Zeitraum",
+                        f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
+                        f"{d['limit']:.2f} €"])
+        rows_ww.append(["Nachzahlung Warmwasser",
+                        f"Ihr Anteil − {vz_label_ww}"
+                        + (" (mind. 0 €)" if pauschale_ww else ""),
+                        f"{d['nach']:.2f} €"])
+
+        story.append(_calc_table(rows_ww, col_widths=[175, 215, 78]))
+        story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Warmwasser", d["nach"]))
         section_num += 1
 
     # ── Betriebskosten ─────────────────────────────────────────────

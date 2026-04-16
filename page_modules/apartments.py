@@ -213,6 +213,135 @@ def show():
                     st.success("Gas meter deleted.")
                     st.rerun()
 
+        with st.expander("Stromzähler"):
+            st.caption("Register electricity meters (Stromzähler) per apartment. "
+                       "Usually one per apartment. The Zählernummer is shown when "
+                       "entering the Strom Zählerstand in the Nebenkostenabrechnung.")
+            apt_strom = st.selectbox(
+                "Select apartment", apt_data,
+                format_func=lambda x: f"#{x[0]} — {x[2]}  ({x[1]})",
+                key="apt_strom_sel"
+            )
+            strom_meters = fetch(
+                "SELECT id, serial_number, description "
+                "FROM strom_meters WHERE apartment_id=? ORDER BY id",
+                (apt_strom[0],)
+            )
+            if strom_meters:
+                df_sm = pd.DataFrame(strom_meters,
+                                     columns=["ID", "Serial No.", "Description"])
+                st.dataframe(df_sm, hide_index=True)
+            else:
+                st.info("No Stromzähler registered for this apartment.")
+
+            st.markdown("**Add Stromzähler**")
+            col1, col2 = st.columns(2)
+            with col1:
+                sm_serial = st.text_input("Zählernummer", key="sm_serial",
+                                          placeholder="e.g. 1ESY1160123456")
+            with col2:
+                sm_desc = st.text_input("Description / Location", key="sm_desc",
+                                        placeholder="e.g. Keller, Hauptzähler")
+            if st.button("Add Stromzähler", key="btn_add_sm"):
+                if not sm_serial.strip():
+                    st.warning("Zählernummer is required.")
+                else:
+                    if strom_meters:
+                        st.warning(
+                            "An electricity meter is already registered for this "
+                            "apartment. Adding another one — make sure this is intended."
+                        )
+                    execute(
+                        "INSERT INTO strom_meters "
+                        "(apartment_id, serial_number, description) "
+                        "VALUES (?, ?, ?)",
+                        (apt_strom[0], sm_serial.strip(), sm_desc.strip() or None)
+                    )
+                    st.success("Stromzähler added.")
+                    st.rerun()
+
+            if strom_meters:
+                st.markdown("**Delete Stromzähler**")
+                to_del_sm = st.selectbox(
+                    "Select meter", strom_meters,
+                    format_func=lambda x: f"{x[1] or '—'} — {x[2] or '—'}",
+                    key="apt_sm_del"
+                )
+                if st.button("Delete Stromzähler", key="btn_del_sm", type="primary"):
+                    execute("DELETE FROM strom_meters WHERE id=?", (to_del_sm[0],))
+                    st.success("Stromzähler deleted.")
+                    st.rerun()
+
+        with st.expander("Wasserzähler (Kalt-/Warmwasser)"):
+            st.caption("Register water meters per apartment. "
+                       "Typically one Kaltwasserzähler and one or more Warmwasserzähler. "
+                       "Readings are entered in the Nebenkostenabrechnung.")
+            apt_wm = st.selectbox(
+                "Select apartment", apt_data,
+                format_func=lambda x: f"#{x[0]} — {x[2]}  ({x[1]})",
+                key="apt_wm_sel"
+            )
+            wasser_meters = fetch(
+                "SELECT id, serial_number, description, type "
+                "FROM wasser_meters WHERE apartment_id=? ORDER BY type, id",
+                (apt_wm[0],)
+            )
+            if wasser_meters:
+                df_wm = pd.DataFrame([
+                    (r[0], "Kaltwasser" if r[3] == "kalt" else "Warmwasser",
+                     r[1] or "—", r[2] or "—")
+                    for r in wasser_meters
+                ], columns=["ID", "Type", "Serial No.", "Description"])
+                st.dataframe(df_wm, hide_index=True)
+            else:
+                st.info("No Wasserzähler registered for this apartment.")
+
+            st.markdown("**Add Wasserzähler**")
+            col1, col2, col3 = st.columns([1, 1.5, 1.5])
+            with col1:
+                wm_type_label = st.radio(
+                    "Type", ["Kaltwasser", "Warmwasser"], key="wm_type",
+                )
+            with col2:
+                wm_serial = st.text_input("Zählernummer", key="wm_serial",
+                                          placeholder="e.g. 22A1234567")
+            with col3:
+                wm_desc = st.text_input("Description / Location", key="wm_desc",
+                                        placeholder="e.g. Bad, Küche")
+            if st.button("Add Wasserzähler", key="btn_add_wm"):
+                if not wm_serial.strip():
+                    st.warning("Zählernummer is required.")
+                else:
+                    wm_type = "kalt" if wm_type_label == "Kaltwasser" else "warm"
+                    if wm_type == "kalt":
+                        existing_kalt = [m for m in wasser_meters if m[3] == "kalt"]
+                        if existing_kalt:
+                            st.warning(
+                                "A Kaltwasserzähler is already registered for this "
+                                "apartment. Adding another one — make sure this is intended."
+                            )
+                    execute(
+                        "INSERT INTO wasser_meters "
+                        "(apartment_id, serial_number, description, type) "
+                        "VALUES (?, ?, ?, ?)",
+                        (apt_wm[0], wm_serial.strip(), wm_desc.strip() or None, wm_type)
+                    )
+                    st.success(f"{wm_type_label} added.")
+                    st.rerun()
+
+            if wasser_meters:
+                st.markdown("**Delete Wasserzähler**")
+                to_del_wm = st.selectbox(
+                    "Select meter", wasser_meters,
+                    format_func=lambda x: f"[{('Kalt' if x[3]=='kalt' else 'Warm')}] "
+                                          f"{x[1] or '—'} — {x[2] or '—'}",
+                    key="apt_wm_del"
+                )
+                if st.button("Delete Wasserzähler", key="btn_del_wm", type="primary"):
+                    execute("DELETE FROM wasser_meters WHERE id=?", (to_del_wm[0],))
+                    st.success("Wasserzähler deleted.")
+                    st.rerun()
+
         with st.expander("Delete Apartment"):
             to_del = st.selectbox(
                 "Select apartment", apt_data,

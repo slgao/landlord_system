@@ -49,6 +49,8 @@ A web-based property management application tailored for landlords in Germany. B
 - Table shows property name alongside each apartment
 - **Heizkostenverteiler**: register heat cost allocator meters per apartment with serial number, description, unit label (e.g. "Einheiten"), and ISTA conversion factor (Einheiten → kWh)
 - **Gaszähler**: register gas meters per apartment with serial number, Z-Zahl (Zustandszahl) and Brennwert from the NBB bill; Umrechnungsfaktor (m³ → kWh) is computed automatically as Z-Zahl × Brennwert
+- **Stromzähler**: register electricity meters per apartment with serial number and description — serial is shown in the Nebenkostenabrechnung billing
+- **Wasserzähler**: register cold water (Kaltwasser) and hot water (Warmwasser) meters per apartment with serial number and description — supports multiple meters per apartment (e.g. multiple Warmwasserzähler)
 
 ### Tenants
 - Register tenants with name, email, and gender
@@ -108,17 +110,29 @@ A web-based property management application tailored for landlords in Germany. B
 - **WG auto-detection**: flats sharing the same label are grouped; monthly payment pivot table per tenant is shown for WG tenancies
 - **Performance insights & suggestions**: auto-generated per-flat observations — vacancy alerts, negative-net warnings, arrears detection (with Mahnung recommendation), and thin-margin notices
 
+### Meter Readings (Zählerstände)
+- Track meter readings over time, independently of any Nebenkostenabrechnung run
+- Covers all meter types: Strom, Gas, Heizung, Kaltwasser, Warmwasser
+- Select apartment → all registered meters for that apartment are shown
+- **Add readings** with date, value, and an optional note
+- **Consumption analysis per meter**: table showing each reading, Δ consumption since previous, days elapsed, and average daily consumption
+- **Summary metrics**: total consumption since first reading, days covered, overall average/day
+- **Line chart** of readings over time for each meter
+- Delete individual readings
+
 ### Nebenkostenabrechnung
-- Freely select which utilities to include per Abrechnung: **Strom**, **Gas**, **Kaltwasser**, **Betriebskosten**, **Heizkosten** — each is independent and optional
+- Freely select which utilities to include per Abrechnung: **Strom**, **Gas**, **Kaltwasser**, **Warmwasser**, **Betriebskosten**, **Heizkosten** — each is independent and optional
 - **Multi-contract tenant support**: contract selector appears for tenants with multiple apartments; address auto-resolved from selected contract's property
 - Each utility has its **own billing period** from the provider, separate from the tenant's contract period
 - Tenant's **effective period** is auto-detected as the intersection of the utility billing period and the tenant's contract dates — editable after auto-detection
+- **Meter serial numbers shown in billing**: registered Stromzähler and Kaltwasserzähler Zählernummer appear as an info banner in the respective billing section
 - **Gas Umrechnungsfaktor** is auto-filled from the registered Gaszähler (Z-Zahl × Brennwert)
+- **Warmwasser (hot water) billing**: supports one or multiple Warmwasserzähler per apartment; prices are broken down into Frischwasser, Abwasser, and Heizenergie (€/m³) — useful when warm water heating is billed separately from Heizkosten
 - **Correct proration**: `(total_flat_cost / bill_days) × eff_days / tenants` — accounts for partial occupancy within the billing period
-- Strom, Gas, and Kaltwasser use day-based billing; Betriebskosten uses month-based billing with month/year selectors
+- Strom, Gas, Kaltwasser, and Warmwasser use day-based billing; Betriebskosten uses month-based billing with month/year selectors
 - Person count auto-derived from primary tenant + co-tenants (can be overridden)
 - **Heizkostenverteiler (Heizkosten)**: enter meter start/end readings in ISTA units per Heizkörper; conversion factor (Einheiten → kWh) is taken from the meter registration
-- Save and reload billing profiles to avoid re-entering data each year
+- **Billing profiles** save and reload all entered values to avoid re-entering data each year; profiles are linked to the specific contract they were saved for — loading a profile automatically selects the corresponding contract
 - Generates a polished A4 letter-style PDF with:
   - Recipient address block listing primary tenant and all Mitmieter (in-contract co-tenants only)
   - Gender-aware salutation for one or multiple named tenants; falls back to "Sehr geehrte Damen und Herren" for 3+
@@ -159,7 +173,7 @@ landlord_system/
 ├── app.py                      # Streamlit entry point — sidebar routing
 ├── db.py                       # PostgreSQL connection, CRUD helpers (insert, fetch, execute)
 ├── logic.py                    # Business logic: strom_calc, gas_calc, water_calc,
-│                               #   betriebskosten_calc, heizung_calc_detail
+│                               #   warmwasser_calc_detail, betriebskosten_calc, heizung_calc_detail
 ├── pdfgen.py                   # PDF generation: Nebenkostenabrechnung and Mahnung
 ├── requirements.txt            # Python dependencies
 ├── Procfile                    # Run both services with `honcho start`
@@ -184,12 +198,13 @@ landlord_system/
 ├── page_modules/               # Streamlit — one module per menu page
 │   ├── dashboard.py
 │   ├── properties.py
-│   ├── apartments.py           # Heizkostenverteiler + Gaszähler meter management
+│   ├── apartments.py           # Heizkostenverteiler + Gaszähler + Stromzähler + Wasserzähler
 │   ├── tenants.py
 │   ├── tenant_ledger.py
 │   ├── contracts.py            # Co-tenant management
 │   ├── rent_tracking.py
 │   ├── flat_costs.py
+│   ├── meter_readings.py       # Time-series meter readings + consumption analysis
 │   ├── balance_sheet.py
 │   ├── nebenkostenabrechnung.py
 │   ├── payment_reminders.py
@@ -215,8 +230,11 @@ landlord_system/
 | `flat_costs`       | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to       |
 | `heizung_meters`   | id, apartment_id, serial_number, description, unit_label, conversion_factor |
 | `gas_meters`       | id, apartment_id, serial_number, description, z_zahl, brennwert            |
+| `strom_meters`     | id, apartment_id, serial_number, description                               |
+| `wasser_meters`    | id, apartment_id, serial_number, description, type ('kalt'\|'warm')        |
+| `meter_readings`   | id, meter_type, meter_id, reading_date, reading, note                      |
 | `co_tenants`       | id, contract_id, name, gender, email, in_contract                         |
-| `billing_profiles` | id, tenant_id, label, created_date, data                                   |
+| `billing_profiles` | id, tenant_id, label, created_date, data (JSON incl. contract_id)          |
 | `config`           | key, value                                                                 |
 
 ---
@@ -351,13 +369,15 @@ alembic upgrade head
 
 1. **Add a Property** → Properties menu
 2. **Add Apartments** to the property → Apartments menu
-3. **Register Tenants** (with gender) → Tenants menu
-4. **Create a Contract** linking tenant ↔ apartment with rent and dates → Contracts menu
-5. **Record monthly Rent Payments** → Rent Tracking menu
-6. **Review payment history** per tenant → Tenant Ledger menu
-7. **Track Flat Costs** (Hausgeld, Mortgage, etc.) → Flat Costs menu
-8. **Generate Nebenkostenabrechnung** at end of billing period → Nebenkostenabrechnung menu
-9. **Send a Mahnung** if a tenant has outstanding payments → Mahnung Generator menu
+3. **Register meters** (Heizkostenverteiler, Gaszähler, Stromzähler, Wasserzähler) per apartment → Apartments menu
+4. **Register Tenants** (with gender) → Tenants menu
+5. **Create a Contract** linking tenant ↔ apartment with rent and dates → Contracts menu
+6. **Record monthly Rent Payments** → Rent Tracking menu
+7. **Track meter readings** throughout the year → Meter Readings menu
+8. **Review payment history** per tenant → Tenant Ledger menu
+9. **Track Flat Costs** (Hausgeld, Mortgage, etc.) → Flat Costs menu
+10. **Generate Nebenkostenabrechnung** at end of billing period → Nebenkostenabrechnung menu
+11. **Send a Mahnung** if a tenant has outstanding payments → Mahnung Generator menu
 
 ### Move-out / Move-in Flow
 
@@ -387,6 +407,15 @@ cost_per_day        = total_flat_cost / bill_days
 tenant_cost         = cost_per_day × eff_days / num_tenants
 daily_prepayment    = (monthly_limit × 12) / 365 / num_tenants
 period_prepayment   = daily_prepayment × eff_days
+Nachzahlung         = tenant_cost − period_prepayment
+```
+
+**Warmwasser (Hot Water) — day-based, multiple meters summed:**
+```
+verbrauch_m3        = Σ (end − start) across all Warmwasserzähler
+cost_per_m3         = frischwasser_€/m³ + abwasser_€/m³ + heizenergie_€/m³
+cost_flat           = verbrauch_m3 × cost_per_m3
+tenant_cost         = cost_flat × eff_days / bill_days / num_tenants
 Nachzahlung         = tenant_cost − period_prepayment
 ```
 

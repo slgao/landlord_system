@@ -169,6 +169,48 @@ def init_db():
     """)
 
     c.execute("""
+    CREATE TABLE IF NOT EXISTS strom_meters(
+        id            SERIAL PRIMARY KEY,
+        apartment_id  INTEGER NOT NULL,
+        serial_number TEXT,
+        description   TEXT
+    )
+    """)
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS ix_strom_meters_apartment_id "
+        "ON strom_meters(apartment_id)"
+    )
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS wasser_meters(
+        id            SERIAL PRIMARY KEY,
+        apartment_id  INTEGER NOT NULL,
+        serial_number TEXT,
+        description   TEXT,
+        type          TEXT NOT NULL DEFAULT 'kalt'
+    )
+    """)
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS ix_wasser_meters_apartment_id "
+        "ON wasser_meters(apartment_id)"
+    )
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS meter_readings(
+        id           SERIAL PRIMARY KEY,
+        meter_type   TEXT          NOT NULL,
+        meter_id     INTEGER       NOT NULL,
+        reading_date TEXT          NOT NULL,
+        reading      NUMERIC(12,3) NOT NULL,
+        note         TEXT
+    )
+    """)
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS ix_meter_readings_meter "
+        "ON meter_readings(meter_type, meter_id, reading_date)"
+    )
+
+    c.execute("""
     CREATE TABLE IF NOT EXISTS co_tenants(
         id          SERIAL PRIMARY KEY,
         contract_id INTEGER NOT NULL,

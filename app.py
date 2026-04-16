@@ -31,6 +31,7 @@ from page_modules import (
     nebenkostenabrechnung,
     mahnung,
     payment_reminders,
+    meter_readings,
 )
 
 PAGES = {
@@ -42,6 +43,7 @@ PAGES = {
     "Contracts":             contracts.show,
     "Rent Tracking":         rent_tracking.show,
     "Flat Costs":            flat_costs.show,
+    "Meter Readings":        meter_readings.show,
     "Balance Sheet":         balance_sheet.show,
     "Payment Reminders":     payment_reminders.show,
     "Nebenkostenabrechnung": nebenkostenabrechnung.show,

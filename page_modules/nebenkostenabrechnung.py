@@ -4,7 +4,8 @@ import calendar
 from datetime import date, timedelta
 from pathlib import Path
 from db import fetch, execute, get_config, get_tenant_gender
-from logic import strom_calc_detail, gas_calc_detail, water_calc_detail, betriebskosten_calc, heizung_calc_detail
+from logic import (strom_calc_detail, gas_calc_detail, water_calc_detail,
+                   betriebskosten_calc, heizung_calc_detail, warmwasser_calc_detail)
 from pdfgen import invoice_pdf
 
 
@@ -48,6 +49,30 @@ def _load_profile_into_state(data: dict):
                 st.session_state["water_is_pauschale"]  = bool(d.get("is_pauschale", False))
         else:
             st.session_state[f"include_{util}"] = False
+
+    if data.get("warmwater"):
+        d = data["warmwater"]
+        bill_s = date.fromisoformat(d["bill_start"])
+        bill_e = date.fromisoformat(d["bill_end"])
+        eff_s  = date.fromisoformat(d["eff_start"])
+        eff_e  = date.fromisoformat(d["eff_end"])
+        st.session_state["include_warmwater"] = True
+        st.session_state["ww_start"]          = bill_s
+        st.session_state["ww_end"]            = bill_e
+        st.session_state["ww_eff_start"]      = eff_s
+        st.session_state["ww_eff_end"]        = eff_e
+        st.session_state["ww_limit"]          = float(d.get("prepay_pm", 0))
+        st.session_state["ww_frischwasser"]   = float(d.get("frischwasser_per_m3", 0))
+        st.session_state["ww_abwasser"]       = float(d.get("abwasser_per_m3", 0))
+        st.session_state["ww_heizenergie"]    = float(d.get("heizenergie_per_m3", 0))
+        st.session_state["ww_is_pauschale"]   = bool(d.get("is_pauschale", False))
+        st.session_state["_ww_bill_key"]      = (bill_s, bill_e)
+        for m in d.get("meters", []):
+            mid = m["meter_id"]
+            st.session_state[f"ww_start_{mid}"] = float(m.get("start", 0))
+            st.session_state[f"ww_end_{mid}"]   = float(m.get("end", 0))
+    else:
+        st.session_state["include_warmwater"] = False
 
     if data.get("bk"):
         d = data["bk"]
@@ -177,7 +202,16 @@ def show():
                 if st.button("Load", key="btn_load_profile"):
                     row = fetch("SELECT data FROM billing_profiles WHERE id=?", (sel_prof[0],))
                     if row:
-                        _load_profile_into_state(json.loads(row[0][0]))
+                        data = json.loads(row[0][0])
+                        _load_profile_into_state(data)
+                        # Pre-select the contract saved with this profile
+                        if "contract_id" in data:
+                            st.session_state["_nk_preselect_contract_id"] = data["contract_id"]
+                            # Suppress the tenant/contract-change reset so profile
+                            # values (num_tenants, extra items, etc.) are not overwritten
+                            st.session_state["_nk_tenant_id"] = (
+                                tenant_choice[0], data["contract_id"]
+                            )
                         st.success(f"Profile '{sel_prof[1]}' loaded.")
                         st.rerun()
             with col_del:
@@ -201,6 +235,14 @@ def show():
         cid, s, e, apt, _ = row
         e_str = e if e and e != "None" else "unbefristet"
         return f"{apt}  ({s} – {e_str})"
+
+    # Apply contract pre-selection from a loaded billing profile
+    _preselect_cid = st.session_state.pop("_nk_preselect_contract_id", None)
+    if _preselect_cid:
+        for _c in all_contracts:
+            if _c[0] == _preselect_cid:
+                st.session_state["nk_contract_sel"] = _c
+                break
 
     if len(all_contracts) > 1:
         contract_row = st.selectbox(
@@ -302,19 +344,53 @@ def show():
     # ── Cost type selection ────────────────────────────────────────
     st.divider()
     st.subheader("Select Cost Types to Include")
-    include_strom = st.checkbox("Strom (Electricity)",                           key="include_strom")
-    include_gas   = st.checkbox("Gas",                                            key="include_gas")
-    include_water = st.checkbox("Kaltwasser (Cold Water)",                        key="include_water")
-    include_heiz  = st.checkbox("Heizkosten (Heizkostenverteiler)",              key="include_heiz")
-    include_bk    = st.checkbox("Betriebskosten (Operating costs)",               key="include_bk")
-    include_extra = st.checkbox("Zusätzliche Positionen (damages, agreements…)", key="include_extra")
+    include_strom     = st.checkbox("Strom (Electricity)",                           key="include_strom")
+    include_gas       = st.checkbox("Gas",                                            key="include_gas")
+    include_water     = st.checkbox("Kaltwasser (Cold Water)",                        key="include_water")
+    include_warmwater = st.checkbox("Warmwasser (Hot Water)",                         key="include_warmwater")
+    include_heiz      = st.checkbox("Heizkosten (Heizkostenverteiler)",              key="include_heiz")
+    include_bk        = st.checkbox("Betriebskosten (Operating costs)",               key="include_bk")
+    include_extra     = st.checkbox("Zusätzliche Positionen (damages, agreements…)", key="include_extra")
 
-    strom_data = gas_data = water_data = heiz_data = bk_data = extra_data = None
+    strom_data = gas_data = water_data = warmwater_data = heiz_data = bk_data = extra_data = None
     meter_inputs = []
+    warm_meter_inputs = []
 
     # ── Strom ──────────────────────────────────────────────────────
     if include_strom:
         st.subheader("Strom")
+
+        _apt_strom_meters = fetch(
+            "SELECT id, serial_number, description "
+            "FROM strom_meters WHERE apartment_id=? ORDER BY id",
+            (selected_apartment_id,)
+        )
+        strom_meter_info = None
+        if _apt_strom_meters:
+            if len(_apt_strom_meters) == 1:
+                sm = _apt_strom_meters[0]
+            else:
+                sm = st.selectbox(
+                    "Stromzähler",
+                    _apt_strom_meters,
+                    format_func=lambda x: f"{x[1] or '—'} ({x[2] or '—'})",
+                    key="strom_meter_sel",
+                )
+            strom_meter_info = {
+                "meter_id":    sm[0],
+                "serial":      sm[1] or "",
+                "description": sm[2] or "",
+            }
+            st.info(
+                f"Stromzähler registriert: **{sm[1] or '—'}**  ·  "
+                f"{sm[2] or '—'}"
+            )
+        else:
+            st.caption(
+                "ℹ️ No Stromzähler registered for this apartment — register one in "
+                "the Apartments page to attach the Zählernummer to this billing."
+            )
+
         col1, col2 = st.columns(2)
         with col1:
             strom_bill_start = st.date_input("Billing period start",
@@ -398,6 +474,8 @@ def show():
                 "cost":        calc["cost_tenant"],
                 "limit":       calc["prepay"],
                 "is_pauschale": bool(strom_is_pauschale),
+                "meter_serial":      strom_meter_info["serial"]      if strom_meter_info else "",
+                "meter_description": strom_meter_info["description"] if strom_meter_info else "",
             }
 
     # ── Gas ────────────────────────────────────────────────────────
@@ -521,6 +599,38 @@ def show():
     # ── Kaltwasser ─────────────────────────────────────────────────
     if include_water:
         st.subheader("Kaltwasser (Cold Water)")
+
+        _apt_kalt_meters = fetch(
+            "SELECT id, serial_number, description "
+            "FROM wasser_meters WHERE apartment_id=? AND type='kalt' ORDER BY id",
+            (selected_apartment_id,)
+        )
+        kalt_meter_info = None
+        if _apt_kalt_meters:
+            if len(_apt_kalt_meters) == 1:
+                km = _apt_kalt_meters[0]
+            else:
+                km = st.selectbox(
+                    "Kaltwasserzähler",
+                    _apt_kalt_meters,
+                    format_func=lambda x: f"{x[1] or '—'} ({x[2] or '—'})",
+                    key="kalt_meter_sel",
+                )
+            kalt_meter_info = {
+                "meter_id":    km[0],
+                "serial":      km[1] or "",
+                "description": km[2] or "",
+            }
+            st.info(
+                f"Kaltwasserzähler registriert: **{km[1] or '—'}**  ·  "
+                f"{km[2] or '—'}"
+            )
+        else:
+            st.caption(
+                "ℹ️ No Kaltwasserzähler registered for this apartment — register one "
+                "in the Apartments page to attach the Zählernummer to this billing."
+            )
+
         col1, col2 = st.columns(2)
         with col1:
             water_bill_start = st.date_input("Billing period start",
@@ -604,7 +714,141 @@ def show():
                 "cost":        calc["cost_tenant"],
                 "limit":       calc["prepay"],
                 "is_pauschale": bool(water_is_pauschale),
+                "meter_serial":      kalt_meter_info["serial"]      if kalt_meter_info else "",
+                "meter_description": kalt_meter_info["description"] if kalt_meter_info else "",
             }
+
+    # ── Warmwasser ─────────────────────────────────────────────────
+    if include_warmwater:
+        st.subheader("Warmwasser (Hot Water)")
+
+        _warm_meters = fetch(
+            "SELECT id, serial_number, description "
+            "FROM wasser_meters WHERE apartment_id=? AND type='warm' ORDER BY id",
+            (selected_apartment_id,)
+        )
+        if not _warm_meters:
+            st.warning(
+                "No Warmwasserzähler registered for this apartment. "
+                "Please add at least one in the Apartments page first."
+            )
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                ww_bill_start = st.date_input("Billing period start",
+                                              value=date.today().replace(month=1, day=1),
+                                              min_value=date.today() - timedelta(days=365 * 20),
+                                              key="ww_start")
+            with col2:
+                ww_bill_end = st.date_input("Billing period end",
+                                            value=date.today().replace(month=12, day=31),
+                                            key="ww_end")
+
+            ww_eff = _effective(ww_bill_start, ww_bill_end)
+            if ww_eff is None:
+                st.warning("Tenant's contract does not overlap with the Warmwasser billing period.")
+            else:
+                ww_auto_s, ww_auto_e = ww_eff
+                _wwk = (ww_bill_start, ww_bill_end)
+                if st.session_state.get("_ww_bill_key") != _wwk:
+                    st.session_state["ww_eff_start"] = ww_auto_s
+                    st.session_state["ww_eff_end"]   = ww_auto_e
+                    st.session_state["_ww_bill_key"] = _wwk
+                st.caption("Tenant's effective period (auto-detected, editable):")
+                col1, col2 = st.columns(2)
+                with col1:
+                    ww_eff_start = st.date_input("Effective start",
+                                                 min_value=date.today() - timedelta(days=365 * 20),
+                                                 key="ww_eff_start")
+                with col2:
+                    ww_eff_end = st.date_input("Effective end", key="ww_eff_end")
+                ww_eff_days = max(1, (ww_eff_end - ww_eff_start).days + 1)
+                st.caption(f"{ww_eff_days} days")
+
+                st.caption("Warmwasserzähler readings (sum across all meters):")
+                hc1, hc2, hc3, hc4, hc5 = st.columns([2, 2, 1, 1, 1])
+                hc1.caption("Zählernummer")
+                hc2.caption("Description")
+                hc3.caption("Anfang (m³)")
+                hc4.caption("Ende (m³)")
+                hc5.caption("Verbrauch (m³)")
+
+                warm_meter_inputs = []
+                for mid, ws_serial, ws_desc in _warm_meters:
+                    c1, c2, c3, c4, c5 = st.columns([2, 2, 1, 1, 1])
+                    c1.markdown(f"**{ws_serial or '—'}**")
+                    c2.markdown(ws_desc or "—")
+                    with c3:
+                        ws_start = st.number_input("Start", min_value=0.0, format="%.3f",
+                                                   key=f"ww_start_{mid}",
+                                                   label_visibility="collapsed")
+                    with c4:
+                        ws_end = st.number_input("End", min_value=0.0, format="%.3f",
+                                                 key=f"ww_end_{mid}",
+                                                 label_visibility="collapsed")
+                    c5.markdown(f"{max(0.0, ws_end - ws_start):.3f}")
+                    warm_meter_inputs.append({
+                        "meter_id":    mid,
+                        "serial":      ws_serial or "",
+                        "description": ws_desc or "",
+                        "start":       ws_start,
+                        "end":         ws_end,
+                    })
+
+                st.caption("Pricing — €/m³ components are summed:")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    ww_frischwasser = st.number_input("Frischwasser (€/m³)",
+                                                       min_value=0.0, format="%.3f",
+                                                       key="ww_frischwasser")
+                with col2:
+                    ww_abwasser = st.number_input("Abwasser (€/m³)",
+                                                   min_value=0.0, format="%.3f",
+                                                   key="ww_abwasser")
+                with col3:
+                    ww_heizenergie = st.number_input(
+                        "Heizenergie (€/m³)",
+                        min_value=0.0, format="%.3f",
+                        key="ww_heizenergie",
+                        help="Cost to heat 1 m³ of water (from your heating bill, "
+                             "or 0 if billed via Heizkosten section)."
+                    )
+                ww_limit_pm = st.number_input("Prepayment per month (€)", min_value=0.0,
+                                              key="ww_limit")
+                ww_is_pauschale = st.checkbox(
+                    "Pauschale — prepayment is a hard limit (no refund if unused, "
+                    "Nachzahlung if exceeded)",
+                    key="ww_is_pauschale",
+                )
+
+                ww_bill_days = max(1, (ww_bill_end - ww_bill_start).days + 1)
+                calc_ww = warmwasser_calc_detail(
+                    warm_meter_inputs, ww_frischwasser, ww_abwasser, ww_heizenergie,
+                    num_tenants, ww_bill_days, ww_eff_days, ww_limit_pm,
+                    is_pauschale=ww_is_pauschale,
+                )
+                st.info(
+                    f"Verbrauch: **{calc_ww['verbrauch_m3']:.3f} m³**  ·  "
+                    f"Preis: **{calc_ww['cost_per_m3']:.3f} €/m³**  ·  "
+                    f"Ihr Anteil: **{calc_ww['cost_tenant']:.2f} €**  ·  "
+                    f"Vorauszahlung: **{calc_ww['prepay']:.2f} €**  ·  "
+                    f"Nachzahlung: **{calc_ww['nach']:.2f} €**"
+                )
+                warmwater_data = {
+                    "bill_period":         f"{ww_bill_start.strftime('%d.%m.%Y')} – {ww_bill_end.strftime('%d.%m.%Y')}",
+                    "bill_days":           ww_bill_days,
+                    "period":              f"{ww_eff_start.strftime('%d.%m.%Y')} – {ww_eff_end.strftime('%d.%m.%Y')}",
+                    "days":                ww_eff_days,
+                    "num_tenants":         int(num_tenants),
+                    "monthly_limit":       ww_limit_pm,
+                    "frischwasser_per_m3": ww_frischwasser,
+                    "abwasser_per_m3":     ww_abwasser,
+                    "heizenergie_per_m3":  ww_heizenergie,
+                    **calc_ww,
+                    "cost":         calc_ww["cost_tenant"],
+                    "limit":        calc_ww["prepay"],
+                    "is_pauschale": bool(ww_is_pauschale),
+                }
 
     # ── Heizkosten ─────────────────────────────────────────────────
     if include_heiz:
@@ -822,12 +1066,16 @@ def show():
             "Use these to document Kaution deductions."
         )
 
-        # Show Kaution on file for reference
+        # Show Kaution on file for reference (only if not yet returned)
         kaution_row = fetch("""
-            SELECT kaution_amount FROM contracts
-            WHERE tenant_id=? ORDER BY start_date DESC LIMIT 1
-        """, (tenant_choice[0],))
-        kaution = kaution_row[0][0] if kaution_row and kaution_row[0][0] else None
+            SELECT kaution_amount, kaution_returned_date FROM contracts
+            WHERE id=?
+        """, (selected_contract_id,))
+        kaution = (
+            kaution_row[0][0]
+            if kaution_row and kaution_row[0][0] and not kaution_row[0][1]
+            else None
+        )
         if kaution:
             deductions_total = sum(
                 float(st.session_state.get(f"extra_amt_{iid}", 0))
@@ -909,7 +1157,8 @@ def show():
             )
 
     if st.button("Generate PDF"):
-        if not any([strom_data, gas_data, water_data, heiz_data, bk_data, extra_data]):
+        if not any([strom_data, gas_data, water_data, warmwater_data,
+                    heiz_data, bk_data, extra_data]):
             st.warning("Please select at least one cost type.")
         else:
             ll_info = None
@@ -928,6 +1177,7 @@ def show():
                 strom=strom_data,
                 gas=gas_data,
                 water=water_data,
+                warmwater=warmwater_data,
                 heizung=heiz_data,
                 bk=bk_data,
                 extra=extra_data,
@@ -940,7 +1190,7 @@ def show():
 
     # ── Save / Update Billing Profile ─────────────────────────────
     def _build_profile_data():
-        pd_ = {"num_tenants": int(num_tenants)}
+        pd_ = {"num_tenants": int(num_tenants), "contract_id": selected_contract_id}
         if include_strom and strom_data:
             pd_["strom"] = {
                 "bill_start":          str(st.session_state["strom_start"]),
@@ -980,6 +1230,28 @@ def show():
                 "frischwasser_per_m3": float(st.session_state.get("water_frischwasser", 0)),
                 "abwasser_per_m3":     float(st.session_state.get("water_abwasser", 0)),
                 "is_pauschale":        bool(st.session_state.get("water_is_pauschale", False)),
+            }
+        if include_warmwater and warmwater_data:
+            pd_["warmwater"] = {
+                "bill_start":          str(st.session_state["ww_start"]),
+                "bill_end":            str(st.session_state["ww_end"]),
+                "eff_start":           str(st.session_state["ww_eff_start"]),
+                "eff_end":             str(st.session_state["ww_eff_end"]),
+                "prepay_pm":           float(st.session_state.get("ww_limit", 0)),
+                "frischwasser_per_m3": float(st.session_state.get("ww_frischwasser", 0)),
+                "abwasser_per_m3":     float(st.session_state.get("ww_abwasser", 0)),
+                "heizenergie_per_m3":  float(st.session_state.get("ww_heizenergie", 0)),
+                "is_pauschale":        bool(st.session_state.get("ww_is_pauschale", False)),
+                "meters": [
+                    {
+                        "meter_id":    m["meter_id"],
+                        "serial":      m["serial"],
+                        "description": m["description"],
+                        "start":       float(st.session_state.get(f"ww_start_{m['meter_id']}", 0)),
+                        "end":         float(st.session_state.get(f"ww_end_{m['meter_id']}", 0)),
+                    }
+                    for m in warm_meter_inputs
+                ],
             }
         if include_bk and bk_data:
             pd_["bk"] = {

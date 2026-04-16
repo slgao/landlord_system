@@ -250,12 +250,21 @@ def show():
                 (cid,)
             )
             total_deducted = sum(float(d[2] or 0) for d in deductions)
-            balance = cur_amount - total_deducted
+            settled = cur_ret_d is not None
+            balance = 0.0 if settled else cur_amount - total_deducted
 
             m1, m2, m3 = st.columns(3)
             m1.metric("Kaution received", f"{cur_amount:,.2f} €")
             m2.metric("Deductions", f"{total_deducted:,.2f} €")
-            m3.metric("Open balance", f"{balance:,.2f} €")
+            m3.metric(
+                "Open balance" if not settled else "Open balance (settled)",
+                f"{balance:,.2f} €",
+            )
+            if settled:
+                st.caption(
+                    f"Kaution closed: returned **{cur_ret_a:.2f} €** on **{cur_ret_d}**. "
+                    "Clear the return record below to add more deductions."
+                )
 
             # ── Record / update received Kaution ──
             st.markdown("**1. Record / update received Kaution**")
@@ -314,7 +323,12 @@ def show():
                 d_reason = st.text_area("Reason / note", height=80, key=f"k_d_reason_{cid}",
                                         placeholder="z.B. Nebenkostenabrechnung 2024 verrechnet")
             if st.button("Add deduction", key=f"btn_k_add_{cid}"):
-                if d_amount <= 0:
+                if settled:
+                    st.warning(
+                        "Kaution is already marked as returned. "
+                        "Clear the return record below before adding more deductions."
+                    )
+                elif d_amount <= 0:
                     st.warning("Enter a positive amount.")
                 elif d_amount > balance:
                     st.warning(

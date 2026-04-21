@@ -194,7 +194,9 @@ def show():
             st.caption(
                 "**How it works:** Verbrauch (m³) × Z-Zahl × Brennwert = kWh → "
                 "× Arbeitspreis (€/kWh) = cost. "
-                "Both values are printed on the NBB annual gas bill."
+                "Both values are printed on the NBB annual gas bill. "
+                "Note: Brennwert varies each year based on gas composition at the meter location — "
+                "always use the value from the most recent bill as an approximation."
             )
             st.markdown("**Add gas meter**")
             col1, col2 = st.columns(2)
@@ -209,7 +211,10 @@ def show():
                                                help="Zustandszahl from the NBB gas bill.")
                 gm_brennwert = st.number_input("Brennwert (kWh/m³)", min_value=0.0,
                                                value=10.0, format="%.4f", key="gm_brennwert",
-                                               help="Brennwert from the NBB gas bill.")
+                                               help="Brennwert from the NBB gas bill. "
+                                                    "This value varies slightly each year depending on the "
+                                                    "gas composition at your meter location — use the figure "
+                                                    "printed on your most recent annual gas bill as an estimate.")
             computed = gm_z_zahl * gm_brennwert
             st.caption(f"Computed Umrechnungsfaktor: **{computed:.4f} kWh/m³**")
             gm_scope = _scope_radio("m_scope_gas", default="shared")

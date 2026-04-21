@@ -284,7 +284,7 @@ def show():
             )
             if settled:
                 st.caption(
-                    f"Kaution closed: returned **{fmt(cur_ret_a, k_currency)}** on **{cur_ret_d}**. "
+                    f"Kaution closed: returned **{fmt(cur_ret_a or 0.0, k_currency)}** on **{cur_ret_d}**. "
                     "Clear the return record below to add more deductions."
                 )
 
@@ -380,7 +380,7 @@ def show():
             st.markdown("**3. Return remaining balance to tenant**")
             if cur_ret_d:
                 st.info(
-                    f"Already returned **{fmt(cur_ret_a, k_currency)}** on **{cur_ret_d}**. "
+                    f"Already returned **{fmt(cur_ret_a or 0.0, k_currency)}** on **{cur_ret_d}**. "
                     "Use the button below to clear and re-record."
                 )
                 if st.button("Clear return record", key=f"btn_k_clear_ret_{cid}"):

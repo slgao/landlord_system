@@ -345,7 +345,7 @@ def tenant_ledger(tenant_id):
 
     payments = fetch(
         """
-    SELECT amount,payment_date
+    SELECT amount, payment_date, COALESCE(payments.currency, 'EUR')
     FROM payments
     JOIN contracts ON payments.contract_id = contracts.id
     WHERE contracts.tenant_id = ?

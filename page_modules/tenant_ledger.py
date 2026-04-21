@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from db import fetch
 from logic import tenant_ledger
+from currencies import sym, fmt
 
 
 def show():
@@ -16,8 +17,16 @@ def show():
     ledger = tenant_ledger(tenant[0])
 
     if ledger:
-        df = pd.DataFrame(ledger, columns=["Amount (€)", "Date"])
+        df = pd.DataFrame(
+            [(fmt(r[0], r[2]), r[1]) for r in ledger],
+            columns=["Amount", "Date"],
+        )
         st.dataframe(df, width="stretch", hide_index=True)
-        st.metric("Total paid", f"€ {sum(r[0] for r in ledger):,.2f}")
+        # Show totals per currency
+        totals: dict[str, float] = {}
+        for r in ledger:
+            totals[r[2]] = totals.get(r[2], 0.0) + r[0]
+        total_str = "  |  ".join(fmt(v, k) for k, v in totals.items())
+        st.metric("Total paid", total_str)
     else:
         st.info("No payments recorded for this tenant.")

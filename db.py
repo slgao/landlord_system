@@ -238,6 +238,17 @@ def init_db():
     )
     """)
 
+    # Migrations: add currency columns to existing tables (idempotent)
+    c.execute("ALTER TABLE payments  ADD COLUMN IF NOT EXISTS currency          VARCHAR(3) DEFAULT 'EUR'")
+    c.execute("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS currency          VARCHAR(3) DEFAULT 'EUR'")
+    c.execute("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS kaution_currency  VARCHAR(3) DEFAULT 'EUR'")
+
+    # Meter scope: 'room' = belongs to this room only, 'shared' = shared across the whole flat
+    c.execute("ALTER TABLE heizung_meters ADD COLUMN IF NOT EXISTS scope VARCHAR(10) DEFAULT 'room'")
+    c.execute("ALTER TABLE gas_meters     ADD COLUMN IF NOT EXISTS scope VARCHAR(10) DEFAULT 'shared'")
+    c.execute("ALTER TABLE strom_meters   ADD COLUMN IF NOT EXISTS scope VARCHAR(10) DEFAULT 'shared'")
+    c.execute("ALTER TABLE wasser_meters  ADD COLUMN IF NOT EXISTS scope VARCHAR(10) DEFAULT 'shared'")
+
     conn.commit()
     conn.close()
 

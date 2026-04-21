@@ -15,28 +15,47 @@ METER_TYPES = [
 ]
 
 
+def _flat_apt_in(apartment_id: int) -> str:
+    """Return a SQL IN-list of all apartment IDs sharing the same flat label."""
+    rows = fetch("""
+        SELECT a2.id FROM apartments a2
+        WHERE a2.property_id = (SELECT property_id FROM apartments WHERE id = ?)
+          AND a2.flat IS NOT NULL AND a2.flat != ''
+          AND a2.flat = (SELECT flat FROM apartments WHERE id = ?)
+    """, (apartment_id, apartment_id))
+    ids = [r[0] for r in rows] if rows else []
+    if apartment_id not in ids:
+        ids.append(apartment_id)
+    return ",".join(str(i) for i in ids)
+
+
 def _fetch_meters_for_apartment(apartment_id: int):
-    """Return list of (meter_type, meter_id, label, unit, value_format) tuples
-    covering every registered meter on the apartment, in display order."""
+    """Return meters visible to this apartment, respecting scope:
+    - 'room'   → only meters registered directly on this apartment_id
+    - 'shared' → meters on any room in the same flat
+    """
+    apt_in = _flat_apt_in(apartment_id)
     out = []
     for label, mtype, table, where_extra, unit, vfmt in METER_TYPES:
         rows = fetch(
             f"SELECT id, serial_number, description "
-            f"FROM {table} WHERE apartment_id=? {where_extra} ORDER BY id",
-            (apartment_id,)
+            f"FROM {table} "
+            f"WHERE ((COALESCE(scope,'room') = 'room' AND apartment_id = {apartment_id}) "
+            f"    OR (scope = 'shared' AND apartment_id IN ({apt_in}))) "
+            f"{where_extra} ORDER BY id",
         )
         for mid, serial, desc in rows:
             disp = f"{label}  ·  {serial or '—'}"
             if desc:
                 disp += f" ({desc})"
             out.append({
-                "type":   mtype,
-                "id":     mid,
-                "label":  label,
-                "serial": serial or "",
-                "desc":   desc or "",
-                "unit":   unit,
-                "vfmt":   vfmt,
+                "type":    mtype,
+                "id":      mid,
+                "label":   label,
+                "serial":  serial or "",
+                "desc":    desc or "",
+                "unit":    unit,
+                "vfmt":    vfmt,
                 "display": disp,
             })
     return out

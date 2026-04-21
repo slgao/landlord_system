@@ -255,6 +255,30 @@ def show():
 
     selected_contract_id  = contract_row[0]
     selected_apartment_id = contract_row[4]
+
+    # For WG flats: collect all apartment IDs that share the same flat label
+    # so meters registered on any sibling room are visible here too.
+    _flat_apt_rows = fetch("""
+        SELECT a2.id FROM apartments a2
+        WHERE a2.property_id = (SELECT property_id FROM apartments WHERE id = ?)
+          AND a2.flat IS NOT NULL AND a2.flat != ''
+          AND a2.flat = (SELECT flat FROM apartments WHERE id = ?)
+    """, (selected_apartment_id, selected_apartment_id))
+    _flat_apt_ids = [r[0] for r in _flat_apt_rows] if _flat_apt_rows else []
+    if selected_apartment_id not in _flat_apt_ids:
+        _flat_apt_ids.append(selected_apartment_id)
+    _apt_in  = ",".join(str(i) for i in _flat_apt_ids)
+    _own_id  = selected_apartment_id
+
+    def _meter_where(extra=""):
+        """Scope-aware WHERE clause: room-scoped meters only for own apt,
+        shared meters from any apt in the same flat."""
+        return (
+            f"((COALESCE(scope,'room') = 'room' AND apartment_id = {_own_id}) "
+            f" OR (scope = 'shared' AND apartment_id IN ({_apt_in}))) "
+            f"{extra}"
+        )
+
     c_start_str, c_end_str = contract_row[1], contract_row[2]
     contract_start = date.fromisoformat(c_start_str)
     contract_end   = (date.fromisoformat(c_end_str)
@@ -361,9 +385,8 @@ def show():
         st.subheader("Strom")
 
         _apt_strom_meters = fetch(
-            "SELECT id, serial_number, description "
-            "FROM strom_meters WHERE apartment_id=? ORDER BY id",
-            (selected_apartment_id,)
+            f"SELECT id, serial_number, description "
+            f"FROM strom_meters WHERE {_meter_where()} ORDER BY id",
         )
         strom_meter_info = None
         if _apt_strom_meters:
@@ -484,9 +507,8 @@ def show():
 
         # Auto-fill Umrechnungsfaktor from registered Gaszähler for this apartment
         _apt_gas_meters = fetch(
-            "SELECT id, serial_number, description, z_zahl, brennwert "
-            "FROM gas_meters WHERE apartment_id=? ORDER BY id",
-            (selected_apartment_id,)
+            f"SELECT id, serial_number, description, z_zahl, brennwert "
+            f"FROM gas_meters WHERE {_meter_where()} ORDER BY id",
         )
         _gm_factor_default = 10.0
         if _apt_gas_meters:
@@ -600,10 +622,10 @@ def show():
     if include_water:
         st.subheader("Kaltwasser (Cold Water)")
 
+        _kalt_where = _meter_where("AND type='kalt'")
         _apt_kalt_meters = fetch(
-            "SELECT id, serial_number, description "
-            "FROM wasser_meters WHERE apartment_id=? AND type='kalt' ORDER BY id",
-            (selected_apartment_id,)
+            f"SELECT id, serial_number, description "
+            f"FROM wasser_meters WHERE {_kalt_where} ORDER BY id",
         )
         kalt_meter_info = None
         if _apt_kalt_meters:
@@ -722,10 +744,10 @@ def show():
     if include_warmwater:
         st.subheader("Warmwasser (Hot Water)")
 
+        _warm_where = _meter_where("AND type='warm'")
         _warm_meters = fetch(
-            "SELECT id, serial_number, description "
-            "FROM wasser_meters WHERE apartment_id=? AND type='warm' ORDER BY id",
-            (selected_apartment_id,)
+            f"SELECT id, serial_number, description "
+            f"FROM wasser_meters WHERE {_warm_where} ORDER BY id",
         )
         if not _warm_meters:
             st.warning(
@@ -857,10 +879,9 @@ def show():
         apt_id = selected_apartment_id
 
         reg_meters = fetch(
-            "SELECT id, serial_number, description, unit_label, "
-            "COALESCE(conversion_factor, 1.0) "
-            "FROM heizung_meters WHERE apartment_id=? ORDER BY id",
-            (apt_id,)
+            f"SELECT id, serial_number, description, unit_label, "
+            f"COALESCE(conversion_factor, 1.0) "
+            f"FROM heizung_meters WHERE {_meter_where()} ORDER BY id",
         ) if apt_id else []
 
         if not reg_meters:

@@ -2,16 +2,17 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 from db import fetch, execute
+from currencies import CURRENCY_LIST, CURRENCY_LABELS, sym, fmt
 
 
 def show():
     st.header("Tenant Contracts")
 
     # ── Existing Contracts table (always visible) ──────────────────
-    # col index: 0=id, 1=tenant, 2=apt, 3=rent, 4=start, 5=end, 6=terminated
+    # col index: 0=id, 1=tenant, 2=apt, 3=rent, 4=start, 5=end, 6=terminated, 7=currency
     contract_data = fetch("""
         SELECT c.id, t.name, a.name, c.rent, c.start_date, c.end_date,
-               COALESCE(c.terminated, 0)
+               COALESCE(c.terminated, 0), COALESCE(c.currency, 'EUR')
         FROM contracts c
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
@@ -50,9 +51,10 @@ def show():
 
         df = pd.DataFrame(contract_data,
                           columns=["ID", "Tenant", "Apartment", "Rent",
-                                   "Start Date", "End Date", "Terminated"])
+                                   "Start Date", "End Date", "Terminated", "Currency"])
         df["Status"]     = df.apply(status_label, axis=1)
         df["Terminated"] = df["Terminated"].apply(lambda x: "Yes" if x else "")
+        df["Rent"] = df.apply(lambda r: fmt(r["Rent"], r["Currency"]), axis=1)
         df = df[["ID", "Tenant", "Apartment", "Rent", "Start Date", "End Date", "Status"]]
 
         st.dataframe(df.style.apply(highlight, axis=1), width="stretch", hide_index=True)
@@ -71,7 +73,15 @@ def show():
         else:
             tenant_choice    = st.selectbox("Tenant",    tenants,    format_func=lambda x: x[1], key="new_c_tenant")
             apartment_choice = st.selectbox("Apartment", apartments, format_func=lambda x: x[1], key="new_c_apt")
-            rent = st.number_input("Monthly Rent (€)", value=650.0, key="new_c_rent")
+            col_cur, col_rent = st.columns([1, 2])
+            with col_cur:
+                new_c_currency = st.selectbox(
+                    "Currency", CURRENCY_LIST,
+                    format_func=lambda c: CURRENCY_LABELS[c],
+                    key="new_c_currency",
+                )
+            with col_rent:
+                rent = st.number_input(f"Monthly Rent ({sym(new_c_currency)})", value=650.0, key="new_c_rent")
             col1, col2 = st.columns(2)
             with col1:
                 move_in = st.date_input("Move-in date",
@@ -98,10 +108,10 @@ def show():
                 else:
                     execute(
                         """INSERT INTO contracts
-                           (tenant_id, apartment_id, rent, start_date, end_date)
-                           VALUES (?, ?, ?, ?, ?)""",
+                           (tenant_id, apartment_id, rent, start_date, end_date, currency)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
                         (tenant_choice[0], apartment_choice[0], rent,
-                         str(move_in), str(move_out) if move_out else None)
+                         str(move_in), str(move_out) if move_out else None, new_c_currency)
                     )
                     st.success("Contract created.")
                     st.rerun()
@@ -112,7 +122,7 @@ def show():
             c_choice = st.selectbox("Select contract", contract_data,
                                     format_func=lambda x: f"#{x[0]} — {x[1]} / {x[2]}",
                                     key="contract_edit")
-            cid, _, _, c_rent, c_start, c_end, c_term = c_choice
+            cid, _, _, c_rent, c_start, c_end, c_term, c_currency = c_choice
 
             apts_all  = fetch("SELECT id, name FROM apartments")
             apt_ids   = [a[0] for a in apts_all]
@@ -123,7 +133,13 @@ def show():
             with col1:
                 edit_apt  = st.selectbox("Apartment", apts_all, format_func=lambda x: x[1],
                                          index=apt_index, key=f"cedit_apt_{cid}")
-                edit_rent = st.number_input("Monthly Rent (€)", value=float(c_rent),
+                cur_idx = CURRENCY_LIST.index(c_currency) if c_currency in CURRENCY_LIST else 0
+                edit_currency = st.selectbox(
+                    "Currency", CURRENCY_LIST, index=cur_idx,
+                    format_func=lambda c: CURRENCY_LABELS[c],
+                    key=f"cedit_currency_{cid}",
+                )
+                edit_rent = st.number_input(f"Monthly Rent ({sym(edit_currency)})", value=float(c_rent),
                                             key=f"cedit_rent_{cid}")
             with col2:
                 edit_start   = st.date_input("Start date", value=date.fromisoformat(c_start),
@@ -140,9 +156,11 @@ def show():
                     )
 
             if st.button("Save Contract Changes", key="btn_save_contract"):
-                execute("UPDATE contracts SET apartment_id=?, rent=?, start_date=?, end_date=? WHERE id=?",
-                        (edit_apt[0], edit_rent, str(edit_start),
-                         str(edit_end) if edit_end else None, cid))
+                execute(
+                    "UPDATE contracts SET apartment_id=?, rent=?, start_date=?, end_date=?, currency=? WHERE id=?",
+                    (edit_apt[0], edit_rent, str(edit_start),
+                     str(edit_end) if edit_end else None, edit_currency, cid),
+                )
                 st.success("Contract updated.")
                 st.rerun()
 
@@ -204,7 +222,8 @@ def show():
                        c.kaution_amount, c.kaution_paid_date,
                        COALESCE((SELECT SUM(amount) FROM kaution_deductions
                                   WHERE contract_id = c.id), 0) AS deducted,
-                       c.kaution_returned_date, c.kaution_returned_amount
+                       c.kaution_returned_date, c.kaution_returned_amount,
+                       COALESCE(c.kaution_currency, 'EUR')
                 FROM contracts c
                 JOIN tenants t ON c.tenant_id = t.id
                 JOIN apartments a ON c.apartment_id = a.id
@@ -219,12 +238,13 @@ def show():
 
             df_k = pd.DataFrame([
                 (r[0], r[1], r[2],
-                 r[3], r[4], r[5], _balance(r),
-                 r[6], r[7])
+                 fmt(float(r[3] or 0), r[8]), r[4],
+                 fmt(float(r[5] or 0), r[8]), fmt(_balance(r), r[8]),
+                 r[6], fmt(float(r[7] or 0), r[8]) if r[7] is not None else "")
                 for r in kaution_overview
             ], columns=["Contract ID", "Tenant", "Apartment",
-                        "Kaution (€)", "Paid Date", "Deducted (€)", "Open Balance (€)",
-                        "Returned Date", "Returned (€)"])
+                        "Kaution", "Paid Date", "Deducted", "Open Balance",
+                        "Returned Date", "Returned"])
             st.dataframe(df_k, width="stretch", hide_index=True)
 
             st.markdown("---")
@@ -235,7 +255,8 @@ def show():
 
             current = fetch(
                 "SELECT kaution_amount, kaution_paid_date, "
-                "kaution_returned_date, kaution_returned_amount "
+                "kaution_returned_date, kaution_returned_amount, "
+                "COALESCE(kaution_currency, 'EUR') "
                 "FROM contracts WHERE id=?",
                 (cid,)
             )[0]
@@ -243,6 +264,7 @@ def show():
             cur_paid   = current[1]
             cur_ret_d  = current[2]
             cur_ret_a  = float(current[3]) if current[3] is not None else None
+            k_currency = current[4]
 
             deductions = fetch(
                 "SELECT id, date, amount, category, reason "
@@ -254,27 +276,36 @@ def show():
             balance = 0.0 if settled else cur_amount - total_deducted
 
             m1, m2, m3 = st.columns(3)
-            m1.metric("Kaution received", f"{cur_amount:,.2f} €")
-            m2.metric("Deductions", f"{total_deducted:,.2f} €")
+            m1.metric("Kaution received", fmt(cur_amount, k_currency))
+            m2.metric("Deductions", fmt(total_deducted, k_currency))
             m3.metric(
                 "Open balance" if not settled else "Open balance (settled)",
-                f"{balance:,.2f} €",
+                fmt(balance, k_currency),
             )
             if settled:
                 st.caption(
-                    f"Kaution closed: returned **{cur_ret_a:.2f} €** on **{cur_ret_d}**. "
+                    f"Kaution closed: returned **{fmt(cur_ret_a, k_currency)}** on **{cur_ret_d}**. "
                     "Clear the return record below to add more deductions."
                 )
 
             # ── Record / update received Kaution ──
             st.markdown("**1. Record / update received Kaution**")
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns([1, 2, 2])
             with col1:
-                k_amount = st.number_input(
-                    "Kaution amount (€)", min_value=0.0,
-                    value=cur_amount, key=f"k_amount_{cid}"
+                k_cur_idx = CURRENCY_LIST.index(k_currency) if k_currency in CURRENCY_LIST else 0
+                k_new_currency = st.selectbox(
+                    "Currency",
+                    CURRENCY_LIST,
+                    index=k_cur_idx,
+                    format_func=lambda c: CURRENCY_LABELS[c],
+                    key=f"k_currency_{cid}",
                 )
             with col2:
+                k_amount = st.number_input(
+                    f"Kaution amount ({sym(k_new_currency)})", min_value=0.0,
+                    value=cur_amount, key=f"k_amount_{cid}"
+                )
+            with col3:
                 k_paid = st.date_input(
                     "Date received",
                     value=date.fromisoformat(cur_paid) if cur_paid else date.today(),
@@ -282,8 +313,8 @@ def show():
                 )
             if st.button("Save received Kaution", key=f"btn_save_kaution_{cid}"):
                 execute(
-                    "UPDATE contracts SET kaution_amount=?, kaution_paid_date=? WHERE id=?",
-                    (k_amount, str(k_paid), cid)
+                    "UPDATE contracts SET kaution_amount=?, kaution_paid_date=?, kaution_currency=? WHERE id=?",
+                    (k_amount, str(k_paid), k_new_currency, cid)
                 )
                 st.success("Kaution received recorded.")
                 st.rerun()
@@ -297,7 +328,7 @@ def show():
 
                 del_choice = st.selectbox(
                     "Delete deduction", deductions,
-                    format_func=lambda d: f"#{d[0]} — {d[1]} — {d[3] or ''} — {float(d[2] or 0):.2f} €",
+                    format_func=lambda d: f"#{d[0]} — {d[1]} — {d[3] or ''} — {fmt(float(d[2] or 0), k_currency)}",
                     key=f"k_del_choice_{cid}"
                 )
                 if st.button("Delete selected deduction", key=f"btn_k_del_{cid}"):
@@ -311,7 +342,7 @@ def show():
             d1, d2, d3 = st.columns([1, 1, 2])
             with d1:
                 d_date = st.date_input("Date", value=date.today(), key=f"k_d_date_{cid}")
-                d_amount = st.number_input("Amount (€)", min_value=0.0,
+                d_amount = st.number_input(f"Amount ({sym(k_currency)})", min_value=0.0,
                                            step=10.0, key=f"k_d_amount_{cid}")
             with d2:
                 d_category = st.selectbox(
@@ -332,8 +363,8 @@ def show():
                     st.warning("Enter a positive amount.")
                 elif d_amount > balance:
                     st.warning(
-                        f"Deduction ({d_amount:.2f} €) exceeds open balance "
-                        f"({balance:.2f} €). Adjust the amount or increase the Kaution."
+                        f"Deduction ({fmt(d_amount, k_currency)}) exceeds open balance "
+                        f"({fmt(balance, k_currency)}). Adjust the amount or increase the Kaution."
                     )
                 else:
                     execute(
@@ -349,7 +380,7 @@ def show():
             st.markdown("**3. Return remaining balance to tenant**")
             if cur_ret_d:
                 st.info(
-                    f"Already returned **{cur_ret_a:.2f} €** on **{cur_ret_d}**. "
+                    f"Already returned **{fmt(cur_ret_a, k_currency)}** on **{cur_ret_d}**. "
                     "Use the button below to clear and re-record."
                 )
                 if st.button("Clear return record", key=f"btn_k_clear_ret_{cid}"):
@@ -366,7 +397,7 @@ def show():
                                            key=f"k_r_date_{cid}")
                 with r2:
                     r_amount = st.number_input(
-                        "Returned amount (€)", min_value=0.0,
+                        f"Returned amount ({sym(k_currency)})", min_value=0.0,
                         value=max(balance, 0.0), step=10.0,
                         key=f"k_r_amount_{cid}",
                         help="Defaults to the open balance. Override if you returned a different amount."
@@ -374,8 +405,8 @@ def show():
                 if st.button("Mark Kaution returned", key=f"btn_k_return_{cid}"):
                     if r_amount > balance + 1e-9:
                         st.warning(
-                            f"Returned amount ({r_amount:.2f} €) exceeds the open "
-                            f"balance ({balance:.2f} €). Either lower the amount, "
+                            f"Returned amount ({fmt(r_amount, k_currency)}) exceeds the open "
+                            f"balance ({fmt(balance, k_currency)}). Either lower the amount, "
                             "remove a deduction, or increase the recorded Kaution."
                         )
                     else:
@@ -384,7 +415,7 @@ def show():
                             "kaution_returned_amount=? WHERE id=?",
                             (str(r_date), r_amount, cid)
                         )
-                        st.success(f"Returned {r_amount:.2f} € on {r_date}.")
+                        st.success(f"Returned {fmt(r_amount, k_currency)} on {r_date}.")
                         st.rerun()
 
         # ── Co-Tenants ─────────────────────────────────────────────

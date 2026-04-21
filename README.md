@@ -47,10 +47,13 @@ A web-based property management application tailored for landlords in Germany. B
 - **Flat grouping**: assign rooms to a named flat (e.g. "Wohnung 1") to group WG rooms together
 - Edit existing apartments: room name and flat label
 - Table shows property name alongside each apartment
-- **Heizkostenverteiler**: register heat cost allocator meters per apartment with serial number, description, unit label (e.g. "Einheiten"), and ISTA conversion factor (Einheiten → kWh)
-- **Gaszähler**: register gas meters per apartment with serial number, Z-Zahl (Zustandszahl) and Brennwert from the NBB bill; Umrechnungsfaktor (m³ → kWh) is computed automatically as Z-Zahl × Brennwert
-- **Stromzähler**: register electricity meters per apartment with serial number and description — serial is shown in the Nebenkostenabrechnung billing
-- **Wasserzähler**: register cold water (Kaltwasser) and hot water (Warmwasser) meters per apartment with serial number and description — supports multiple meters per apartment (e.g. multiple Warmwasserzähler)
+- **Meter scope** — each registered meter carries a scope tag set at registration time:
+  - **Room only** — belongs exclusively to this room (e.g. Heizkostenverteiler); not visible from sibling rooms in the same WG flat
+  - **Shared (whole flat)** — shared by all rooms in the WG flat; visible from any room with the same flat label
+- **Heizkostenverteiler**: register heat cost allocator meters per apartment with serial number, description, unit label (e.g. "Einheiten"), ISTA conversion factor (Einheiten → kWh), and scope (defaults to *Room only*)
+- **Gaszähler**: register gas meters per apartment with serial number, Z-Zahl (Zustandszahl) and Brennwert from the NBB bill; Umrechnungsfaktor (m³ → kWh) is computed automatically as Z-Zahl × Brennwert; scope defaults to *Shared*
+- **Stromzähler**: register electricity meters per apartment with serial number and description — serial is shown in the Nebenkostenabrechnung billing; scope defaults to *Shared*
+- **Wasserzähler**: register cold water (Kaltwasser) and hot water (Warmwasser) meters per apartment with serial number and description — supports multiple meters per apartment; scope defaults to *Shared*
 
 ### Tenants
 - Register tenants with name, email, and gender
@@ -60,7 +63,7 @@ A web-based property management application tailored for landlords in Germany. B
 
 ### Contracts
 - Create rental contracts linking a tenant to an apartment
-- Set monthly rent amount
+- Set monthly rent amount with **currency selection** (EUR €, CNY ¥, USD $, GBP £) — each contract has its own currency
 - Support for open-ended and fixed-term (befristet) contracts
 - Overlap detection: warns if the apartment is already occupied in the selected period (excludes terminated contracts)
 - Edit existing contracts: apartment, rent, start/end dates
@@ -74,7 +77,8 @@ A web-based property management application tailored for landlords in Germany. B
   - *Close — tenant has moved out* → marks as terminated, removes from alerts
   - *Reopen — tenant is still living there* → clears end date, restores to active
 - **Kaution (deposit) tracking**: record deposit amount and date received, log partial deductions (NK Nachzahlung verrechnet, Schaden, Reinigung, Mietrückstand, Sonstiges) with free-text reason, and mark the remaining balance returned
-  - Per-contract overview shows received / deducted / **open balance** / returned
+  - Kaution has its **own currency selector** (independent of the rent currency) — useful when a deposit is paid in a different currency (e.g. CNY)
+  - Per-contract overview shows received / deducted / **open balance** / returned, all formatted with the correct currency symbol
   - Returned amount auto-defaults to the open balance and is blocked if it exceeds it
   - Once marked returned, balance switches to *settled* and further deductions are blocked until the return record is cleared
 - **Co-Tenants**: add additional occupants per contract with name, gender, and email
@@ -84,13 +88,15 @@ A web-based property management application tailored for landlords in Germany. B
 ### Rent Tracking
 - Monthly overview at the top: all payments across all properties for a selected month
 - Record individual rent payments against a contract
+- **Per-payment currency**: each payment can be recorded in EUR €, CNY ¥, USD $, or GBP £ — defaults to the contract's currency but can be overridden per payment
+- Monthly total and per-contract total are shown **grouped by currency** when mixed currencies are present
 - Supports partial and custom payment amounts
-- Edit and delete existing payments
+- Edit and delete existing payments (currency is editable too)
 
 ### Tenant Ledger
 - View full payment history for any tenant
-- Displays amount and date for each recorded payment
-- Shows total amount paid
+- Displays amount (with currency symbol) and date for each recorded payment
+- Total is shown grouped by currency when a tenant has paid in multiple currencies
 
 ### Flat Costs
 - Record recurring and one-time costs per apartment (Hausgeld, Mortgage, Grundsteuer, Strom Vorauszahlung, Internet, custom)
@@ -113,7 +119,9 @@ A web-based property management application tailored for landlords in Germany. B
 ### Meter Readings (Zählerstände)
 - Track meter readings over time, independently of any Nebenkostenabrechnung run
 - Covers all meter types: Strom, Gas, Heizung, Kaltwasser, Warmwasser
-- Select apartment → all registered meters for that apartment are shown
+- Select apartment → all meters visible to that apartment are shown, respecting **meter scope**:
+  - *Room only* meters appear only for their own room
+  - *Shared* meters appear for every room in the same WG flat
 - **Add readings** with date, value, and an optional note
 - **Consumption analysis per meter**: table showing each reading, Δ consumption since previous, days elapsed, and average daily consumption
 - **Summary metrics**: total consumption since first reading, days covered, overall average/day
@@ -122,6 +130,7 @@ A web-based property management application tailored for landlords in Germany. B
 
 ### Nebenkostenabrechnung
 - Freely select which utilities to include per Abrechnung: **Strom**, **Gas**, **Kaltwasser**, **Warmwasser**, **Betriebskosten**, **Heizkosten** — each is independent and optional
+- **WG meter scope awareness**: meter lookup respects the scope tag — *Room only* meters (e.g. individual Heizkostenverteiler) are shown only for their room; *Shared* meters (e.g. a single Stromzähler for the whole flat) are shown for all rooms in the WG
 - **Multi-contract tenant support**: contract selector appears for tenants with multiple apartments; address auto-resolved from selected contract's property
 - Each utility has its **own billing period** from the provider, separate from the tenant's contract period
 - Tenant's **effective period** is auto-detected as the intersection of the utility billing period and the tenant's contract dates — editable after auto-detection
@@ -174,6 +183,7 @@ landlord_system/
 ├── db.py                       # PostgreSQL connection, CRUD helpers (insert, fetch, execute)
 ├── logic.py                    # Business logic: strom_calc, gas_calc, water_calc,
 │                               #   warmwasser_calc_detail, betriebskosten_calc, heizung_calc_detail
+├── currencies.py               # Supported currencies (EUR/CNY/USD/GBP), symbol map, fmt() helper
 ├── pdfgen.py                   # PDF generation: Nebenkostenabrechnung and Mahnung
 ├── requirements.txt            # Python dependencies
 ├── Procfile                    # Run both services with `honcho start`
@@ -224,18 +234,21 @@ landlord_system/
 | `properties`       | id, name, address                                                          |
 | `apartments`       | id, property_id, name, flat                                                |
 | `tenants`          | id, name, email, gender                                                    |
-| `contracts`        | id, tenant_id, apartment_id, rent, start_date, end_date, terminated, kaution_* |
+| `contracts`        | id, tenant_id, apartment_id, rent, start_date, end_date, terminated, kaution_*, **currency**, **kaution_currency** |
 | `kaution_deductions` | id, contract_id, date, amount, category, reason, reference_type, reference_id |
-| `payments`         | id, contract_id, amount, payment_date                                      |
+| `payments`         | id, contract_id, amount, payment_date, **currency**                        |
 | `flat_costs`       | id, apartment_id, cost_type, amount, frequency, valid_from, valid_to       |
-| `heizung_meters`   | id, apartment_id, serial_number, description, unit_label, conversion_factor |
-| `gas_meters`       | id, apartment_id, serial_number, description, z_zahl, brennwert            |
-| `strom_meters`     | id, apartment_id, serial_number, description                               |
-| `wasser_meters`    | id, apartment_id, serial_number, description, type ('kalt'\|'warm')        |
+| `heizung_meters`   | id, apartment_id, serial_number, description, unit_label, conversion_factor, **scope** |
+| `gas_meters`       | id, apartment_id, serial_number, description, z_zahl, brennwert, **scope** |
+| `strom_meters`     | id, apartment_id, serial_number, description, **scope**                    |
+| `wasser_meters`    | id, apartment_id, serial_number, description, type ('kalt'\|'warm'), **scope** |
 | `meter_readings`   | id, meter_type, meter_id, reading_date, reading, note                      |
 | `co_tenants`       | id, contract_id, name, gender, email, in_contract                         |
 | `billing_profiles` | id, tenant_id, label, created_date, data (JSON incl. contract_id)          |
 | `config`           | key, value                                                                 |
+
+> **currency** — one of `EUR`, `CNY`, `USD`, `GBP`; defaults to `EUR` on existing rows.  
+> **scope** — `room` (this room only) or `shared` (whole WG flat); default varies by meter type.
 
 ---
 

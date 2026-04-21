@@ -2,6 +2,22 @@ import streamlit as st
 import pandas as pd
 from db import fetch, insert, execute
 
+_SCOPE_OPTS  = ["room", "shared"]
+_SCOPE_LABEL = {"room": "Room only", "shared": "Shared (whole flat)"}
+
+
+def _scope_radio(key, default="shared"):
+    return st.radio(
+        "Scope",
+        _SCOPE_OPTS,
+        index=_SCOPE_OPTS.index(default),
+        format_func=lambda s: _SCOPE_LABEL[s],
+        horizontal=True,
+        key=key,
+        help="**Room only** — meter belongs exclusively to this room (e.g. Heizkostenverteiler). "
+             "**Shared (whole flat)** — meter is shared by all rooms in the WG flat.",
+    )
+
 
 def show():
     st.header("Apartments")
@@ -65,6 +81,7 @@ def show():
                 st.success("Apartment updated.")
                 st.rerun()
 
+        # ── Heizkostenverteiler ────────────────────────────────────────────────
         with st.expander("Heizkostenverteiler"):
             st.caption("Register heat cost allocators (Heizkostenverteiler) per apartment. "
                        "Readings are entered in the Nebenkostenabrechnung.")
@@ -75,14 +92,16 @@ def show():
             )
             meters = fetch(
                 "SELECT id, serial_number, description, unit_label, "
-                "COALESCE(conversion_factor, 1.0) "
+                "COALESCE(conversion_factor, 1.0), COALESCE(scope, 'room') "
                 "FROM heizung_meters WHERE apartment_id=? ORDER BY id",
                 (apt_heiz[0],)
             )
             if meters:
-                df_m = pd.DataFrame(meters,
-                                    columns=["ID", "Serial No.", "Description",
-                                             "Meter Unit", "Conv. Factor (→kWh)"])
+                df_m = pd.DataFrame(
+                    [(r[0], r[1], r[2], r[3], r[4], _SCOPE_LABEL[r[5]]) for r in meters],
+                    columns=["ID", "Serial No.", "Description",
+                             "Meter Unit", "Conv. Factor (→kWh)", "Scope"],
+                )
                 st.dataframe(df_m, hide_index=True)
             else:
                 st.info("No meters registered for this apartment.")
@@ -112,16 +131,17 @@ def show():
                          "Each Heizkörper can have a different factor. "
                          "Leave at 1.0 if the meter already reads in kWh."
                 )
+            m_scope = _scope_radio("m_scope_heiz", default="room")
             if st.button("Add Meter", key="btn_add_meter"):
                 if not m_serial.strip():
                     st.warning("Serial number is required.")
                 else:
                     execute(
                         "INSERT INTO heizung_meters "
-                        "(apartment_id, serial_number, description, unit_label, conversion_factor) "
-                        "VALUES (?, ?, ?, ?, ?)",
+                        "(apartment_id, serial_number, description, unit_label, conversion_factor, scope) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
                         (apt_heiz[0], m_serial.strip(), m_desc.strip(),
-                         m_unit.strip() or "Einheiten", m_factor)
+                         m_unit.strip() or "Einheiten", m_factor, m_scope)
                     )
                     st.success("Meter added.")
                     st.rerun()
@@ -130,7 +150,7 @@ def show():
                 st.markdown("**Delete meter**")
                 to_del_m = st.selectbox(
                     "Select meter", meters,
-                    format_func=lambda x: f"{x[1]} — {x[2]}",
+                    format_func=lambda x: f"{x[1]} — {x[2]} [{_SCOPE_LABEL[x[5]]}]",
                     key="apt_meter_del"
                 )
                 if st.button("Delete Meter", key="btn_del_meter", type="primary"):
@@ -138,6 +158,7 @@ def show():
                     st.success("Meter deleted.")
                     st.rerun()
 
+        # ── Gaszähler ──────────────────────────────────────────────────────────
         with st.expander("Gaszähler"):
             st.caption("Register gas meters (Gaszähler) per apartment. "
                        "Z-Zahl and Brennwert are taken from the NBB gas bill; "
@@ -148,7 +169,8 @@ def show():
                 key="apt_gas_sel"
             )
             gas_meters = fetch(
-                "SELECT id, serial_number, description, z_zahl, brennwert "
+                "SELECT id, serial_number, description, z_zahl, brennwert, "
+                "COALESCE(scope, 'shared') "
                 "FROM gas_meters WHERE apartment_id=? ORDER BY id",
                 (apt_gas[0],)
             )
@@ -161,6 +183,7 @@ def show():
                         "Z-Zahl":           r[3],
                         "Brennwert":        r[4],
                         "Factor (m³→kWh)":  round(r[3] * r[4], 4),
+                        "Scope":            _SCOPE_LABEL[r[5]],
                     }
                     for r in gas_meters
                 ]
@@ -189,13 +212,14 @@ def show():
                                                help="Brennwert from the NBB gas bill.")
             computed = gm_z_zahl * gm_brennwert
             st.caption(f"Computed Umrechnungsfaktor: **{computed:.4f} kWh/m³**")
+            gm_scope = _scope_radio("m_scope_gas", default="shared")
             if st.button("Add Gas Meter", key="btn_add_gm"):
                 execute(
                     "INSERT INTO gas_meters "
-                    "(apartment_id, serial_number, description, z_zahl, brennwert) "
-                    "VALUES (?, ?, ?, ?, ?)",
+                    "(apartment_id, serial_number, description, z_zahl, brennwert, scope) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
                     (apt_gas[0], gm_serial.strip() or None, gm_desc.strip() or None,
-                     gm_z_zahl, gm_brennwert)
+                     gm_z_zahl, gm_brennwert, gm_scope)
                 )
                 st.success("Gas meter added.")
                 st.rerun()
@@ -205,7 +229,7 @@ def show():
                 to_del_gm = st.selectbox(
                     "Select gas meter", gas_meters,
                     format_func=lambda x: f"{x[1] or '—'} — {x[2] or '—'} "
-                                          f"(Z={x[3]}, Bw={x[4]})",
+                                          f"(Z={x[3]}, Bw={x[4]}) [{_SCOPE_LABEL[x[5]]}]",
                     key="apt_gm_del"
                 )
                 if st.button("Delete Gas Meter", key="btn_del_gm", type="primary"):
@@ -213,6 +237,7 @@ def show():
                     st.success("Gas meter deleted.")
                     st.rerun()
 
+        # ── Stromzähler ────────────────────────────────────────────────────────
         with st.expander("Stromzähler"):
             st.caption("Register electricity meters (Stromzähler) per apartment. "
                        "Usually one per apartment. The Zählernummer is shown when "
@@ -223,13 +248,15 @@ def show():
                 key="apt_strom_sel"
             )
             strom_meters = fetch(
-                "SELECT id, serial_number, description "
+                "SELECT id, serial_number, description, COALESCE(scope, 'shared') "
                 "FROM strom_meters WHERE apartment_id=? ORDER BY id",
                 (apt_strom[0],)
             )
             if strom_meters:
-                df_sm = pd.DataFrame(strom_meters,
-                                     columns=["ID", "Serial No.", "Description"])
+                df_sm = pd.DataFrame(
+                    [(r[0], r[1], r[2], _SCOPE_LABEL[r[3]]) for r in strom_meters],
+                    columns=["ID", "Serial No.", "Description", "Scope"],
+                )
                 st.dataframe(df_sm, hide_index=True)
             else:
                 st.info("No Stromzähler registered for this apartment.")
@@ -242,6 +269,7 @@ def show():
             with col2:
                 sm_desc = st.text_input("Description / Location", key="sm_desc",
                                         placeholder="e.g. Keller, Hauptzähler")
+            sm_scope = _scope_radio("m_scope_strom", default="shared")
             if st.button("Add Stromzähler", key="btn_add_sm"):
                 if not sm_serial.strip():
                     st.warning("Zählernummer is required.")
@@ -253,9 +281,9 @@ def show():
                         )
                     execute(
                         "INSERT INTO strom_meters "
-                        "(apartment_id, serial_number, description) "
-                        "VALUES (?, ?, ?)",
-                        (apt_strom[0], sm_serial.strip(), sm_desc.strip() or None)
+                        "(apartment_id, serial_number, description, scope) "
+                        "VALUES (?, ?, ?, ?)",
+                        (apt_strom[0], sm_serial.strip(), sm_desc.strip() or None, sm_scope)
                     )
                     st.success("Stromzähler added.")
                     st.rerun()
@@ -264,7 +292,7 @@ def show():
                 st.markdown("**Delete Stromzähler**")
                 to_del_sm = st.selectbox(
                     "Select meter", strom_meters,
-                    format_func=lambda x: f"{x[1] or '—'} — {x[2] or '—'}",
+                    format_func=lambda x: f"{x[1] or '—'} — {x[2] or '—'} [{_SCOPE_LABEL[x[3]]}]",
                     key="apt_sm_del"
                 )
                 if st.button("Delete Stromzähler", key="btn_del_sm", type="primary"):
@@ -272,6 +300,7 @@ def show():
                     st.success("Stromzähler deleted.")
                     st.rerun()
 
+        # ── Wasserzähler ───────────────────────────────────────────────────────
         with st.expander("Wasserzähler (Kalt-/Warmwasser)"):
             st.caption("Register water meters per apartment. "
                        "Typically one Kaltwasserzähler and one or more Warmwasserzähler. "
@@ -282,16 +311,16 @@ def show():
                 key="apt_wm_sel"
             )
             wasser_meters = fetch(
-                "SELECT id, serial_number, description, type "
+                "SELECT id, serial_number, description, type, COALESCE(scope, 'shared') "
                 "FROM wasser_meters WHERE apartment_id=? ORDER BY type, id",
                 (apt_wm[0],)
             )
             if wasser_meters:
                 df_wm = pd.DataFrame([
                     (r[0], "Kaltwasser" if r[3] == "kalt" else "Warmwasser",
-                     r[1] or "—", r[2] or "—")
+                     r[1] or "—", r[2] or "—", _SCOPE_LABEL[r[4]])
                     for r in wasser_meters
-                ], columns=["ID", "Type", "Serial No.", "Description"])
+                ], columns=["ID", "Type", "Serial No.", "Description", "Scope"])
                 st.dataframe(df_wm, hide_index=True)
             else:
                 st.info("No Wasserzähler registered for this apartment.")
@@ -308,6 +337,7 @@ def show():
             with col3:
                 wm_desc = st.text_input("Description / Location", key="wm_desc",
                                         placeholder="e.g. Bad, Küche")
+            wm_scope = _scope_radio("m_scope_wasser", default="shared")
             if st.button("Add Wasserzähler", key="btn_add_wm"):
                 if not wm_serial.strip():
                     st.warning("Zählernummer is required.")
@@ -322,9 +352,10 @@ def show():
                             )
                     execute(
                         "INSERT INTO wasser_meters "
-                        "(apartment_id, serial_number, description, type) "
-                        "VALUES (?, ?, ?, ?)",
-                        (apt_wm[0], wm_serial.strip(), wm_desc.strip() or None, wm_type)
+                        "(apartment_id, serial_number, description, type, scope) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (apt_wm[0], wm_serial.strip(), wm_desc.strip() or None,
+                         wm_type, wm_scope)
                     )
                     st.success(f"{wm_type_label} added.")
                     st.rerun()
@@ -334,7 +365,7 @@ def show():
                 to_del_wm = st.selectbox(
                     "Select meter", wasser_meters,
                     format_func=lambda x: f"[{('Kalt' if x[3]=='kalt' else 'Warm')}] "
-                                          f"{x[1] or '—'} — {x[2] or '—'}",
+                                          f"{x[1] or '—'} — {x[2] or '—'} [{_SCOPE_LABEL[x[4]]}]",
                     key="apt_wm_del"
                 )
                 if st.button("Delete Wasserzähler", key="btn_del_wm", type="primary"):

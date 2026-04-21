@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from db import fetch, insert, execute
+from db import fetch, execute
+from currencies import CURRENCY_LIST, CURRENCY_LABELS, sym, fmt
 
 
 def show():
@@ -18,7 +19,8 @@ def show():
         month_end = month_start.replace(month=month_start.month + 1)
 
     monthly_payments = fetch("""
-        SELECT p.name, a.name, t.name, pay.amount, pay.payment_date
+        SELECT p.name, a.name, t.name, pay.amount, pay.payment_date,
+               COALESCE(pay.currency, 'EUR')
         FROM payments pay
         JOIN contracts c ON pay.contract_id = c.id
         JOIN tenants t ON c.tenant_id = t.id
@@ -29,10 +31,17 @@ def show():
     """, (str(month_start), str(month_end)))
 
     if monthly_payments:
-        df_monthly = pd.DataFrame(monthly_payments,
-                                  columns=["Property", "Apartment", "Tenant", "Amount (€)", "Date"])
+        df_monthly = pd.DataFrame(
+            [(r[0], r[1], r[2], fmt(r[3], r[5]), r[4]) for r in monthly_payments],
+            columns=["Property", "Apartment", "Tenant", "Amount", "Date"],
+        )
         st.dataframe(df_monthly, width="stretch", hide_index=True)
-        st.metric("Total collected", f"€ {sum(r[3] for r in monthly_payments):,.2f}")
+        # Show totals per currency
+        totals: dict[str, float] = {}
+        for r in monthly_payments:
+            totals[r[5]] = totals.get(r[5], 0.0) + r[3]
+        total_str = "  |  ".join(fmt(v, k) for k, v in totals.items())
+        st.metric("Total collected", total_str)
     else:
         st.info(f"No payments recorded for {month_start.strftime('%B %Y')}.")
 
@@ -40,7 +49,7 @@ def show():
 
     # ── Payment History per Contract ───────────────────────────────
     contracts = fetch("""
-        SELECT c.id, t.name, a.name
+        SELECT c.id, t.name, a.name, COALESCE(c.currency, 'EUR')
         FROM contracts c
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
@@ -54,9 +63,11 @@ def show():
     st.subheader("Payment History")
     contract_choice = st.selectbox("Contract", contracts,
                                    format_func=lambda x: f"{x[1]} — {x[2]}")
+    contract_currency = contract_choice[3]
 
     payments = fetch("""
-        SELECT p.id, t.name, a.name, p.amount, p.payment_date
+        SELECT p.id, t.name, a.name, p.amount, p.payment_date,
+               COALESCE(p.currency, 'EUR')
         FROM payments p
         JOIN contracts c ON p.contract_id = c.id
         JOIN tenants t ON c.tenant_id = t.id
@@ -66,7 +77,10 @@ def show():
     """, (contract_choice[0],))
 
     if payments:
-        df_pay = pd.DataFrame(payments, columns=["ID", "Tenant", "Apartment", "Amount (€)", "Date"])
+        df_pay = pd.DataFrame(
+            [(r[0], r[1], r[2], fmt(r[3], r[5]), r[4]) for r in payments],
+            columns=["ID", "Tenant", "Apartment", "Amount", "Date"],
+        )
         st.dataframe(df_pay, width="stretch", hide_index=True)
     else:
         st.info("No payments recorded for this contract.")
@@ -75,36 +89,64 @@ def show():
 
     # ── Add Payment ────────────────────────────────────────────────
     with st.expander("Add Payment"):
-        amount   = st.number_input("Payment amount (€)", value=650.0, key="pay_amount_new")
+        cur_idx = CURRENCY_LIST.index(contract_currency) if contract_currency in CURRENCY_LIST else 0
+        pay_currency = st.selectbox(
+            "Currency",
+            CURRENCY_LIST,
+            index=cur_idx,
+            format_func=lambda c: CURRENCY_LABELS[c],
+            key="pay_currency_new",
+        )
+        amount   = st.number_input(f"Payment amount ({sym(pay_currency)})", value=650.0, key="pay_amount_new")
         pay_date = st.date_input("Payment date", key="pay_date_new")
         if st.button("Add Payment", key="btn_add_pay"):
-            insert("payments", (contract_choice[0], amount, str(pay_date)))
+            execute(
+                "INSERT INTO payments (contract_id, amount, payment_date, currency) VALUES (?, ?, ?, ?)",
+                (contract_choice[0], amount, str(pay_date), pay_currency),
+            )
             st.success("Payment recorded.")
             st.rerun()
 
     if payments:
         with st.expander("Edit Payment"):
-            pay_to_edit = st.selectbox("Select payment", payments,
-                                       format_func=lambda x: f"#{x[0]} — {x[3]:.2f} € on {x[4]}",
-                                       key="pay_edit")
-            col1, col2 = st.columns(2)
+            pay_to_edit = st.selectbox(
+                "Select payment", payments,
+                format_func=lambda x: f"#{x[0]} — {fmt(x[3], x[5])} on {x[4]}",
+                key="pay_edit",
+            )
+            col1, col2, col3 = st.columns(3)
             with col1:
-                new_amount = st.number_input("Amount (€)", value=float(pay_to_edit[3]),
-                                             key=f"pay_amt_{pay_to_edit[0]}")
+                edit_cur_idx = CURRENCY_LIST.index(pay_to_edit[5]) if pay_to_edit[5] in CURRENCY_LIST else 0
+                edit_currency = st.selectbox(
+                    "Currency",
+                    CURRENCY_LIST,
+                    index=edit_cur_idx,
+                    format_func=lambda c: CURRENCY_LABELS[c],
+                    key=f"pay_cur_{pay_to_edit[0]}",
+                )
             with col2:
+                new_amount = st.number_input(
+                    f"Amount ({sym(edit_currency)})", value=float(pay_to_edit[3]),
+                    key=f"pay_amt_{pay_to_edit[0]}",
+                )
+            with col3:
                 new_date = st.date_input("Payment date",
                                          value=date.fromisoformat(pay_to_edit[4]),
                                          key=f"pay_date_{pay_to_edit[0]}")
             if st.button("Save Payment", key="btn_save_pay"):
-                execute("UPDATE payments SET amount=?, payment_date=? WHERE id=?",
-                        (new_amount, str(new_date), pay_to_edit[0]))
+                execute(
+                    "UPDATE payments SET amount=?, payment_date=?, currency=? WHERE id=?",
+                    (new_amount, str(new_date), edit_currency, pay_to_edit[0]),
+                )
                 st.success("Payment updated.")
                 st.rerun()
 
         with st.expander("Delete Payment"):
-            to_del = st.selectbox("Select payment", payments,
-                                  format_func=lambda x: f"#{x[0]} — {x[3]:.2f} € on {x[4]}",
-                                  key="pay_delete")
+            to_del = st.selectbox(
+                "Select payment", payments,
+                format_func=lambda x: f"#{x[0]} — {fmt(x[3], x[5])} on {x[4]}",
+                key="pay_delete",
+            )
             st.warning("This will permanently delete the payment record.")
             if st.button("Delete Payment", type="primary", key="btn_del_pay"):
                 execute("DELETE FROM payments WHERE id=?", (to_del[0],))

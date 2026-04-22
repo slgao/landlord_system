@@ -48,22 +48,77 @@ def show():
     st.divider()
 
     # ── Payment History per Contract ───────────────────────────────
-    contracts = fetch("""
-        SELECT c.id, t.name, a.name, COALESCE(c.currency, 'EUR')
+    all_contracts = fetch("""
+        SELECT c.id, t.name, a.name, COALESCE(c.currency, 'EUR'),
+               c.end_date, COALESCE(c.terminated, 0)
         FROM contracts c
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
         ORDER BY t.name
     """)
 
-    if not contracts:
+    if not all_contracts:
         st.warning("No contracts found.")
         return
 
+    def _is_active_contract(end_date_str, terminated):
+        if terminated:
+            return False
+        if not end_date_str or end_date_str == "None":
+            return True
+        try:
+            return (date.fromisoformat(end_date_str) - date.today()).days >= 0
+        except ValueError:
+            return True
+
+    active_contracts   = [r for r in all_contracts if     _is_active_contract(r[4], r[5])]
+    inactive_contracts = [r for r in all_contracts if not _is_active_contract(r[4], r[5])]
+
     st.subheader("Payment History")
+    show_inactive = st.checkbox(
+        f"Show inactive contracts ({len(inactive_contracts)})",
+        value=False, key="show_inactive_contracts",
+        help="Inactive = expired or moved-out contracts. Enable only if recording a late/outstanding payment.",
+    )
+    contracts = active_contracts + (inactive_contracts if show_inactive else [])
+
+    if not contracts:
+        st.info("No active contracts. Check 'Show inactive contracts' to see all.")
+        return
+
+    def _contract_label(r):
+        end_date_str, terminated = r[4], r[5]
+        if terminated:
+            tag = " [Moved out]"
+        elif not end_date_str or end_date_str == "None":
+            tag = ""
+        else:
+            try:
+                days = (date.fromisoformat(end_date_str) - date.today()).days
+                tag = " ⚠️ [Expired]" if days < 0 else (" [Expiring soon]" if days <= 90 else "")
+            except ValueError:
+                tag = ""
+        return f"{r[1]} — {r[2]}{tag}"
+
     contract_choice = st.selectbox("Contract", contracts,
-                                   format_func=lambda x: f"{x[1]} — {x[2]}")
+                                   format_func=_contract_label)
     contract_currency = contract_choice[3]
+
+    selected_active = _is_active_contract(contract_choice[4], contract_choice[5])
+    if not selected_active:
+        if contract_choice[5]:
+            st.warning(
+                "This contract is marked **Moved out**. "
+                "A payment here likely means an outstanding balance from before move-out. "
+                "Check the Tenant Ledger for context."
+            )
+        else:
+            st.warning(
+                "This contract has **expired**. "
+                "This could mean: (a) the contract needs to be updated/closed in the Contracts page, "
+                "or (b) the tenant is paying a historically outstanding amount. "
+                "Verify before recording."
+            )
 
     payments = fetch("""
         SELECT p.id, t.name, a.name, p.amount, p.payment_date,

@@ -370,7 +370,7 @@ def show():
                     "Costs / mo (€)":     round(total_costs, 2),
                     "Net / mo (€)":       round(net, 2),
                     "Net / yr  (€)":      round(net * 12, 2),
-                    f"Collection {y} (%)": collection_pct if collection_pct is not None else "—",
+                    f"Collection {y} (%)": collection_pct,
                 })
                 group_detail.append({
                     "label":  flat_label,

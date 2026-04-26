@@ -10,21 +10,25 @@ A web-based property management application tailored for landlords in Germany. B
 |---|---|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Properties](docs/screenshots/properties.png) |
 
-| Apartments | Contracts |
+| Tenants | Apartments |
 |---|---|
-| ![Apartments](docs/screenshots/apartments.png) | ![Contracts](docs/screenshots/contracts.png) |
+| ![Tenants](docs/screenshots/tenants.png) | ![Apartments](docs/screenshots/apartments.png) |
 
-| Rent Tracking | Flat Costs |
+| Contracts | Rent Tracking |
 |---|---|
-| ![Rent Tracking](docs/screenshots/rent_tracking.png) | ![Flat Costs](docs/screenshots/flat_costs.png) |
+| ![Contracts](docs/screenshots/contracts.png) | ![Rent Tracking](docs/screenshots/rent_tracking.png) |
 
-| Balance Sheet | Nebenkostenabrechnung |
+| Flat Costs | Balance Sheet |
 |---|---|
-| ![Balance Sheet](docs/screenshots/balance_sheet.png) | ![Nebenkostenabrechnung](docs/screenshots/nebenkostenabrechnung.png) |
+| ![Flat Costs](docs/screenshots/flat_costs.png) | ![Balance Sheet](docs/screenshots/balance_sheet.png) |
 
-| Mahnung Generator | |
+| Meter Readings | Nebenkostenabrechnung |
 |---|---|
-| ![Mahnung Generator](docs/screenshots/mahnung_generator.png) | |
+| ![Meter Readings](docs/screenshots/meter_readings.png) | ![Nebenkostenabrechnung](docs/screenshots/nebenkostenabrechnung.png) |
+
+| Mahnung Generator | Payment Reminders |
+|---|---|
+| ![Mahnung Generator](docs/screenshots/mahnung_generator.png) | ![Payment Reminders](docs/screenshots/payment_reminders.png) |
 
 ---
 

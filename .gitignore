@@ -212,3 +212,4 @@ data/landlord.db
 pdf/
 .DS_Store
 .env.demo
+backups/

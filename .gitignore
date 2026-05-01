@@ -213,3 +213,6 @@ pdf/
 .DS_Store
 .env.demo
 backups/
+
+# Emacs undo-tree backup files
+*.~undo-tree~

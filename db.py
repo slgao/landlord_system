@@ -266,6 +266,37 @@ def set_config(key, value):
     )
 
 
+def _fernet():
+    """Return a Fernet instance if FERNET_KEY is set in the environment, else None."""
+    key = os.environ.get("FERNET_KEY")
+    if not key:
+        return None
+    from cryptography.fernet import Fernet
+    return Fernet(key.encode())
+
+
+def get_secret_config(key, default=None):
+    """Read a config value and decrypt it if FERNET_KEY is set."""
+    value = get_config(key, default)
+    if not value or value == default:
+        return value
+    f = _fernet()
+    if f is None:
+        return value
+    try:
+        return f.decrypt(value.encode()).decode()
+    except Exception:
+        return value  # legacy plaintext — return as-is
+
+
+def set_secret_config(key, value):
+    """Encrypt value with FERNET_KEY before storing, or store plaintext if key absent."""
+    f = _fernet()
+    if f and value:
+        value = f.encrypt(value.encode()).decode()
+    set_config(key, value)
+
+
 def insert(table, values):
     conn = get_conn()
     c = conn.cursor()

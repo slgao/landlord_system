@@ -15,8 +15,8 @@ METER_TYPES = [
 ]
 
 
-def _flat_apt_in(apartment_id: int) -> str:
-    """Return a SQL IN-list of all apartment IDs sharing the same flat label."""
+def _flat_apt_ids(apartment_id: int) -> list:
+    """Return all apartment IDs sharing the same flat label, including apartment_id itself."""
     rows = fetch("""
         SELECT a2.id FROM apartments a2
         WHERE a2.property_id = (SELECT property_id FROM apartments WHERE id = ?)
@@ -26,7 +26,7 @@ def _flat_apt_in(apartment_id: int) -> str:
     ids = [r[0] for r in rows] if rows else []
     if apartment_id not in ids:
         ids.append(apartment_id)
-    return ",".join(str(i) for i in ids)
+    return ids
 
 
 def _fetch_meters_for_apartment(apartment_id: int):
@@ -34,15 +34,16 @@ def _fetch_meters_for_apartment(apartment_id: int):
     - 'room'   → only meters registered directly on this apartment_id
     - 'shared' → meters on any room in the same flat
     """
-    apt_in = _flat_apt_in(apartment_id)
+    apt_ids = _flat_apt_ids(apartment_id)
     out = []
     for label, mtype, table, where_extra, unit, vfmt in METER_TYPES:
         rows = fetch(
             f"SELECT id, serial_number, description "
             f"FROM {table} "
-            f"WHERE ((COALESCE(scope,'room') = 'room' AND apartment_id = {apartment_id}) "
-            f"    OR (scope = 'shared' AND apartment_id IN ({apt_in}))) "
+            f"WHERE ((COALESCE(scope,'room') = 'room' AND apartment_id = ?) "
+            f"    OR (scope = 'shared' AND apartment_id = ANY(?))) "
             f"{where_extra} ORDER BY id",
+            (apartment_id, apt_ids),
         )
         for mid, serial, desc in rows:
             disp = f"{label}  ·  {serial or '—'}"

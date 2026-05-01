@@ -247,27 +247,6 @@ def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end, limit_per_
     return cost_per_tenant, period_cost, limit_period, nachzahlung
 
 
-def dashboard_stats():
-
-    properties = fetch("SELECT COUNT(*) FROM properties")[0][0]
-    apartments = fetch("SELECT COUNT(*) FROM apartments")[0][0]
-    tenants = fetch("SELECT COUNT(*) FROM tenants")[0][0]
-    contracts = fetch("SELECT COUNT(*) FROM contracts")[0][0]
-
-    rent = fetch("SELECT SUM(rent) FROM contracts")[0][0]
-
-    if rent is None:
-        rent = 0
-
-    return {
-        "properties": properties,
-        "apartments": apartments,
-        "tenants": tenants,
-        "contracts": contracts,
-        "rent": rent,
-    }
-
-
 def detect_overdue(months_back=3):
     """
     For every active (non-terminated) contract, compare expected monthly rent

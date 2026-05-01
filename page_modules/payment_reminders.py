@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from db import fetch, execute, get_config, set_config
+from db import fetch, execute, get_config, set_config, get_secret_config, set_secret_config
 from logic import detect_overdue
 from pdfgen import generate_mahnung
 from utils.mailer import send_reminder_email
@@ -21,7 +21,7 @@ def _log_reminder(contract_id, months_due, amount_due, channel, note=""):
 
 
 def _smtp_configured():
-    return bool(get_config("smtp_host") and get_config("smtp_user") and get_config("smtp_password"))
+    return bool(get_config("smtp_host") and get_config("smtp_user") and get_secret_config("smtp_password"))
 
 
 # ── main page ──────────────────────────────────────────────────────────────────
@@ -31,8 +31,10 @@ def show():
 
     # ── SMTP Settings (collapsed by default) ───────────────────────
     with st.expander("SMTP Settings", expanded=not _smtp_configured()):
+        import os as _os
+        _enc = "encrypted with FERNET_KEY" if _os.environ.get("FERNET_KEY") else "plaintext — set FERNET_KEY in .env to encrypt"
         st.caption(
-            "Credentials are stored locally in the app database. "
+            f"Credentials are stored in the app database ({_enc}). "
             "Use an app password (not your main account password) for Gmail/Outlook."
         )
         col1, col2 = st.columns(2)
@@ -51,7 +53,7 @@ def show():
                                       value=get_config("smtp_port", "587"),
                                       key="cfg_smtp_port")
             smtp_pass = st.text_input("Password / App password",
-                                      value=get_config("smtp_password", ""),
+                                      value=get_secret_config("smtp_password", ""),
                                       type="password", key="cfg_smtp_pass")
             landlord_name = st.text_input("Landlord name (in email signature)",
                                           value=get_config("landlord_name", "Ihr Vermieter"),
@@ -61,7 +63,7 @@ def show():
             set_config("smtp_host",      smtp_host)
             set_config("smtp_port",      smtp_port)
             set_config("smtp_user",      smtp_user)
-            set_config("smtp_password",  smtp_pass)
+            set_secret_config("smtp_password", smtp_pass)
             set_config("smtp_from",      smtp_from)
             set_config("landlord_name",  landlord_name)
             st.success("Settings saved.")
@@ -177,7 +179,7 @@ def show():
                                 smtp_host=get_config("smtp_host"),
                                 smtp_port=get_config("smtp_port", "587"),
                                 smtp_user=get_config("smtp_user"),
-                                smtp_password=get_config("smtp_password"),
+                                smtp_password=get_secret_config("smtp_password"),
                                 from_addr=get_config("smtp_from") or get_config("smtp_user"),
                                 to_addr=to_addr,
                                 tenant_name=selected["tenant"],

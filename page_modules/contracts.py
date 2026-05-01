@@ -29,13 +29,13 @@ def show():
             if not end or end == "None":
                 return "Active"
             try:
-                d = date.fromisoformat(end)
+                d = end if isinstance(end, date) else date.fromisoformat(str(end))
                 days = (d - date.today()).days
                 if days < 0:
                     return "Expired"
                 elif days <= 90:
                     return "Expiring soon"
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
             return "Active"
 

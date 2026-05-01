@@ -3,6 +3,7 @@ import pandas as pd
 import calendar
 from datetime import date
 from db import fetch
+from pdfgen import balance_sheet_pdf
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -134,6 +135,8 @@ def show():
                           index=1)   # default to current year
     y      = int(year)
 
+    dl_placeholder = st.empty()   # filled with PDF download button at the end
+
     properties = fetch("SELECT id, name FROM properties ORDER BY name")
     if not properties:
         st.warning("No properties found.")
@@ -151,6 +154,11 @@ def show():
         exp   = _expected_rent(pid, snap_start, snap_end)
         costs = _flat_costs_month(pid, snap_start, snap_end, today.year, today.month)
         snap_data.append((pname, exp, costs, exp - costs))
+
+    pdf_snapshot = [
+        {"name": pname, "expected": exp, "costs": costs, "net": net}
+        for pname, exp, costs, net in snap_data
+    ]
 
     total_snap_exp   = sum(s[1] for s in snap_data)
     total_snap_costs = sum(s[2] for s in snap_data)
@@ -186,6 +194,7 @@ def show():
     # ═══════════════════════════════════════════════════════════════
     # PER-PROPERTY ANNUAL VIEW
     # ═══════════════════════════════════════════════════════════════
+    pdf_props = []
     max_month = today.month if y == today.year else 12
 
     for prop_id, prop_name in properties:
@@ -237,6 +246,7 @@ def show():
                   delta=f"Expected {tot_expected - tot_costs:+.2f} €")
 
         # ── Per-flat breakdown ─────────────────────────────────────
+        monthly_rows_pdf = rows   # save before expander overwrites 'rows'
         y_start = f"{y}-01-01"
         y_end   = f"{y}-{max_month:02d}-{calendar.monthrange(y, max_month)[1]:02d}"
 
@@ -466,4 +476,26 @@ def show():
             else:
                 st.info("No apartments found for this property.")
 
+        pdf_props.append({
+            "name":         prop_name,
+            "monthly_rows": monthly_rows_pdf,
+            "tot_expected": tot_expected,
+            "tot_actual":   tot_actual,
+            "tot_costs":    tot_costs,
+            "flat_rows":    flat_rows,
+            "insights":     all_insights,
+        })
+
         st.divider()
+
+    # ═══════════════════════════════════════════════════════════════
+    # PDF DOWNLOAD (fills the placeholder placed after the year selector)
+    # ═══════════════════════════════════════════════════════════════
+    pdf_bytes = balance_sheet_pdf(y, pdf_snapshot, pdf_props)
+    with dl_placeholder:
+        st.download_button(
+            label="📥 Download PDF Report",
+            data=pdf_bytes,
+            file_name=f"Bilanz_{y}.pdf",
+            mime="application/pdf",
+        )

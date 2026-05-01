@@ -951,3 +951,309 @@ def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signat
     )
     doc.build(story)
     return file
+
+
+# ── Balance Sheet Annual Report ────────────────────────────────────────────────
+
+def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung"):
+    """
+    Generate a balance sheet annual report and return PDF bytes.
+
+    year     : int  — the fiscal year
+    snapshot : [{name, expected, costs, net}]  — current-month per-property figures
+    props    : [{name, monthly_rows, tot_expected, tot_actual, tot_costs,
+                 flat_rows, insights}]
+    """
+    import io as _io
+    import re as _re
+
+    buf = _io.BytesIO()
+    s   = _styles()
+    today_str = date.today().strftime("%d.%m.%Y")
+    story     = []
+
+    recv_key = f"Received {year} (€)"
+    coll_key = f"Collection {year} (%)"
+
+    # ── Cell helpers ──────────────────────────────────────────────────────────
+    def _ph(text, right=False, bold=False, color=None, size=9):
+        fn  = "Helvetica-Bold" if bold else "Helvetica"
+        clr = colors.HexColor(color) if color else C_TEXT
+        aln = TA_RIGHT if right else TA_LEFT
+        return Paragraph(str(text), ParagraphStyle(
+            "_ph", fontName=fn, fontSize=size,
+            leading=int(size * 1.4), textColor=clr, alignment=aln,
+        ))
+
+    def _net_cell(val, size=9):
+        clr = "#27ae60" if val >= 0 else "#e74c3c"
+        return _ph(f"{val:+,.2f} €", right=True, bold=True, color=clr, size=size)
+
+    def _eur_cell(val, size=9):
+        return _ph(f"{val:,.2f} €", right=True, size=size)
+
+    hdr   = ParagraphStyle("_h",  fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=C_WHITE)
+    hdr_r = ParagraphStyle("_hr", fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=C_WHITE, alignment=TA_RIGHT)
+
+    # ── Header banner ─────────────────────────────────────────────────────────
+    story.append(_header_banner(
+        f"JAHRESABSCHLUSS {year}",
+        f"Finanzbericht  ·  Erstellt am {today_str}",
+        landlord_name,
+        today_str,
+    ))
+    story.append(_accent_line(C_BLUE))
+    story.append(Spacer(1, 22))
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — Current monthly snapshot
+    # ═════════════════════════════════════════════════════════════════════════
+    story.append(_section_header(1, "Aktueller Monatsüberblick", s))
+    story.append(Spacer(1, 6))
+
+    snap_rows = [[
+        Paragraph("Objekt",         hdr),
+        Paragraph("Soll-Miete (€)", hdr_r),
+        Paragraph("Kosten (€)",     hdr_r),
+        Paragraph("Netto (€)",      hdr_r),
+    ]]
+    for item in snapshot:
+        snap_rows.append([
+            _ph(item["name"], bold=True),
+            _eur_cell(item["expected"]),
+            _eur_cell(item["costs"]),
+            _net_cell(item["net"]),
+        ])
+    total_exp  = sum(i["expected"] for i in snapshot)
+    total_cost = sum(i["costs"]    for i in snapshot)
+    total_net  = sum(i["net"]      for i in snapshot)
+    snap_rows.append([
+        _ph("Gesamt", bold=True),
+        _ph(f"{total_exp:,.2f} €",  right=True, bold=True),
+        _ph(f"{total_cost:,.2f} €", right=True, bold=True),
+        _net_cell(total_net),
+    ])
+
+    snap_t = Table(snap_rows, colWidths=[200, 89, 89, 90])
+    snap_t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),   C_NAVY),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -2),  [C_WHITE, C_LGRAY]),
+        ("LINEBELOW",     (0, 0), (-1, -2),  0.4, C_MGRAY),
+        ("BACKGROUND",    (0, -1),(-1, -1),  C_LBLUE),
+        ("TOPPADDING",    (0, 0), (-1, -1),  7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1),  7),
+        ("LEFTPADDING",   (0, 0), (-1, -1),  10),
+        ("RIGHTPADDING",  (0, 0), (-1, -1),  10),
+        ("VALIGN",        (0, 0), (-1, -1),  "MIDDLE"),
+    ]))
+    story.append(snap_t)
+    story.append(Spacer(1, 22))
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # SECTIONS 2+ — Per-property annual detail
+    # ═════════════════════════════════════════════════════════════════════════
+    for sec_num, prop in enumerate(props, start=2):
+
+        # ── Property section header ───────────────────────────────────────
+        story.append(_section_header(sec_num, prop["name"], s))
+        story.append(Spacer(1, 8))
+
+        # ── Monthly table ─────────────────────────────────────────────────
+        # Month | Soll | Ist | Diff | Kosten | S-Netto | I-Netto  (sum=468)
+        mo_w = [68, 70, 70, 63, 60, 68, 69]
+
+        mo_rows = [[
+            Paragraph("Monat",       hdr),
+            Paragraph("Soll (€)",    hdr_r),
+            Paragraph("Ist (€)",     hdr_r),
+            Paragraph("Diff. (€)",   hdr_r),
+            Paragraph("Kosten (€)",  hdr_r),
+            Paragraph("S-Netto (€)", hdr_r),
+            Paragraph("I-Netto (€)", hdr_r),
+        ]]
+        for row in prop["monthly_rows"]:
+            mo_rows.append([
+                _ph(row["Month"]),
+                _eur_cell(row["Expected rent (€)"]),
+                _eur_cell(row["Actual received (€)"]),
+                _net_cell(row["Variance (€)"]),
+                _eur_cell(row["Costs (€)"]),
+                _net_cell(row["Expected net (€)"]),
+                _net_cell(row["Actual net (€)"]),
+            ])
+        te, ta, tc = prop["tot_expected"], prop["tot_actual"], prop["tot_costs"]
+        mo_rows.append([
+            _ph("Gesamt", bold=True),
+            _ph(f"{te:,.2f} €", right=True, bold=True),
+            _ph(f"{ta:,.2f} €", right=True, bold=True),
+            _net_cell(ta - te),
+            _ph(f"{tc:,.2f} €", right=True, bold=True),
+            _net_cell(te - tc),
+            _net_cell(ta - tc),
+        ])
+
+        mo_t = Table(mo_rows, colWidths=mo_w)
+        mo_t.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),   C_NAVY),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -2),  [C_WHITE, C_LGRAY]),
+            ("LINEBELOW",     (0, 0), (-1, -2),  0.4, C_MGRAY),
+            ("BACKGROUND",    (0, -1),(-1, -1),  C_LBLUE),
+            ("TOPPADDING",    (0, 0), (-1, -1),  6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1),  6),
+            ("LEFTPADDING",   (0, 0), (-1, -1),  8),
+            ("RIGHTPADDING",  (0, 0), (-1, -1),  8),
+            ("VALIGN",        (0, 0), (-1, -1),  "MIDDLE"),
+        ]))
+        story.append(mo_t)
+        story.append(Spacer(1, 12))
+
+        # ── Annual metrics row (4 cards) ──────────────────────────────────
+        net_act = ta - tc
+        net_exp = te - tc
+        nc = "#27ae60" if net_act >= 0 else "#e74c3c"
+        dc = "#27ae60" if (ta - te) >= 0 else "#e74c3c"
+
+        def _mc(label, value, sub=None, vc=None):
+            lbl_s = ParagraphStyle("_mcl", fontName="Helvetica",      fontSize=7,  leading=10, textColor=C_MUTED)
+            val_s = ParagraphStyle("_mcv", fontName="Helvetica-Bold", fontSize=10, leading=13,
+                                   textColor=colors.HexColor(vc) if vc else C_TEXT)
+            sub_s = ParagraphStyle("_mcs", fontName="Helvetica",      fontSize=7,  leading=10, textColor=C_MUTED)
+            cells = [Paragraph(label, lbl_s), Paragraph(value, val_s)]
+            if sub:
+                cells.append(Paragraph(sub, sub_s))
+            return cells
+
+        metrics_row = [[
+            _mc("Soll-Miete",    f"€ {te:,.2f}"),
+            _mc("Ist-Einnahmen", f"€ {ta:,.2f}", sub=f"{ta - te:+.2f} € vs. Soll", vc=dc),
+            _mc("Gesamtkosten",  f"€ {tc:,.2f}"),
+            _mc("Netto (Ist)",   f"€ {net_act:,.2f}", sub=f"Soll: {net_exp:+.2f} €", vc=nc),
+        ]]
+        mt = Table(metrics_row, colWidths=[117, 117, 117, 117])
+        mt.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C_SECBG),
+            ("BOX",           (0, 0), (-1, -1), 0.5, C_MGRAY),
+            ("INNERGRID",     (0, 0), (-1, -1), 0.5, C_MGRAY),
+            ("TOPPADDING",    (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ]))
+        story.append(mt)
+        story.append(Spacer(1, 14))
+
+        # ── Per-flat breakdown table ──────────────────────────────────────
+        if prop.get("flat_rows"):
+            fl_hdr   = ParagraphStyle("_fh",  fontName="Helvetica-Bold", fontSize=8, leading=10, textColor=C_WHITE)
+            fl_hdr_r = ParagraphStyle("_fhr", fontName="Helvetica-Bold", fontSize=8, leading=10,
+                                      textColor=C_WHITE, alignment=TA_RIGHT)
+
+            # Flat|Type|Tenant|Rent/mo|Received|Costs/mo|Net/mo|Net/yr|Quote (sum=468)
+            fl_w = [65, 37, 96, 44, 47, 44, 44, 47, 44]
+            fl_rows = [[
+                Paragraph("Wohnung",          fl_hdr),
+                Paragraph("Typ",              fl_hdr),
+                Paragraph("Mieter",           fl_hdr),
+                Paragraph("Miete/Mo",         fl_hdr_r),
+                Paragraph(f"Einnahm. {year}", fl_hdr_r),
+                Paragraph("Kosten/Mo",        fl_hdr_r),
+                Paragraph("Netto/Mo",         fl_hdr_r),
+                Paragraph("Netto/Jahr",       fl_hdr_r),
+                Paragraph("Quote",            fl_hdr_r),
+            ]]
+            for fr in prop["flat_rows"]:
+                coll = fr.get(coll_key)
+                if coll is not None:
+                    coll_str = f"{coll:.0f}%"
+                    coll_clr = ("#27ae60" if coll >= 95 else "#e74c3c" if coll < 80 else "#f39c12")
+                else:
+                    coll_str, coll_clr = "—", None
+
+                ten = fr["Tenant(s)"]
+                if len(ten) > 28:
+                    ten = ten[:26] + "…"
+
+                fl_rows.append([
+                    _ph(fr["Flat"],                             bold=True,          size=8),
+                    _ph(fr["Type"],                                                 size=8),
+                    _ph(ten,                                                        size=8),
+                    _ph(f"{fr['Rent / mo (€)']:,.2f}",         right=True,         size=8),
+                    _ph(f"{fr.get(recv_key, 0):,.2f}",         right=True,         size=8),
+                    _ph(f"{fr['Costs / mo (€)']:,.2f}",        right=True,         size=8),
+                    _net_cell(fr["Net / mo (€)"],                                  size=8),
+                    _net_cell(fr["Net / yr  (€)"],                                 size=8),
+                    _ph(coll_str, right=True, bold=bool(coll_clr), color=coll_clr, size=8),
+                ])
+
+            fl_t = Table(fl_rows, colWidths=fl_w)
+            fl_t.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, 0),   C_NAVY),
+                ("ROWBACKGROUNDS",(0, 1), (-1, -1),  [C_WHITE, C_LGRAY]),
+                ("LINEBELOW",     (0, 0), (-1, -1),  0.4, C_MGRAY),
+                ("TOPPADDING",    (0, 0), (-1, -1),  5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1),  5),
+                ("LEFTPADDING",   (0, 0), (-1, -1),  5),
+                ("RIGHTPADDING",  (0, 0), (-1, -1),  5),
+                ("VALIGN",        (0, 0), (-1, -1),  "MIDDLE"),
+            ]))
+            story.append(Paragraph("Wohnungsübersicht", s["section"]))
+            story.append(Spacer(1, 6))
+            story.append(fl_t)
+            story.append(Spacer(1, 14))
+
+        # ── Performance insights ──────────────────────────────────────────
+        if prop.get("insights"):
+            story.append(Paragraph("Hinweise & Empfehlungen", s["section"]))
+            story.append(Spacer(1, 6))
+            _ins_bg = {
+                "success": ("#eafaf1", "#27ae60"),
+                "warning": ("#fef9e7", "#f39c12"),
+                "error":   ("#fdf2f1", "#e74c3c"),
+                "info":    ("#eaf4fc", "#3a7fc1"),
+            }
+            _ins_icon = {"success": "✓", "warning": "⚠", "error": "✗", "info": "ℹ"}
+            for level, msg in prop["insights"]:
+                bg, border = _ins_bg.get(level, ("#f8f9fa", "#8395a7"))
+                icon       = _ins_icon.get(level, "·")
+                xml_msg    = _re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', msg)
+                ins_p = Paragraph(
+                    f"{icon}  {xml_msg}",
+                    ParagraphStyle("_ins", fontName="Helvetica", fontSize=8, leading=12, textColor=C_TEXT),
+                )
+                ins_t = Table([[ins_p]], colWidths=[W])
+                ins_t.setStyle(TableStyle([
+                    ("BACKGROUND",    (0, 0), (-1, -1), colors.HexColor(bg)),
+                    ("LINEBELOW",     (0, 0), (-1, -1), 0.5, colors.HexColor(border)),
+                    ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+                    ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+                    ("TOPPADDING",    (0, 0), (-1, -1), 7),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ]))
+                story.append(ins_t)
+                story.append(Spacer(1, 3))
+            story.append(Spacer(1, 6))
+
+        story.append(HRFlowable(width="100%", thickness=0.5, color=C_MGRAY, spaceBefore=4, spaceAfter=14))
+
+    # ── Closing signature ─────────────────────────────────────────────────────
+    story.extend(_signature_block(landlord_name, None, s))
+
+    # ── Build with page footer ────────────────────────────────────────────────
+    def _page_footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColorRGB(0.514, 0.584, 0.655)
+        pw = A4[0]
+        canvas.drawString(25 * mm, 10 * mm, f"Jahresabschluss {year}  ·  {landlord_name}")
+        canvas.drawRightString(pw - 20 * mm, 10 * mm, f"Seite {doc.page}")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        title=f"Jahresabschluss_{year}",
+        leftMargin=25 * mm, rightMargin=20 * mm,
+        topMargin=20 * mm, bottomMargin=20 * mm,
+    )
+    doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
+    return buf.getvalue()

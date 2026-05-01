@@ -53,7 +53,13 @@ pip install -q -r requirements.txt
 # ── 2. PostgreSQL via Docker ──────────────────────────────────────────────────
 if ! docker info &>/dev/null; then
     echo ""
-    echo "ERROR: Docker is not running. Please start Docker Desktop and re-run this script."
+    echo "ERROR: Docker is not running."
+    if [[ "$(uname)" == "Darwin" || "$(uname)" == "MINGW"* ]]; then
+        echo "  → Start Docker Desktop and re-run this script."
+    else
+        echo "  → Run: sudo systemctl start docker"
+        echo "  → Then re-run this script."
+    fi
     exit 1
 fi
 

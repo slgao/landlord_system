@@ -7,5 +7,5 @@ python-dotenv==1.2.2
 fastapi==0.136.1
 uvicorn[standard]==0.46.0
 python-jose[cryptography]==3.5.0
-passlib[bcrypt]==1.7.4
+bcrypt==5.0.0
 honcho==2.0.0

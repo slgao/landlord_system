@@ -18,6 +18,9 @@ migrate_to_head()
 
 st.set_page_config(page_title="Landlord Management System", layout="wide")
 
+from auth import streamlit_gate
+streamlit_gate()
+
 from page_modules import (
     dashboard,
     properties,

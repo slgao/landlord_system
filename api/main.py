@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from db import migrate_to_head
+from auth import require_auth
 from api.routers import properties, apartments, tenants, contracts, payments
 
 app = FastAPI(
@@ -21,12 +22,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(properties.router, prefix="/api")
-app.include_router(apartments.router, prefix="/api")
-app.include_router(tenants.router,    prefix="/api")
-app.include_router(contracts.router,  prefix="/api")
-app.include_router(payments.router,   prefix="/api")
+# Routers — all /api/* endpoints require authentication
+_auth = [Depends(require_auth)]
+app.include_router(properties.router, prefix="/api", dependencies=_auth)
+app.include_router(apartments.router, prefix="/api", dependencies=_auth)
+app.include_router(tenants.router,    prefix="/api", dependencies=_auth)
+app.include_router(contracts.router,  prefix="/api", dependencies=_auth)
+app.include_router(payments.router,   prefix="/api", dependencies=_auth)
 
 
 @app.on_event("startup")

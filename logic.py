@@ -12,7 +12,10 @@
 # ================================================================
 import calendar as _calendar
 from datetime import date as _date
+from decimal import Decimal
 from db import fetch
+
+_ZERO = Decimal("0")
 
 
 def strom_calc(cost_flat, tenants, bill_days, eff_days, limit_per_month=50):
@@ -280,7 +283,7 @@ def detect_overdue(months_back=3):
                           if end_str and end_str != "None" else None)
 
         overdue_months = []
-        total_due      = 0.0
+        total_due      = _ZERO
 
         for m_start in months_to_check:
             m_end = m_start.replace(
@@ -301,9 +304,9 @@ def detect_overdue(months_back=3):
             if gap > 0:
                 overdue_months.append({
                     "month":    m_start.strftime("%B %Y"),
-                    "expected": rent,
-                    "paid":     paid,
-                    "gap":      gap,
+                    "expected": float(rent),
+                    "paid":     float(paid),
+                    "gap":      float(gap),
                 })
                 total_due += gap
 
@@ -314,7 +317,7 @@ def detect_overdue(months_back=3):
                 "email":          t_email or "",
                 "apartment":      apt_name,
                 "overdue_months": overdue_months,
-                "total_due":      round(total_due, 2),
+                "total_due":      float(round(total_due, 2)),
             })
 
     return results

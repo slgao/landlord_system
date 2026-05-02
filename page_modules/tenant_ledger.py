@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
+from decimal import Decimal
 from db import fetch
 from logic import tenant_ledger
 from currencies import sym, fmt
+
+_ZERO = Decimal("0")
 
 
 def show():
@@ -23,9 +26,9 @@ def show():
         )
         st.dataframe(df, width="stretch", hide_index=True)
         # Show totals per currency
-        totals: dict[str, float] = {}
+        totals: dict[str, Decimal] = {}
         for r in ledger:
-            totals[r[2]] = totals.get(r[2], 0.0) + r[0]
+            totals[r[2]] = totals.get(r[2], _ZERO) + r[0]
         total_str = "  |  ".join(fmt(v, k) for k, v in totals.items())
         st.metric("Total paid", total_str)
     else:

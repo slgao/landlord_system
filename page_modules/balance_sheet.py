@@ -2,8 +2,11 @@ import streamlit as st
 import pandas as pd
 import calendar
 from datetime import date
+from decimal import Decimal
 from db import fetch
 from pdfgen import balance_sheet_pdf
+
+_ZERO = Decimal("0")
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -42,7 +45,7 @@ def _flat_costs_month(prop_id, m_start, m_end, y, m):
           AND fc.valid_from <= ?
           AND (fc.valid_to IS NULL OR fc.valid_to = 'None' OR fc.valid_to >= ?)
     """, (prop_id, m_end, m_start))
-    total = 0.0
+    total = _ZERO
     for amt, freq, vf in rows:
         if freq == "monthly":
             total += amt
@@ -202,7 +205,7 @@ def show():
 
         # ── Monthly table ──────────────────────────────────────────
         rows            = []
-        tot_expected    = tot_actual = tot_costs = 0.0
+        tot_expected    = tot_actual = tot_costs = _ZERO
 
         for m in range(1, max_month + 1):
             m_start = f"{y}-{m:02d}-01"
@@ -271,9 +274,9 @@ def show():
                 is_wg      = len(members) > 1
                 flat_label = members[0][2] or members[0][1]
 
-                total_rent     = 0.0
-                total_received = 0.0
-                total_costs    = 0.0
+                total_rent     = _ZERO
+                total_received = _ZERO
+                total_costs    = _ZERO
                 apt_ids        = [m[0] for m in members]
 
                 # Per-apartment: rent, received payments, costs
@@ -295,7 +298,7 @@ def show():
                         JOIN contracts c ON p.contract_id = c.id
                         WHERE c.apartment_id = ? AND p.payment_date BETWEEN ? AND ?
                     """, (apt_id, y_start, y_end))
-                    total_received += rec[0][0] if rec else 0.0
+                    total_received += rec[0][0] if rec else _ZERO
 
                     costs = fetch("""
                         SELECT fc.amount, fc.frequency FROM flat_costs fc

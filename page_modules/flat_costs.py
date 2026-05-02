@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+from decimal import Decimal
 from itertools import groupby
 from db import fetch, insert, execute
+
+_ZERO = Decimal("0")
 
 
 def _monthly_equiv(amount, frequency):
@@ -10,7 +13,7 @@ def _monthly_equiv(amount, frequency):
         return amount
     elif frequency == "annual":
         return amount / 12
-    return 0.0
+    return _ZERO
 
 
 def _is_active(valid_from, valid_to, today):
@@ -48,11 +51,11 @@ def show():
 
         # ── Grand summary table ────────────────────────────────────
         summary_rows = []
-        grand_monthly = 0.0
+        grand_monthly = _ZERO
         for (prop, flat), rows in grouped.items():
             active_monthly = sum(
-                _monthly_equiv(r[5], r[6])
-                for r in rows if _is_active(r[7], r[8], today)
+                (_monthly_equiv(r[5], r[6]) for r in rows if _is_active(r[7], r[8], today)),
+                _ZERO,
             )
             onetime = sum(1 for r in rows
                           if r[6] == "one-time" and _is_active(r[7], r[8], today))
@@ -83,11 +86,11 @@ def show():
             label = f"{prop} — {flat}"
             with st.expander(label, expanded=False):
                 table_rows = []
-                active_monthly = 0.0
+                active_monthly = _ZERO
                 onetime_active = 0
                 for r in rows:
                     active = _is_active(r[7], r[8], today)
-                    mo = _monthly_equiv(r[5], r[6]) if active else 0.0
+                    mo = _monthly_equiv(r[5], r[6]) if active else _ZERO
                     if active:
                         if r[6] == "one-time":
                             onetime_active += 1

@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
+from decimal import Decimal
 from db import fetch, execute
 from currencies import CURRENCY_LIST, CURRENCY_LABELS, sym, fmt
+
+_ZERO = Decimal("0")
 
 
 def show():
@@ -271,9 +274,9 @@ def show():
                 "FROM kaution_deductions WHERE contract_id=? ORDER BY date, id",
                 (cid,)
             )
-            total_deducted = sum(float(d[2] or 0) for d in deductions)
+            total_deducted = sum((d[2] or _ZERO for d in deductions), _ZERO)
             settled = cur_ret_d is not None
-            balance = 0.0 if settled else cur_amount - total_deducted
+            balance = _ZERO if settled else (cur_amount or _ZERO) - total_deducted
 
             m1, m2, m3 = st.columns(3)
             m1.metric("Kaution received", fmt(cur_amount, k_currency))
@@ -303,7 +306,7 @@ def show():
             with col2:
                 k_amount = st.number_input(
                     f"Kaution amount ({sym(k_new_currency)})", min_value=0.0,
-                    value=cur_amount, key=f"k_amount_{cid}"
+                    value=float(cur_amount or 0), key=f"k_amount_{cid}"
                 )
             with col3:
                 k_paid = st.date_input(

@@ -56,13 +56,9 @@ def _adapt(query: str) -> str:
 
 
 def _normalize(rows):
-    """Convert Decimal → float in every cell so existing arithmetic works unchanged.
-    PostgreSQL returns NUMERIC columns as decimal.Decimal; SQLite returned float."""
-    from decimal import Decimal
-    return [
-        tuple(float(v) if isinstance(v, Decimal) else v for v in row)
-        for row in rows
-    ]
+    """Pass-through. PostgreSQL returns NUMERIC as decimal.Decimal — we keep
+    that precision for accounting (item 1a from the code review)."""
+    return [tuple(row) for row in rows]
 
 
 def migrate_to_head() -> None:

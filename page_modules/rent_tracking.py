@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+from decimal import Decimal
 from db import fetch, execute
 from currencies import CURRENCY_LIST, CURRENCY_LABELS, sym, fmt
+
+_ZERO = Decimal("0")
 
 
 def show():
@@ -37,9 +40,9 @@ def show():
         )
         st.dataframe(df_monthly, width="stretch", hide_index=True)
         # Show totals per currency
-        totals: dict[str, float] = {}
+        totals: dict[str, Decimal] = {}
         for r in monthly_payments:
-            totals[r[5]] = totals.get(r[5], 0.0) + r[3]
+            totals[r[5]] = totals.get(r[5], _ZERO) + r[3]
         total_str = "  |  ".join(fmt(v, k) for k, v in totals.items())
         st.metric("Total collected", total_str)
     else:

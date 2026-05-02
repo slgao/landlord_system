@@ -42,7 +42,12 @@ def update_tenant(tenant_id: int, body: TenantIn):
 
 @router.delete("/{tenant_id}", status_code=204)
 def delete_tenant(tenant_id: int):
+    import psycopg2.errors
     rows = fetch("SELECT id FROM tenants WHERE id=?", (tenant_id,))
     if not rows:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    execute("DELETE FROM tenants WHERE id=?", (tenant_id,))
+    try:
+        execute("DELETE FROM tenants WHERE id=?", (tenant_id,))
+    except psycopg2.errors.ForeignKeyViolation:
+        raise HTTPException(status_code=409,
+                            detail="Tenant still has contracts — delete them first.")

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from db import init_db
+from db import migrate_to_head
 from api.routers import properties, apartments, tenants, contracts, payments
 
 app = FastAPI(
@@ -31,7 +31,7 @@ app.include_router(payments.router,   prefix="/api")
 
 @app.on_event("startup")
 def startup():
-    init_db()
+    migrate_to_head()
 
 
 @app.get("/", tags=["Health"])

@@ -41,7 +41,12 @@ def update_property(property_id: int, body: PropertyIn):
 
 @router.delete("/{property_id}", status_code=204)
 def delete_property(property_id: int):
+    import psycopg2.errors
     rows = fetch("SELECT id FROM properties WHERE id=?", (property_id,))
     if not rows:
         raise HTTPException(status_code=404, detail="Property not found")
-    execute("DELETE FROM properties WHERE id=?", (property_id,))
+    try:
+        execute("DELETE FROM properties WHERE id=?", (property_id,))
+    except psycopg2.errors.ForeignKeyViolation:
+        raise HTTPException(status_code=409,
+                            detail="Property still has apartments — delete them first.")

@@ -12,9 +12,9 @@
 # ================================================================
 
 import streamlit as st
-from db import init_db
+from db import migrate_to_head
 
-init_db()
+migrate_to_head()
 
 st.set_page_config(page_title="Landlord Management System", layout="wide")
 

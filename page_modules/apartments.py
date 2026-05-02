@@ -384,8 +384,13 @@ def show():
                 format_func=lambda x: f"#{x[0]} — {x[2]} ({x[1]})",
                 key="apt_delete"
             )
-            st.warning("Deleting an apartment does not automatically remove linked contracts.")
+            st.warning("Cannot delete an apartment that still has contracts attached.")
             if st.button("Delete Apartment", type="primary", key="btn_del_apt"):
-                execute("DELETE FROM apartments WHERE id=?", (to_del[0],))
-                st.success(f"Apartment '{to_del[2]}' deleted.")
-                st.rerun()
+                import psycopg2.errors
+                try:
+                    execute("DELETE FROM apartments WHERE id=?", (to_del[0],))
+                    st.success(f"Apartment '{to_del[2]}' deleted.")
+                    st.rerun()
+                except psycopg2.errors.ForeignKeyViolation:
+                    st.error(f"Cannot delete '{to_del[2]}' — it still has contracts. "
+                             "Delete or reassign the contracts first.")

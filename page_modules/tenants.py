@@ -222,6 +222,11 @@ def show():
                                   key="tenant_delete")
             st.warning("This will permanently remove the tenant.")
             if st.button("Delete Tenant", type="primary", key="btn_del_tenant"):
-                execute("DELETE FROM tenants WHERE id=?", (to_del[0],))
-                st.success(f"Tenant '{to_del[1]}' removed.")
-                st.rerun()
+                import psycopg2.errors
+                try:
+                    execute("DELETE FROM tenants WHERE id=?", (to_del[0],))
+                    st.success(f"Tenant '{to_del[1]}' removed.")
+                    st.rerun()
+                except psycopg2.errors.ForeignKeyViolation:
+                    st.error(f"Cannot delete '{to_del[1]}' — they still have contracts. "
+                             "Delete the contracts first.")

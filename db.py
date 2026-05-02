@@ -13,15 +13,31 @@
 
 import os
 import psycopg2
+from psycopg2 import pool as _pg_pool
 from dotenv import load_dotenv
 
 load_dotenv()
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
+_POOL_MIN = int(os.environ.get("DB_POOL_MIN", "1"))
+_POOL_MAX = int(os.environ.get("DB_POOL_MAX", "10"))
+_pool: _pg_pool.AbstractConnectionPool | None = None
+
+
+def _get_pool() -> _pg_pool.AbstractConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = _pg_pool.ThreadedConnectionPool(_POOL_MIN, _POOL_MAX, DATABASE_URL)
+    return _pool
+
 
 def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+    return _get_pool().getconn()
+
+
+def put_conn(conn) -> None:
+    _get_pool().putconn(conn)
 
 
 def _adapt(query: str) -> str:
@@ -49,208 +65,13 @@ def _normalize(rows):
     ]
 
 
-def init_db():
-    conn = get_conn()
-    c = conn.cursor()
+def migrate_to_head() -> None:
+    """Run `alembic upgrade head` programmatically. Idempotent."""
+    from alembic.config import Config
+    from alembic import command
+    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alembic.ini")
+    command.upgrade(Config(cfg_path), "head")
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS properties(
-        id      SERIAL PRIMARY KEY,
-        name    TEXT,
-        address TEXT
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS apartments(
-        id          SERIAL PRIMARY KEY,
-        property_id INTEGER,
-        name        TEXT,
-        flat        TEXT
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS tenants(
-        id     SERIAL PRIMARY KEY,
-        name   TEXT,
-        email  TEXT,
-        gender TEXT DEFAULT 'diverse'
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS contracts(
-        id                      SERIAL PRIMARY KEY,
-        tenant_id               INTEGER,
-        apartment_id            INTEGER,
-        rent                    NUMERIC(10,2),
-        start_date              TEXT,
-        end_date                TEXT,
-        kaution_amount          NUMERIC(10,2),
-        kaution_paid_date       TEXT,
-        kaution_returned_date   TEXT,
-        kaution_returned_amount NUMERIC(10,2),
-        terminated              INTEGER DEFAULT 0
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS payments(
-        id           SERIAL PRIMARY KEY,
-        contract_id  INTEGER,
-        amount       NUMERIC(10,2),
-        payment_date TEXT
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS kaution_deductions(
-        id             SERIAL PRIMARY KEY,
-        contract_id    INTEGER NOT NULL,
-        date           TEXT,
-        amount         NUMERIC(10,2),
-        category       TEXT,
-        reason         TEXT,
-        reference_type TEXT,
-        reference_id   INTEGER
-    )
-    """)
-    c.execute(
-        "CREATE INDEX IF NOT EXISTS ix_kaution_deductions_contract_id "
-        "ON kaution_deductions(contract_id)"
-    )
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS flat_costs(
-        id           SERIAL PRIMARY KEY,
-        apartment_id INTEGER,
-        cost_type    TEXT,
-        amount       NUMERIC(10,2),
-        frequency    TEXT,
-        valid_from   TEXT,
-        valid_to     TEXT
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS reminders(
-        id           SERIAL PRIMARY KEY,
-        contract_id  INTEGER,
-        sent_date    TEXT,
-        months_due   TEXT,
-        amount_due   NUMERIC(10,2),
-        channel      TEXT,
-        note         TEXT
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS heizung_meters(
-        id                SERIAL PRIMARY KEY,
-        apartment_id      INTEGER,
-        serial_number     TEXT,
-        description       TEXT,
-        unit_price        NUMERIC(10,4) DEFAULT 0.0,
-        unit_label        TEXT DEFAULT 'Einheiten',
-        conversion_factor NUMERIC(10,4) DEFAULT 1.0
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS gas_meters(
-        id           SERIAL PRIMARY KEY,
-        apartment_id INTEGER NOT NULL,
-        serial_number TEXT,
-        description  TEXT,
-        z_zahl       NUMERIC(10,4) DEFAULT 1.0,
-        brennwert    NUMERIC(10,4) DEFAULT 10.0
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS strom_meters(
-        id            SERIAL PRIMARY KEY,
-        apartment_id  INTEGER NOT NULL,
-        serial_number TEXT,
-        description   TEXT
-    )
-    """)
-    c.execute(
-        "CREATE INDEX IF NOT EXISTS ix_strom_meters_apartment_id "
-        "ON strom_meters(apartment_id)"
-    )
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS wasser_meters(
-        id            SERIAL PRIMARY KEY,
-        apartment_id  INTEGER NOT NULL,
-        serial_number TEXT,
-        description   TEXT,
-        type          TEXT NOT NULL DEFAULT 'kalt'
-    )
-    """)
-    c.execute(
-        "CREATE INDEX IF NOT EXISTS ix_wasser_meters_apartment_id "
-        "ON wasser_meters(apartment_id)"
-    )
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS meter_readings(
-        id           SERIAL PRIMARY KEY,
-        meter_type   TEXT          NOT NULL,
-        meter_id     INTEGER       NOT NULL,
-        reading_date TEXT          NOT NULL,
-        reading      NUMERIC(12,3) NOT NULL,
-        note         TEXT
-    )
-    """)
-    c.execute(
-        "CREATE INDEX IF NOT EXISTS ix_meter_readings_meter "
-        "ON meter_readings(meter_type, meter_id, reading_date)"
-    )
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS co_tenants(
-        id          SERIAL PRIMARY KEY,
-        contract_id INTEGER NOT NULL,
-        name        TEXT NOT NULL,
-        gender      TEXT DEFAULT 'diverse',
-        email       TEXT,
-        in_contract INTEGER DEFAULT 0
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS billing_profiles(
-        id           SERIAL PRIMARY KEY,
-        tenant_id    INTEGER,
-        label        TEXT,
-        created_date TEXT,
-        data         TEXT
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS config(
-        key   TEXT PRIMARY KEY,
-        value TEXT
-    )
-    """)
-
-    # Migrations: add currency columns to existing tables (idempotent)
-    c.execute("ALTER TABLE payments  ADD COLUMN IF NOT EXISTS currency          VARCHAR(3) DEFAULT 'EUR'")
-    c.execute("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS currency          VARCHAR(3) DEFAULT 'EUR'")
-    c.execute("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS kaution_currency  VARCHAR(3) DEFAULT 'EUR'")
-
-    # Meter scope: 'room' = belongs to this room only, 'shared' = shared across the whole flat
-    c.execute("ALTER TABLE heizung_meters ADD COLUMN IF NOT EXISTS scope VARCHAR(10) DEFAULT 'room'")
-    c.execute("ALTER TABLE gas_meters     ADD COLUMN IF NOT EXISTS scope VARCHAR(10) DEFAULT 'shared'")
-    c.execute("ALTER TABLE strom_meters   ADD COLUMN IF NOT EXISTS scope VARCHAR(10) DEFAULT 'shared'")
-    c.execute("ALTER TABLE wasser_meters  ADD COLUMN IF NOT EXISTS scope VARCHAR(10) DEFAULT 'shared'")
-
-    conn.commit()
-    conn.close()
 
 
 def get_config(key, default=None):
@@ -299,39 +120,46 @@ def set_secret_config(key, value):
 
 def insert(table, values):
     conn = get_conn()
-    c = conn.cursor()
-    placeholders = ",".join(["%s"] * len(values))
-    c.execute(
-        f"INSERT INTO {table} VALUES (DEFAULT,{placeholders})",
-        values
-    )
-    conn.commit()
-    conn.close()
+    try:
+        c = conn.cursor()
+        placeholders = ",".join(["%s"] * len(values))
+        c.execute(
+            f"INSERT INTO {table} VALUES (DEFAULT,{placeholders})",
+            values
+        )
+        conn.commit()
+    finally:
+        put_conn(conn)
 
 
 def delete(table, entry_id):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute(f"DELETE FROM {table} WHERE id = %s", (entry_id,))
-    conn.commit()
-    conn.close()
+    try:
+        c = conn.cursor()
+        c.execute(f"DELETE FROM {table} WHERE id = %s", (entry_id,))
+        conn.commit()
+    finally:
+        put_conn(conn)
 
 
 def fetch(query, params=()):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute(_adapt(query), params)
-    rows = _normalize(c.fetchall())
-    conn.close()
-    return rows
+    try:
+        c = conn.cursor()
+        c.execute(_adapt(query), params)
+        return _normalize(c.fetchall())
+    finally:
+        put_conn(conn)
 
 
 def execute(query, params=()):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute(_adapt(query), params)
-    conn.commit()
-    conn.close()
+    try:
+        c = conn.cursor()
+        c.execute(_adapt(query), params)
+        conn.commit()
+    finally:
+        put_conn(conn)
 
 
 def get_tenant_address(tenant_name):

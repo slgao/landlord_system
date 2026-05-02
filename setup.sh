@@ -88,7 +88,7 @@ fi
 
 # ── 4. Initialise schema ──────────────────────────────────────────────────────
 echo "Initialising database schema..."
-python3 -c "from db import init_db; init_db()"
+alembic upgrade head
 
 # ── 5. Done ───────────────────────────────────────────────────────────────────
 echo ""

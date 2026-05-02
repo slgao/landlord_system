@@ -21,6 +21,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 PDF_DIR = Path("pdf")
+PDF_DIR.mkdir(exist_ok=True)
 
 # ── Palette ────────────────────────────────────────────────────────────────────
 C_NAVY    = colors.HexColor("#1e2d3d")   # main dark

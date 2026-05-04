@@ -133,6 +133,7 @@ A web-based property management application tailored for landlords in Germany. B
 - Delete individual readings
 
 ### Nebenkostenabrechnung
+- **Landlord signature**: upload an image (PNG/JPG) *or* draw directly on an HTML5 canvas whiteboard — supports undo step-by-step and clear; saved signature is auto-cropped to content and shown in a live-refreshing preview
 - Freely select which utilities to include per Abrechnung: **Strom**, **Gas**, **Kaltwasser**, **Warmwasser**, **Betriebskosten**, **Heizkosten** — each is independent and optional
 - **WG meter scope awareness**: meter lookup respects the scope tag — *Room only* meters (e.g. individual Heizkostenverteiler) are shown only for their room; *Shared* meters (e.g. a single Stromzähler for the whole flat) are shown for all rooms in the WG
 - **Multi-contract tenant support**: contract selector appears for tenants with multiple apartments; address auto-resolved from selected contract's property
@@ -161,7 +162,7 @@ A web-based property management application tailored for landlords in Germany. B
 - All Mitmieter (in-contract co-tenants) appear in the address block and salutation
 - Gender-aware salutation for one or multiple named tenants
 - Highlighted outstanding amount with due date
-- Landlord signature embedded
+- Landlord signature embedded (shared with Nebenkostenabrechnung — upload or draw once, used everywhere)
 
 ---
 
@@ -549,6 +550,9 @@ Interactive docs are auto-generated at **`http://localhost:8000/docs`**.
 | GET | `/api/payments/` | List payments (filter: `?contract_id=` or `?tenant_id=`) |
 | POST | `/api/payments/` | Record a payment |
 | DELETE | `/api/payments/{id}` | Delete a payment |
+| GET | `/api/signature` | Get the current landlord signature PNG |
+| POST | `/api/signature` | Save a new signature (base64 data URL body) |
+| GET | `/api/signature-pad` | HTML5 canvas drawing pad (embedded as iframe in Streamlit) |
 
 ### Architecture
 

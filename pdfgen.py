@@ -245,6 +245,7 @@ def _total_box(items):
 
 def _signature_block(landlord_name, signature_path, s):
     from reportlab.platypus import Image as RLImage
+    from reportlab.lib.pagesizes import A4
     story = []
     story.append(Spacer(1, 24))
     story.append(Paragraph("Mit freundlichen Grüßen,", s["body"]))
@@ -256,8 +257,16 @@ def _signature_block(landlord_name, signature_path, s):
         max_w, max_h = 110.0, 45.0
         scale = min(max_w / nat_w, max_h / nat_h, 1.0)
         img = RLImage(signature_path, width=nat_w * scale, height=nat_h * scale)
-        img.hAlign = "LEFT"
-        story.append(img)
+        usable_w = A4[0] - 25 * mm - 20 * mm
+        tbl = Table([[img]], colWidths=[usable_w])
+        tbl.setStyle(TableStyle([
+            ("ALIGN",         (0, 0), (0, 0), "LEFT"),
+            ("LEFTPADDING",   (0, 0), (0, 0), 0),
+            ("RIGHTPADDING",  (0, 0), (0, 0), 0),
+            ("TOPPADDING",    (0, 0), (0, 0), 0),
+            ("BOTTOMPADDING", (0, 0), (0, 0), 0),
+        ]))
+        story.append(tbl)
     else:
         story.append(Spacer(1, 48))
 

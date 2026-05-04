@@ -40,20 +40,21 @@ _SIGNATURE_PAD_HTML = """<!DOCTYPE html>
 <head>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; padding: 4px; font-family: sans-serif; background: #fff; }
-  #wrap { display: flex; flex-direction: column; gap: 6px; }
+  body { margin: 0; padding: 4px; font-family: sans-serif; background: #fff;
+         height: 100vh; overflow: hidden; }
+  #wrap { display: flex; flex-direction: column; gap: 6px; height: 100%; }
   canvas {
-    display: block; width: 100%; height: auto;
+    display: block; width: 100%; flex: 1; min-height: 60px;
     border: 1px solid #ccc; border-radius: 4px;
     background: #fff; cursor: crosshair; touch-action: none;
   }
-  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
   button { padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
   #btn-save  { background: #4CAF50; color: #fff; }
   #btn-undo  { background: #2196F3; color: #fff; }
   #btn-clear { background: #e0e0e0; color: #333; }
   #btn-undo:disabled, #btn-clear:disabled { opacity: 0.4; cursor: default; }
-  #msg { font-size: 13px; min-height: 18px; }
+  #msg { font-size: 13px; min-height: 18px; flex-shrink: 0; }
 </style>
 </head>
 <body>

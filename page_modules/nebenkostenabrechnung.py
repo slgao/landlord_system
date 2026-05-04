@@ -1,5 +1,6 @@
 import json
 import streamlit as st
+import streamlit.components.v1 as st_components
 import calendar
 from datetime import date, timedelta
 from pathlib import Path
@@ -161,15 +162,44 @@ def show():
         key="nk_landlord_name",
     )
     sig_path = "pdf/signature.png"
-    if Path(sig_path).exists():
-        st.image(sig_path, width=200, caption="Current signature")
-    sig_upload = st.file_uploader("Upload signature image (PNG/JPG)",
-                                  type=["png", "jpg", "jpeg"], key="sig_abrechnung")
-    if sig_upload:
-        Path("pdf").mkdir(exist_ok=True)
-        with open(sig_path, "wb") as f:
-            f.write(sig_upload.read())
-        st.success("Signature saved.")
+    # Self-refreshing preview: polls GET /api/signature every 2 s so it updates
+    # immediately after a new signature is drawn and saved in the iframe below.
+    st_components.html(
+        """
+        <div style="font-size:11px;color:#888;margin-bottom:3px;">Current signature</div>
+        <img id="sp" alt="" style="max-width:200px;max-height:70px;
+             border:1px solid #ddd;border-radius:4px;background:#fff;padding:3px;
+             display:none;">
+        <script>
+        const img = document.getElementById('sp');
+        function refresh() {
+          const next = new Image();
+          next.onload  = () => { img.src = next.src; img.style.display = 'block'; };
+          next.onerror = () => {};          // keep showing the last good image
+          next.src = 'http://localhost:8000/api/signature?t=' + Date.now();
+        }
+        refresh();
+        setInterval(refresh, 2000);
+        </script>
+        """,
+        height=90,
+    )
+
+    tab_upload, tab_draw = st.tabs(["Upload signature", "Draw signature"])
+
+    with tab_upload:
+        sig_upload = st.file_uploader("Upload signature image (PNG/JPG)",
+                                      type=["png", "jpg", "jpeg"], key="sig_abrechnung")
+        if sig_upload:
+            Path("pdf").mkdir(exist_ok=True)
+            with open(sig_path, "wb") as f:
+                f.write(sig_upload.read())
+            st.success("Signature saved.")
+            st.rerun()
+
+    with tab_draw:
+        # Served from FastAPI (same origin as the POST endpoint) — no CORS issues.
+        st_components.iframe("http://localhost:8000/api/signature-pad", height=270)
 
     # ── Tenant selection ───────────────────────────────────────────
     contract_tenants = fetch("""
@@ -1093,7 +1123,7 @@ def show():
             WHERE id=?
         """, (selected_contract_id,))
         kaution = (
-            kaution_row[0][0]
+            float(kaution_row[0][0])
             if kaution_row and kaution_row[0][0] and not kaution_row[0][1]
             else None
         )

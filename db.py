@@ -77,7 +77,7 @@ def get_config(key, default=None):
 
 def set_config(key, value):
     execute(
-        "INSERT INTO config (key, value) VALUES (%s, %s) "
+        "INSERT INTO config (key, value) VALUES (?, ?) "
         "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
         (key, value)
     )
@@ -124,6 +124,9 @@ def insert(table, values):
             values
         )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         put_conn(conn)
 
@@ -134,6 +137,9 @@ def delete(table, entry_id):
         c = conn.cursor()
         c.execute(f"DELETE FROM {table} WHERE id = %s", (entry_id,))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         put_conn(conn)
 
@@ -144,6 +150,9 @@ def fetch(query, params=()):
         c = conn.cursor()
         c.execute(_adapt(query), params)
         return _normalize(c.fetchall())
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         put_conn(conn)
 
@@ -154,6 +163,9 @@ def execute(query, params=()):
         c = conn.cursor()
         c.execute(_adapt(query), params)
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         put_conn(conn)
 

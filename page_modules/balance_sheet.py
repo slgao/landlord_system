@@ -77,7 +77,7 @@ def _suggestions(flat_label, is_wg, all_names, total_rent, total_received,
     level: 'success' | 'warning' | 'error' | 'info'
     """
     hints = []
-    vacant = total_rent == 0.0 and not all_names
+    vacant = total_rent == _ZERO and not all_names
 
     # ── Vacancy ───────────────────────────────────────────────────
     if vacant:

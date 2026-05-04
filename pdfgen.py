@@ -244,20 +244,23 @@ def _total_box(items):
 
 
 def _signature_block(landlord_name, signature_path, s):
+    from reportlab.platypus import Image as RLImage
     story = []
-    story.append(Paragraph("Mit freundlichen Grüßen,", s["body"]))
     story.append(Spacer(1, 24))
+    story.append(Paragraph("Mit freundlichen Grüßen,", s["body"]))
+    story.append(Spacer(1, 10))
+
     if signature_path:
-        from reportlab.platypus import Image as RLImage
-        sig = Table([[RLImage(signature_path, width=80, height=33), ""]], colWidths=[80, 388])
-        sig.setStyle(TableStyle([
-            ("LEFTPADDING",   (0, 0), (0, -1), 0),
-            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
-            ("TOPPADDING",    (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-        story.append(sig)
-        story.append(Spacer(1, 4))
+        img = RLImage(signature_path)
+        nat_w, nat_h = img.imageWidth, img.imageHeight
+        max_w, max_h = 110.0, 45.0
+        scale = min(max_w / nat_w, max_h / nat_h, 1.0)
+        img = RLImage(signature_path, width=nat_w * scale, height=nat_h * scale)
+        img.hAlign = "LEFT"
+        story.append(img)
+    else:
+        story.append(Spacer(1, 48))
+
     story.append(Paragraph(f"<b>{landlord_name}</b>", s["body"]))
     return story
 

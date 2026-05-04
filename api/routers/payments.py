@@ -61,6 +61,8 @@ def create_payment(body: PaymentIn):
         JOIN apartments a ON a.id = c.apartment_id
         WHERE p.contract_id=? ORDER BY p.id DESC LIMIT 1
     """, (body.contract_id,))
+    if not rows:
+        raise HTTPException(status_code=500, detail="Payment created but could not be retrieved")
     return _row_to_payment(rows[0])
 
 

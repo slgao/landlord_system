@@ -263,10 +263,10 @@ def show():
                 "FROM contracts WHERE id=?",
                 (cid,)
             )[0]
-            cur_amount = float(current[0]) if current[0] is not None else 0.0
+            cur_amount = Decimal(current[0]) if current[0] is not None else _ZERO
             cur_paid   = current[1]
             cur_ret_d  = current[2]
-            cur_ret_a  = float(current[3]) if current[3] is not None else None
+            cur_ret_a  = Decimal(current[3]) if current[3] is not None else None
             k_currency = current[4]
 
             deductions = fetch(
@@ -401,12 +401,12 @@ def show():
                 with r2:
                     r_amount = st.number_input(
                         f"Returned amount ({sym(k_currency)})", min_value=0.0,
-                        value=max(balance, 0.0), step=10.0,
+                        value=float(max(balance, _ZERO)), step=10.0,
                         key=f"k_r_amount_{cid}",
                         help="Defaults to the open balance. Override if you returned a different amount."
                     )
                 if st.button("Mark Kaution returned", key=f"btn_k_return_{cid}"):
-                    if r_amount > balance + 1e-9:
+                    if r_amount > float(balance) + 1e-9:
                         st.warning(
                             f"Returned amount ({fmt(r_amount, k_currency)}) exceeds the open "
                             f"balance ({fmt(balance, k_currency)}). Either lower the amount, "

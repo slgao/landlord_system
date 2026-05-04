@@ -53,7 +53,7 @@ def show():
     # ── Payment History per Contract ───────────────────────────────
     all_contracts = fetch("""
         SELECT c.id, t.name, a.name, COALESCE(c.currency, 'EUR'),
-               c.end_date, COALESCE(c.terminated, 0)
+               c.end_date, COALESCE(c.terminated, 0), c.rent
         FROM contracts c
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
@@ -155,7 +155,8 @@ def show():
             format_func=lambda c: CURRENCY_LABELS[c],
             key="pay_currency_new",
         )
-        amount   = st.number_input(f"Payment amount ({sym(pay_currency)})", value=650.0, key="pay_amount_new")
+        default_amount = float(contract_choice[6]) if contract_choice[6] else 0.0
+        amount   = st.number_input(f"Payment amount ({sym(pay_currency)})", value=default_amount, min_value=0.0, step=0.01, key=f"pay_amount_new_{contract_choice[0]}")
         pay_date = st.date_input("Payment date", key="pay_date_new")
         if st.button("Add Payment", key="btn_add_pay"):
             execute(

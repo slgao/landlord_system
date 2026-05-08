@@ -392,7 +392,7 @@ To use the app on multiple machines, point both at a shared [Neon](https://neon.
 3. Run the migration script:
 
 ```bash
-./migrate_to_neon.sh "postgresql://user:pass@host/neondb?sslmode=require&channel_binding=require"
+./scripts/migrate_to_neon.sh "postgresql://user:pass@host/neondb?sslmode=require&channel_binding=require"
 ```
 
 The script will:
@@ -504,32 +504,20 @@ All PDFs are saved to the `pdf/` directory and can be downloaded directly from t
 
 ## Database Backups
 
-### Manual backup
+**Important:** Neon is the single source of truth. Never write directly to local Docker while Neon is active — that's what creates divergence. The local Docker is a read-only backup copy.
 
-```bash
-# Create a compressed dump
-docker exec landlord-pg pg_dump -U landlord landlord_dev | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
-```
+### Automated daily backup (Neon → local file)
 
-### Automated daily backup
-
-A backup script is included at `~/landlord_backups/backup.sh`. It runs every night at 22:00 (Europe/Berlin) via cron, keeps the last 30 backups, and logs results.
+`scripts/backup.sh` reads `DATABASE_URL` from `.env` and dumps Neon to a compressed local file. It keeps the last 30 backups.
 
 **First-time setup:**
 
 ```bash
-# 1. Create the backup directory
-mkdir -p ~/landlord_backups
+# 1. Test the backup manually
+./scripts/backup.sh
 
-# 2. Copy the backup script
-cp utils/backup.sh ~/landlord_backups/backup.sh
-chmod +x ~/landlord_backups/backup.sh
-
-# 3. Test it manually
-~/landlord_backups/backup.sh
-
-# 4. Schedule via cron (runs daily at 22:00 Europe/Berlin)
-(crontab -l 2>/dev/null; echo "CRON_TZ=Europe/Berlin"; echo "0 22 * * * /Users/$(whoami)/landlord_backups/backup.sh >> /Users/$(whoami)/landlord_backups/backup.log 2>&1") | crontab -
+# 2. Schedule via cron (runs daily at 22:00 Europe/Berlin)
+(crontab -l 2>/dev/null; echo "CRON_TZ=Europe/Berlin"; echo "0 22 * * * $PWD/scripts/backup.sh >> $HOME/landlord_backups/backup.log 2>&1") | crontab -
 ```
 
 **Check backup log:**
@@ -544,10 +532,22 @@ cat ~/landlord_backups/backup.log
 # List available backups
 ls -lh ~/landlord_backups/landlord_*.sql.gz
 
-# Restore (CAUTION: overwrites current data)
-gunzip -c ~/landlord_backups/landlord_20260408_203842.sql.gz \
-  | docker exec -i landlord-pg psql -U landlord -d landlord_dev
+# Restore to local Docker (CAUTION: overwrites current local data)
+gunzip -c ~/landlord_backups/landlord_20260408_203842.sql.gz | docker cp /dev/stdin landlord-pg:/tmp/restore.sql
+docker exec landlord-pg psql "postgresql://landlord:secret@localhost:5432/landlord_dev" \
+  -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+docker exec landlord-pg psql "postgresql://landlord:secret@localhost:5432/landlord_dev" -f /tmp/restore.sql
 ```
+
+### Sync local Docker from Neon
+
+If local Docker is out of date, pull the latest Neon data into it with:
+
+```bash
+./scripts/sync_local_from_neon.sh
+```
+
+This wipes the local Docker schema and restores an exact copy of Neon. Run it on any machine that has drifted out of sync.
 
 ### Backup summary
 
@@ -558,7 +558,7 @@ gunzip -c ~/landlord_backups/landlord_20260408_203842.sql.gz \
 | Retention | Last 30 days |
 | Log | `~/landlord_backups/backup.log` |
 
-> **macOS note:** cron only runs while the Mac is awake. If reliability matters, schedule the backup for a time the Mac is normally on.
+> **Linux note:** cron runs as a background service and does not require the machine to be awake at the exact minute — it will run the job as soon as the machine is on after a missed schedule.
 
 ---
 

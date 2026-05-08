@@ -172,7 +172,7 @@ A web-based property management application tailored for landlords in Germany. B
 |----------------|--------------------------|
 | UI (admin)     | Streamlit                |
 | API            | FastAPI + Uvicorn        |
-| Database       | PostgreSQL 16 (Docker)   |
+| Database       | PostgreSQL 16 (Docker) or Neon (cloud) |
 | DB Driver      | psycopg2                 |
 | Migrations     | Alembic                  |
 | PDF Engine     | ReportLab                |
@@ -377,6 +377,46 @@ alembic upgrade head
 alembic revision -m "add_phone_to_tenants"
 # Edit the generated file in alembic/versions/, then:
 alembic upgrade head
+```
+
+---
+
+## Cloud Database (Neon)
+
+To use the app on multiple machines, point both at a shared [Neon](https://neon.tech) PostgreSQL instance instead of a local Docker container. Neon's free tier (EU Frankfurt region) is sufficient for a personal landlord system.
+
+### One-time migration: local Docker → Neon
+
+1. Create a project on [neon.tech](https://neon.tech) — choose the **EU (Frankfurt)** region
+2. Copy your connection string from the Neon dashboard
+3. Run the migration script:
+
+```bash
+./migrate_to_neon.sh "postgresql://user:pass@host/neondb?sslmode=require&channel_binding=require"
+```
+
+The script will:
+- Dump the local Docker database
+- Wipe the Neon schema clean (safe to re-run)
+- Restore all data into Neon
+- Print a row-count summary to confirm
+
+4. Update `DATABASE_URL` in `.env` to your Neon connection string (the script prints the exact lines to paste)
+
+### Setting up on a second machine
+
+No migration needed — just clone the repo and set `DATABASE_URL` in `.env` to the same Neon connection string. Alembic runs automatically on startup and confirms the schema is up to date.
+
+### Switching back to local
+
+Swap the `DATABASE_URL` comment in `.env`:
+
+```bash
+# NEON
+# DATABASE_URL=postgresql://...neon...
+
+# LOCAL (start landlord-pg container first)
+DATABASE_URL=postgresql://landlord:secret@localhost:5432/landlord_dev
 ```
 
 ---

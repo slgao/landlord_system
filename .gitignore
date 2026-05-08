@@ -216,3 +216,4 @@ backups/
 
 # Emacs undo-tree backup files
 *.~undo-tree~
+local_backup.sql

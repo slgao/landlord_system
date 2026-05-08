@@ -968,7 +968,7 @@ def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signat
 
 # ── Balance Sheet Annual Report ────────────────────────────────────────────────
 
-def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung"):
+def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", signature_path=None):
     """
     Generate a balance sheet annual report and return PDF bytes.
 
@@ -1250,7 +1250,7 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung"):
         story.append(HRFlowable(width="100%", thickness=0.5, color=C_MGRAY, spaceBefore=4, spaceAfter=14))
 
     # ── Closing signature ─────────────────────────────────────────────────────
-    story.extend(_signature_block(landlord_name, None, s))
+    story.extend(_signature_block(landlord_name, signature_path, s))
 
     # ── Build with page footer ────────────────────────────────────────────────
     def _page_footer(canvas, doc):

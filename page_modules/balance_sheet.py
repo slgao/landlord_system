@@ -3,6 +3,7 @@ import pandas as pd
 import calendar
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from db import fetch
 from pdfgen import balance_sheet_pdf
 
@@ -138,7 +139,12 @@ def show():
                           index=1)   # default to current year
     y      = int(year)
 
-    dl_placeholder = st.empty()   # filled with PDF download button at the end
+    dl_placeholder = st.empty()   # filled with generate/download button at the end
+    _pdf_key = f"balance_pdf_{y}"
+    # Invalidate cached PDF when year changes
+    if st.session_state.get("balance_pdf_year") != y:
+        st.session_state.pop(_pdf_key, None)
+        st.session_state["balance_pdf_year"] = y
 
     properties = fetch("SELECT id, name FROM properties ORDER BY name")
     if not properties:
@@ -494,11 +500,19 @@ def show():
     # ═══════════════════════════════════════════════════════════════
     # PDF DOWNLOAD (fills the placeholder placed after the year selector)
     # ═══════════════════════════════════════════════════════════════
-    pdf_bytes = balance_sheet_pdf(y, pdf_snapshot, pdf_props)
     with dl_placeholder:
-        st.download_button(
-            label="📥 Download PDF Report",
-            data=pdf_bytes,
-            file_name=f"Bilanz_{y}.pdf",
-            mime="application/pdf",
-        )
+        if _pdf_key not in st.session_state:
+            if st.button("📊 Generate PDF Report", key="btn_gen_pdf"):
+                sig_path = "pdf/signature.png"
+                st.session_state[_pdf_key] = balance_sheet_pdf(
+                    y, pdf_snapshot, pdf_props,
+                    signature_path=sig_path if Path(sig_path).exists() else None,
+                )
+                st.rerun()
+        else:
+            st.download_button(
+                label="📥 Download PDF Report",
+                data=st.session_state[_pdf_key],
+                file_name=f"Bilanz_{y}.pdf",
+                mime="application/pdf",
+            )

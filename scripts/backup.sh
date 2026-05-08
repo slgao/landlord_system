@@ -26,10 +26,11 @@ if [ -z "$DATABASE_URL" ]; then
     exit 1
 fi
 
-# ── Dump via Docker container (has pg_dump; works against local and Neon) ─────
-docker exec landlord-pg pg_dump "$DATABASE_URL" --no-owner --no-acl | gzip > "$FILE"
+# ── Dump using a postgres:18 container (matches Neon's server version) ────────
+# docker run --rm pulls the image once then reuses it; no persistent container needed.
+docker run --rm postgres:18 pg_dump "$DATABASE_URL" --no-owner --no-acl | gzip > "$FILE"
 
-if [ $? -eq 0 ]; then
+if [ $? -eq 0 ] && [ -s "$FILE" ]; then
     echo "$(date): Backup successful → $FILE"
 else
     echo "$(date): Backup FAILED" >&2

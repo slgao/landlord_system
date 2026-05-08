@@ -44,9 +44,9 @@ echo ""
 echo "=== Sync local Docker ← Neon ==="
 echo ""
 
-# ── 1. Dump from Neon ─────────────────────────────────────────────────────────
+# ── 1. Dump from Neon using postgres:18 (matches Neon's server version) ───────
 echo "→ Dumping from Neon..."
-docker exec landlord-pg pg_dump "$NEON_URL" --no-owner --no-acl -f "$DUMP_FILE"
+docker run --rm postgres:18 pg_dump "$NEON_URL" --no-owner --no-acl > "$DUMP_FILE"
 echo "  Done."
 
 # ── 2. Wipe local schema and restore ─────────────────────────────────────────

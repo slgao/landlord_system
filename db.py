@@ -61,12 +61,19 @@ def _normalize(rows):
     return [tuple(row) for row in rows]
 
 
+_migration_done = False
+
 def migrate_to_head() -> None:
-    """Run `alembic upgrade head` programmatically. Idempotent."""
+    """Run `alembic upgrade head` once per process. Re-running it on every
+    Streamlit rerun causes KeyError in Alembic's EnvironmentContext cleanup."""
+    global _migration_done
+    if _migration_done:
+        return
     from alembic.config import Config
     from alembic import command
     cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alembic.ini")
     command.upgrade(Config(cfg_path), "head")
+    _migration_done = True
 
 
 

@@ -62,8 +62,11 @@ echo "→ Wiping local schema..."
 docker exec landlord-pg psql "$LOCAL_URL" \
     -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
+echo "→ Copying dump into container..."
+docker cp "$DUMP_FILE" landlord-pg:/tmp/neon_sync.sql
+
 echo "→ Restoring into local Docker..."
-docker exec -i landlord-pg psql "$LOCAL_URL" < "$DUMP_FILE"
+docker exec landlord-pg psql "$LOCAL_URL" -f /tmp/neon_sync.sql
 echo "  Done."
 
 # ── 3. Sanity check ───────────────────────────────────────────────────────────
@@ -76,6 +79,7 @@ UNION ALL SELECT 'tenants',     COUNT(*) FROM public.tenants
 UNION ALL SELECT 'contracts',   COUNT(*) FROM public.contracts
 UNION ALL SELECT 'payments',    COUNT(*) FROM public.payments;"
 
+docker exec landlord-pg rm -f /tmp/neon_sync.sql
 rm -f "$DUMP_FILE"
 
 echo ""

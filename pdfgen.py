@@ -19,6 +19,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_RIGHT, TA_LEFT, TA_CENTER
 from datetime import date, timedelta
 from pathlib import Path
+from currencies import sym as _sym
 
 PDF_DIR = Path("pdf")
 PDF_DIR.mkdir(exist_ok=True)
@@ -761,6 +762,7 @@ def invoice_pdf(
 
     if kaution_info and total > 0:
         k_amt      = kaution_info["kaution_amount"]
+        k_curr     = _sym(kaution_info.get("kaution_currency", "EUR"))
         remaining  = k_amt - total
         still_owed = max(0.0, -remaining)
         k_return   = max(0.0, remaining)
@@ -773,23 +775,23 @@ def invoice_pdf(
 
         k_rows = [
             [Paragraph("Kautionsverrechnung", lbl_b), Paragraph("", amt)],
-            [Paragraph("Hinterlegte Kaution", lbl),   Paragraph(f"{k_amt:.2f} €", amt)],
-            [Paragraph("Abzug (diese Abrechnung)", lbl), Paragraph(f"− {total:.2f} €", amt)],
+            [Paragraph("Hinterlegte Kaution", lbl),   Paragraph(f"{k_amt:.2f} {k_curr}", amt)],
+            [Paragraph("Abzug (diese Abrechnung)", lbl), Paragraph(f"− {total:.2f} {k_curr}", amt)],
         ]
         if k_return > 0:
             k_rows.append([
                 Paragraph("Verbleibende Kaution (wird erstattet)", lbl_b),
-                Paragraph(f"{k_return:.2f} €", amt_g),
+                Paragraph(f"{k_return:.2f} {k_curr}", amt_g),
             ])
         else:
             k_rows.append([
                 Paragraph("Verbleibende Kaution", lbl_b),
-                Paragraph("0.00 €", amt),
+                Paragraph(f"0.00 {k_curr}", amt),
             ])
         if still_owed > 0:
             k_rows.append([
                 Paragraph("Noch zu zahlen (Kaution nicht ausreichend)", lbl_b),
-                Paragraph(f"{still_owed:.2f} €", amt_r),
+                Paragraph(f"{still_owed:.2f} {k_curr}", amt_r),
             ])
 
         kt = Table(k_rows, colWidths=[390, 78])

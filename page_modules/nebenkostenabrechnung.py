@@ -8,6 +8,7 @@ from db import fetch, execute, get_config, get_tenant_gender
 from logic import (strom_calc_detail, gas_calc_detail, water_calc_detail,
                    betriebskosten_calc, heizung_calc_detail, warmwasser_calc_detail)
 from pdfgen import invoice_pdf
+from currencies import sym
 
 
 # ── Profile helpers ────────────────────────────────────────────────────────────
@@ -543,7 +544,7 @@ def show():
         _gm_factor_default = 10.0
         if _apt_gas_meters:
             _gm = _apt_gas_meters[0]
-            _gm_factor_default = round(_gm[3] * _gm[4], 4)
+            _gm_factor_default = round(float(_gm[3]) * float(_gm[4]), 4)
             # Always sync session state to the registered meter value so the
             # number_input below shows the correct factor on every render.
             # The registered meter is the source of truth; the user can edit
@@ -1119,7 +1120,8 @@ def show():
 
         # Show Kaution on file for reference (only if not yet returned)
         kaution_row = fetch("""
-            SELECT kaution_amount, kaution_returned_date FROM contracts
+            SELECT kaution_amount, kaution_returned_date,
+                   COALESCE(kaution_currency, 'EUR') FROM contracts
             WHERE id=?
         """, (selected_contract_id,))
         kaution = (
@@ -1127,16 +1129,18 @@ def show():
             if kaution_row and kaution_row[0][0] and not kaution_row[0][1]
             else None
         )
+        kaution_curr = kaution_row[0][2] if kaution_row else "EUR"
         if kaution:
             deductions_total = sum(
                 float(st.session_state.get(f"extra_amt_{iid}", 0))
                 for iid in st.session_state["extra_item_ids"]
             )
             remaining = kaution - deductions_total
+            ks = sym(kaution_curr)
             st.info(
-                f"Kaution on file: **{kaution:.2f} €**  ·  "
-                f"Total deductions below: **{deductions_total:.2f} €**  ·  "
-                f"Remaining Kaution: **{remaining:.2f} €**"
+                f"Kaution on file: **{kaution:.2f} {ks}**  ·  "
+                f"Total deductions below: **{deductions_total:.2f} {ks}**  ·  "
+                f"Remaining Kaution: **{remaining:.2f} {ks}**"
             )
 
         # Column headers
@@ -1185,7 +1189,8 @@ def show():
 
     # Check for an unreturned Kaution on the selected contract
     kaution_row = fetch("""
-        SELECT kaution_amount, kaution_returned_date FROM contracts
+        SELECT kaution_amount, kaution_returned_date,
+               COALESCE(kaution_currency, 'EUR') FROM contracts
         WHERE id=?
     """, (selected_contract_id,))
     kaution_available = (
@@ -1194,11 +1199,12 @@ def show():
         and not kaution_row[0][1]   # not yet returned
     )
     kaution_amount = float(kaution_row[0][0]) if kaution_available else None
+    kaution_currency = kaution_row[0][2] if kaution_row else "EUR"
 
     deduct_from_kaution = False
     if kaution_available:
         deduct_from_kaution = st.checkbox(
-            f"Deduct Nachzahlung from deposit (Kaution on file: {kaution_amount:.2f} €)",
+            f"Deduct Nachzahlung from deposit (Kaution on file: {kaution_amount:.2f} {sym(kaution_currency)})",
             key="deduct_kaution",
         )
         if deduct_from_kaution:
@@ -1219,7 +1225,7 @@ def show():
                     "iban":    get_config("landlord_iban", ""),
                     "bank":    get_config("landlord_bank", ""),
                 }
-            kaution_info = {"kaution_amount": kaution_amount} if deduct_from_kaution else None
+            kaution_info = {"kaution_amount": kaution_amount, "kaution_currency": kaution_currency} if deduct_from_kaution else None
             file = invoice_pdf(
                 tenant, address,
                 landlord_name=landlord_name,

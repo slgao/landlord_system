@@ -73,11 +73,20 @@ else
         -e POSTGRES_USER="$DB_USER" \
         -e POSTGRES_PASSWORD="$DB_PASS" \
         -e POSTGRES_DB="$DB_NAME" \
-        -p "127.0.0.1:${DB_PORT}:5432" \
+        -p "${DB_PORT}:5432" \
         --restart unless-stopped \
         postgres:16 &>/dev/null
     echo "Waiting for PostgreSQL to be ready..."
     sleep 4
+fi
+
+# ── Join compose network so api/streamlit containers can reach landlord-pg ────
+COMPOSE_NETWORK="landlord_system_default"
+if docker network ls --format '{{.Name}}' | grep -q "^${COMPOSE_NETWORK}$"; then
+    if ! docker inspect "$CONTAINER" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' | grep -q "$COMPOSE_NETWORK"; then
+        echo "Connecting $CONTAINER to compose network..."
+        docker network connect "$COMPOSE_NETWORK" "$CONTAINER" &>/dev/null || true
+    fi
 fi
 
 # ── 3. Write DATABASE_URL to .env if not already present ─────────────────────

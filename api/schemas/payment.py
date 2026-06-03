@@ -5,7 +5,8 @@ from typing import Optional
 class PaymentIn(BaseModel):
     contract_id: int
     amount: float
-    payment_date: str   # ISO format: YYYY-MM-DD
+    payment_date: str
+    currency: str = "EUR"
 
 
 class PaymentOut(BaseModel):
@@ -15,3 +16,4 @@ class PaymentOut(BaseModel):
     apartment_name: Optional[str] = None
     amount: float
     payment_date: str
+    currency: str = "EUR"

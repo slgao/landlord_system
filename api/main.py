@@ -2,38 +2,73 @@ import base64
 from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from db import migrate_to_head
-from auth import require_auth
-from api.routers import properties, apartments, tenants, contracts, payments
+from auth import require_auth, _USERNAME, _verify, create_access_token
+from api.routers import (
+    properties, apartments, tenants, contracts, payments,
+    dashboard, flat_costs, meters, config, reports,
+    co_tenants, kaution, billing_profiles,
+)
 
 app = FastAPI(
     title="Landlord System API",
-    description="REST API for the Hausverwaltung — powers the Streamlit UI and future frontends.",
-    version="1.0.0",
+    description="REST API for the Hausverwaltung.",
+    version="2.0.0",
 )
 
-# CORS — allow Streamlit (8501) and future Next.js (3000) to call the API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:8501",   # Streamlit dev
-        "http://localhost:3000",   # Next.js dev (future)
+        "http://localhost:8501",   # Streamlit
+        "http://localhost:3000",   # Next.js dev
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Routers — all /api/* endpoints require authentication
 _auth = [Depends(require_auth)]
+
 app.include_router(properties.router, prefix="/api", dependencies=_auth)
 app.include_router(apartments.router, prefix="/api", dependencies=_auth)
 app.include_router(tenants.router,    prefix="/api", dependencies=_auth)
 app.include_router(contracts.router,  prefix="/api", dependencies=_auth)
 app.include_router(payments.router,   prefix="/api", dependencies=_auth)
+app.include_router(dashboard.router,  prefix="/api", dependencies=_auth)
+app.include_router(flat_costs.router, prefix="/api", dependencies=_auth)
+app.include_router(meters.router,     prefix="/api", dependencies=_auth)
+app.include_router(config.router,           prefix="/api", dependencies=_auth)
+app.include_router(reports.router,          prefix="/api", dependencies=_auth)
+app.include_router(co_tenants.router,       prefix="/api", dependencies=_auth)
+app.include_router(kaution.router,          prefix="/api", dependencies=_auth)
+app.include_router(billing_profiles.router, prefix="/api", dependencies=_auth)
 
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+@app.post("/api/auth/token", response_model=TokenResponse, tags=["Auth"])
+def login(body: LoginRequest):
+    from auth import _password_hash
+    if _password_hash() is None:
+        return TokenResponse(access_token=create_access_token("anonymous"))
+    if body.username != _USERNAME or not _verify(body.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return TokenResponse(access_token=create_access_token(body.username))
+
+
+# ── Signature ────────────────────────────────────────────────────────────────
 
 _SIGNATURE_PAD_HTML = """<!DOCTYPE html>
 <html>
@@ -72,7 +107,6 @@ const canvas = document.getElementById('sig');
 const ctx    = canvas.getContext('2d');
 ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#000';
 
-// ── History for undo ───────────────────────────────────────────────────────
 const MAX_HIST = 30;
 const history  = [];
 
@@ -89,7 +123,6 @@ function undo() {
   document.getElementById('btn-undo').disabled = history.length <= 1;
 }
 
-// ── Initialise canvas with white background ────────────────────────────────
 function fillWhite() {
   ctx.save();
   ctx.globalCompositeOperation = 'destination-over';
@@ -98,9 +131,8 @@ function fillWhite() {
   ctx.restore();
 }
 fillWhite();
-snapshot(); // blank state is the base of history
+snapshot();
 
-// ── Drawing ────────────────────────────────────────────────────────────────
 let drawing = false;
 
 function pos(e) {
@@ -119,16 +151,14 @@ canvas.addEventListener('touchmove',  e => { e.preventDefault(); if (!drawing) r
 canvas.addEventListener('touchend',   () => { if (drawing) { drawing = false; snapshot(); } });
 
 document.getElementById('btn-undo').addEventListener('click', undo);
-
 document.getElementById('btn-clear').addEventListener('click', () => {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   fillWhite();
   history.length = 0;
-  snapshot(); // reset history to the fresh blank state
+  snapshot();
   document.getElementById('msg').textContent = '';
 });
 
-// ── Export: crop to content bounding box ──────────────────────────────────
 function cropDataUrl() {
   const w = canvas.width, h = canvas.height;
   const d = ctx.getImageData(0, 0, w, h).data;
@@ -154,7 +184,6 @@ function cropDataUrl() {
   return tmp.toDataURL('image/png');
 }
 
-// ── Save ──────────────────────────────────────────────────────────────────
 document.getElementById('btn-save').addEventListener('click', async () => {
   const msg = document.getElementById('msg');
   msg.style.color = '#333';
@@ -184,7 +213,6 @@ document.getElementById('btn-save').addEventListener('click', async () => {
 
 @app.get("/api/signature", tags=["Files"])
 def get_signature():
-    """Return the current signature PNG file."""
     dest = Path("pdf/signature.png")
     if not dest.exists():
         raise HTTPException(status_code=404, detail="No signature on file")
@@ -193,20 +221,17 @@ def get_signature():
 
 @app.get("/api/signature-pad", tags=["Files"], response_class=HTMLResponse)
 def signature_pad():
-    """Serve the signature drawing pad (embedded as an iframe in Streamlit)."""
     return HTMLResponse(_SIGNATURE_PAD_HTML)
 
 
 class SignaturePayload(BaseModel):
-    data_url: str  # "data:image/png;base64,<b64>"
+    data_url: str
 
 
 @app.post("/api/signature", tags=["Files"])
 def save_signature(body: SignaturePayload):
-    """Save a base64-encoded PNG as the landlord signature file."""
     _, _, b64 = body.data_url.partition(",")
     if not b64:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Invalid data URL")
     dest = Path("pdf/signature.png")
     dest.parent.mkdir(exist_ok=True)

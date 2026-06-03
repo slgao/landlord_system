@@ -50,15 +50,18 @@ Kaution management, payment reminders, and SMTP/landlord settings.
 git clone https://github.com/slgao/landlord_system.git
 cd landlord_system
 cp .env.example .env   # edit POSTGRES_PASSWORD if desired
-docker-compose up -d db api frontend
+make up                # build and start all containers
 ```
+
+`make down` stops everything. Run `make` on its own to see all targets
+(`logs`, `ps`, `restart`, `migrate`, `seed`, `clean`).
 
 | Service | URL |
 |---|---|
 | **Next.js UI** | http://localhost:3000 |
 | FastAPI | http://localhost:8000 |
 | API docs | http://localhost:8000/docs |
-| Streamlit (legacy) | Start with `docker-compose up -d streamlit` → http://localhost:8501 |
+| Streamlit (legacy) | http://localhost:8501 |
 
 The database schema is created automatically on first start (Alembic runs at API startup).
 
@@ -130,24 +133,27 @@ Update `DATABASE_URL` in `.env`. Alembic runs automatically on startup.
 
 ```
 landlord_system/
+├── Makefile                    # container orchestration (make up / down / …)
 ├── docker-compose.yml          # db + api + frontend + streamlit
-├── Dockerfile.api              # Python/FastAPI image
+├── backend/                    # all Python (FastAPI + Streamlit + shared core)
+│   ├── Dockerfile              # Python image (api + streamlit)
+│   ├── api/                    # FastAPI routers + Pydantic schemas
+│   │   ├── routers/            # properties, tenants, contracts, payments,
+│   │   │                       # dashboard, flat-costs, meters, config, reports
+│   │   └── schemas/
+│   ├── page_modules/           # Streamlit page modules (legacy)
+│   ├── app.py                  # Streamlit entry point
+│   ├── db.py                   # DB connection + CRUD helpers
+│   ├── logic.py                # Billing calculations
+│   ├── pdfgen.py               # ReportLab PDF generation
+│   ├── currencies.py           # EUR/CNY/USD/GBP symbol map
+│   ├── auth.py                 # JWT + HTTP Basic auth
+│   ├── alembic/                # Schema migrations
+│   └── requirements.txt
 ├── frontend/                   # Next.js app
 │   ├── Dockerfile
 │   ├── app/                    # App Router pages
 │   └── components/             # Shared UI components
-├── api/                        # FastAPI routers + Pydantic schemas
-│   ├── routers/                # properties, tenants, contracts, payments,
-│   │                           # dashboard, flat-costs, meters, config, reports
-│   └── schemas/
-├── page_modules/               # Streamlit page modules (legacy)
-├── app.py                      # Streamlit entry point
-├── db.py                       # DB connection + CRUD helpers
-├── logic.py                    # Billing calculations
-├── pdfgen.py                   # ReportLab PDF generation
-├── currencies.py               # EUR/CNY/USD/GBP symbol map
-├── auth.py                     # JWT + HTTP Basic auth
-├── alembic/                    # Schema migrations
 └── scripts/                    # Backup, sync, Neon migration
 ```
 

@@ -18,8 +18,8 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: Dockerfile.api
+      context: ./backend
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -43,8 +43,8 @@ services:
 
   streamlit:
     build:
-      context: .
-      dockerfile: Dockerfile.api
+      context: ./backend
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file: .env
     ports:

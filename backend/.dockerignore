@@ -3,10 +3,6 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+pdf/
 local_backup.sql
 backups/
-frontend/
-.git/
-.gitignore
-README.md
-docs/

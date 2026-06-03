@@ -48,7 +48,7 @@ fi
 # shellcheck disable=SC1091
 source venv/bin/activate
 echo "Installing dependencies..."
-pip install -q -r requirements.txt
+pip install -q -r backend/requirements.txt
 
 # ── 2. PostgreSQL via Docker ──────────────────────────────────────────────────
 if ! docker info &>/dev/null; then
@@ -97,7 +97,7 @@ fi
 
 # ── 4. Initialise schema ──────────────────────────────────────────────────────
 echo "Initialising database schema..."
-alembic upgrade head
+(cd backend && alembic upgrade head)
 
 # ── 5. Done ───────────────────────────────────────────────────────────────────
 echo ""

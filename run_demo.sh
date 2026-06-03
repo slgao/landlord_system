@@ -37,10 +37,12 @@ if ! grep -qE "^DATABASE_URL=.+" "$DEMO_ENV"; then
     exit 1
 fi
 
-# Pick up python / streamlit from venv if present
-if [ -f "venv/bin/python" ]; then
-    PYTHON="venv/bin/python"
-    STREAMLIT="venv/bin/streamlit"
+# Pick up python / streamlit from venv if present (use absolute paths so they
+# stay valid after we cd into backend/).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$ROOT/venv/bin/python" ]; then
+    PYTHON="$ROOT/venv/bin/python"
+    STREAMLIT="$ROOT/venv/bin/streamlit"
 else
     PYTHON="${PYTHON:-python3}"
     STREAMLIT="${STREAMLIT:-streamlit}"
@@ -55,6 +57,10 @@ set +a
 
 echo "Demo DB: $DATABASE_URL"
 echo ""
+
+# Python sources live in backend/; run from there so imports and relative
+# pdf/ paths resolve correctly.
+cd "$ROOT/backend"
 
 # ── Seed (skipped automatically if DB already has data) ───────────────────────
 

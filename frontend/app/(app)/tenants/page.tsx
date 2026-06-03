@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { ConfirmButton } from "@/components/confirm-button";
 import { Pencil, Trash2 } from "lucide-react";
 
 const EMPTY = { name: "", email: "", gender: "diverse" };
@@ -101,13 +102,15 @@ export default function TenantsPage() {
                       <Button variant="ghost" size="icon" onClick={() => openEdit(t)}>
                         <Pencil className="size-4" />
                       </Button>
-                      <Button
-                        variant="ghost" size="icon"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => remove.mutate(t.id)}
+                      <ConfirmButton
+                        onConfirm={() => remove.mutate(t.id)}
+                        title="Delete tenant?"
+                        message={`Delete "${t.name}"? Tenants with contracts can't be deleted.`}
                       >
-                        <Trash2 className="size-4" />
-                      </Button>
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </ConfirmButton>
                     </div>
                   </TableCell>
                 </TableRow>

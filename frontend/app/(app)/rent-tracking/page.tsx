@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { ConfirmButton } from "@/components/confirm-button";
 import { Trash2, Calendar } from "lucide-react";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
@@ -151,9 +152,11 @@ export default function RentTrackingPage() {
                     <TableCell className="text-muted-foreground">{p.apartment_name}</TableCell>
                     <TableCell className="text-right font-mono">{p.amount.toFixed(2)} {p.currency || "EUR"}</TableCell>
                     <TableCell>
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => remove.mutate(p.id)}>
-                        <Trash2 className="size-4" />
-                      </Button>
+                      <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${p.amount.toFixed(2)} ${p.currency || "EUR"} payment from ${p.payment_date}?`}>
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </ConfirmButton>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -191,9 +194,11 @@ export default function RentTrackingPage() {
                   <TableCell className="text-muted-foreground">{p.apartment_name}</TableCell>
                   <TableCell className="text-right font-mono">{p.amount.toFixed(2)} {p.currency || "EUR"}</TableCell>
                   <TableCell>
-                    <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => remove.mutate(p.id)}>
-                      <Trash2 className="size-4" />
-                    </Button>
+                    <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${p.amount.toFixed(2)} ${p.currency || "EUR"} payment from ${p.payment_date}?`}>
+                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </ConfirmButton>
                   </TableCell>
                 </TableRow>
               ))

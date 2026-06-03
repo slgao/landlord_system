@@ -20,6 +20,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { ConfirmButton } from "@/components/confirm-button";
 import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2 } from "lucide-react";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
@@ -208,7 +209,13 @@ export default function ContractsPage() {
                               <RotateCcw className="size-4 text-emerald-400" />
                             </Button>
                           )}
-                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => remove.mutate(c.id)}><Trash2 className="size-4" /></Button>
+                          <ConfirmButton
+                            onConfirm={() => remove.mutate(c.id)}
+                            title="Delete contract?"
+                            message={`Delete the contract for ${c.tenant_name}? This permanently removes its payments, co-tenants, and Kaution deductions.`}
+                          >
+                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
+                          </ConfirmButton>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -245,7 +252,7 @@ export default function ContractsPage() {
                           <TableCell>{d.category}</TableCell>
                           <TableCell className="text-muted-foreground text-xs">{d.reason || "—"}</TableCell>
                           <TableCell className="text-right font-mono">{d.amount.toFixed(2)}</TableCell>
-                          <TableCell><Button variant="ghost" size="icon" onClick={() => removeDeduction.mutate(d.id)}><Trash2 className="size-3 text-destructive" /></Button></TableCell>
+                          <TableCell><ConfirmButton onConfirm={() => removeDeduction.mutate(d.id)} title="Delete deduction?" message={`Delete the ${d.amount.toFixed(2)} deduction (${d.category})?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -310,7 +317,7 @@ export default function ContractsPage() {
                           <TableCell className="text-muted-foreground">{ct.gender}</TableCell>
                           <TableCell className="text-muted-foreground text-xs">{ct.email}</TableCell>
                           <TableCell><Badge variant={ct.in_contract ? "default" : "secondary"}>{ct.in_contract ? "In contract" : "Informal"}</Badge></TableCell>
-                          <TableCell><Button variant="ghost" size="icon" onClick={() => removeCoTenant.mutate(ct.id)}><Trash2 className="size-3 text-destructive" /></Button></TableCell>
+                          <TableCell><ConfirmButton onConfirm={() => removeCoTenant.mutate(ct.id)} title="Remove co-tenant?" message={`Remove ${ct.name} from this contract?`} confirmLabel="Remove"><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

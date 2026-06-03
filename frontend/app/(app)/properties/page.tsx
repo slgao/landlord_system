@@ -16,6 +16,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { ConfirmButton } from "@/components/confirm-button";
 import { Pencil, Trash2 } from "lucide-react";
 
 const EMPTY = { name: "", address: "" };
@@ -102,14 +103,15 @@ export default function PropertiesPage() {
                       <Button variant="ghost" size="icon" onClick={() => openEdit(p)}>
                         <Pencil className="size-4" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => remove.mutate(p.id)}
+                      <ConfirmButton
+                        onConfirm={() => remove.mutate(p.id)}
+                        title="Delete property?"
+                        message={`Delete "${p.name}"? Properties with apartments can't be deleted.`}
                       >
-                        <Trash2 className="size-4" />
-                      </Button>
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </ConfirmButton>
                     </div>
                   </TableCell>
                 </TableRow>

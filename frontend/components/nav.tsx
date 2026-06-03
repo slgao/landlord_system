@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -7,7 +8,7 @@ import { logout } from "@/lib/api";
 import {
   LayoutDashboard, Building2, Home, Users, FileText,
   CreditCard, DollarSign, Gauge, BarChart3, Bell,
-  FileWarning, Zap, Settings, LogOut, ChevronRight,
+  FileWarning, Zap, Settings, LogOut, ChevronRight, Menu, X,
 } from "lucide-react";
 
 const NAV = [
@@ -57,19 +58,10 @@ const NAV = [
   },
 ];
 
-export function Sidebar() {
+function NavContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-
   return (
-    <aside className="flex flex-col w-56 shrink-0 border-r border-border bg-sidebar h-screen sticky top-0">
-      {/* Logo */}
-      <div className="h-14 flex items-center px-4 border-b border-border">
-        <span className="font-semibold text-sm tracking-tight text-foreground">
-          Hausverwaltung
-        </span>
-      </div>
-
-      {/* Navigation */}
+    <>
       <nav className="flex-1 overflow-y-auto py-3 px-2">
         {NAV.map((section) => (
           <div key={section.group} className="mb-4">
@@ -82,6 +74,7 @@ export function Sidebar() {
                 <Link
                   key={href}
                   href={href}
+                  onClick={onNavigate}
                   className={cn(
                     "flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm transition-colors",
                     active
@@ -98,8 +91,6 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-
-      {/* Footer */}
       <div className="p-2 border-t border-border">
         <button
           onClick={logout}
@@ -109,6 +100,49 @@ export function Sidebar() {
           Sign out
         </button>
       </div>
-    </aside>
+    </>
+  );
+}
+
+export function Sidebar() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  return (
+    <>
+      {/* Mobile top bar */}
+      <header className="md:hidden fixed top-0 inset-x-0 z-30 h-14 flex items-center justify-between px-4 border-b border-border bg-sidebar">
+        <span className="font-semibold text-sm tracking-tight">Hausverwaltung</span>
+        <button onClick={() => setMobileOpen(true)} className="p-2 -mr-2 text-muted-foreground hover:text-foreground" aria-label="Open menu">
+          <Menu className="size-5" />
+        </button>
+      </header>
+
+      {/* Mobile drawer + backdrop */}
+      {mobileOpen && (
+        <div className="md:hidden fixed inset-0 z-40" onClick={() => setMobileOpen(false)}>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <aside
+            className="absolute left-0 top-0 h-full w-64 flex flex-col bg-sidebar border-r border-border"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="h-14 flex items-center justify-between px-4 border-b border-border">
+              <span className="font-semibold text-sm tracking-tight">Hausverwaltung</span>
+              <button onClick={() => setMobileOpen(false)} className="p-2 -mr-2 text-muted-foreground hover:text-foreground" aria-label="Close menu">
+                <X className="size-5" />
+              </button>
+            </div>
+            <NavContent onNavigate={() => setMobileOpen(false)} />
+          </aside>
+        </div>
+      )}
+
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex flex-col w-56 shrink-0 border-r border-border bg-sidebar h-screen sticky top-0">
+        <div className="h-14 flex items-center px-4 border-b border-border">
+          <span className="font-semibold text-sm tracking-tight text-foreground">Hausverwaltung</span>
+        </div>
+        <NavContent />
+      </aside>
+    </>
   );
 }

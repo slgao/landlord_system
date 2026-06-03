@@ -5,10 +5,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { FlatCost, Apartment } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
+import { GroupCard } from "@/components/group-card";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -19,16 +21,28 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Pencil, Trash2 } from "lucide-react";
+import { ConfirmButton } from "@/components/confirm-button";
+import { Pencil, Trash2, Plus } from "lucide-react";
 
 const FREQ = ["monthly", "quarterly", "annually", "one-time"];
 const EMPTY = { apartment_id: 0, cost_type: "", amount: 0, frequency: "monthly", valid_from: "", valid_to: "" };
+
+// Normalise any frequency to a monthly-equivalent amount for the summary.
+function monthlyEquivalent(fc: FlatCost): number {
+  switch (fc.frequency) {
+    case "monthly": return fc.amount;
+    case "quarterly": return fc.amount / 3;
+    case "annually": return fc.amount / 12;
+    default: return 0; // one-time not counted in the recurring monthly figure
+  }
+}
 
 export default function FlatCostsPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<FlatCost | null>(null);
   const [form, setForm] = useState<typeof EMPTY>(EMPTY);
+  const [filterProp, setFilterProp] = useState("all");
 
   const { data: flatCosts = [], isLoading } = useQuery<FlatCost[]>({
     queryKey: ["flat-costs"],
@@ -42,15 +56,9 @@ export default function FlatCostsPage() {
   const save = useMutation({
     mutationFn: (data: typeof EMPTY) => {
       const body = { ...data, valid_from: data.valid_from || null, valid_to: data.valid_to || null };
-      return editing
-        ? api.put(`/api/flat-costs/${editing.id}`, body)
-        : api.post("/api/flat-costs/", body);
+      return editing ? api.put(`/api/flat-costs/${editing.id}`, body) : api.post("/api/flat-costs/", body);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["flat-costs"] });
-      toast.success(editing ? "Updated" : "Created");
-      setOpen(false);
-    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["flat-costs"] }); toast.success(editing ? "Updated" : "Created"); setOpen(false); },
     onError: () => toast.error("Failed to save"),
   });
 
@@ -59,56 +67,123 @@ export default function FlatCostsPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["flat-costs"] }); toast.success("Deleted"); },
   });
 
-  function openCreate() { setEditing(null); setForm(EMPTY); setOpen(true); }
+  function openCreate(apartmentId?: number) {
+    setEditing(null);
+    setForm({ ...EMPTY, apartment_id: apartmentId ?? 0 });
+    setOpen(true);
+  }
   function openEdit(f: FlatCost) {
     setEditing(f);
     setForm({ apartment_id: f.apartment_id, cost_type: f.cost_type, amount: f.amount, frequency: f.frequency, valid_from: f.valid_from || "", valid_to: f.valid_to || "" });
     setOpen(true);
   }
 
-  return (
-    <div className="max-w-4xl">
-      <PageHeader title="Flat Costs" description="Recurring costs per apartment" action={{ label: "New Cost", onClick: openCreate }} />
+  // Group apartments (that have costs OR exist) by property, then by apartment.
+  const properties = Array.from(new Set(apartments.map((a) => a.property_name || "—"))).sort();
+  const visibleProps = filterProp === "all" ? properties : properties.filter((p) => p === filterProp);
 
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Apartment</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Amount</TableHead>
-              <TableHead>Frequency</TableHead>
-              <TableHead>Valid From</TableHead>
-              <TableHead>Valid To</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-10">Loading…</TableCell></TableRow>
-            ) : flatCosts.length === 0 ? (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-10">No flat costs yet.</TableCell></TableRow>
-            ) : (
-              flatCosts.map((fc) => (
-                <TableRow key={fc.id}>
-                  <TableCell className="text-muted-foreground">{fc.property_name} / {fc.apartment_name}</TableCell>
-                  <TableCell className="font-medium">{fc.cost_type}</TableCell>
-                  <TableCell>{fc.amount.toFixed(2)} €</TableCell>
-                  <TableCell className="text-muted-foreground capitalize">{fc.frequency}</TableCell>
-                  <TableCell className="text-muted-foreground">{fc.valid_from || "—"}</TableCell>
-                  <TableCell className="text-muted-foreground">{fc.valid_to || "—"}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(fc)}><Pencil className="size-4" /></Button>
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => remove.mutate(fc.id)}><Trash2 className="size-4" /></Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+  const costsByApartment = (aptId: number) => flatCosts.filter((fc) => fc.apartment_id === aptId);
+  const grandMonthly = flatCosts.reduce((s, fc) => s + monthlyEquivalent(fc), 0);
+
+  return (
+    <div className="max-w-4xl space-y-4">
+      <PageHeader title="Flat Costs" description="Recurring costs grouped per apartment"
+        action={{ label: "New Cost", onClick: () => openCreate() }}>
+        <Select value={filterProp} onValueChange={setFilterProp}>
+          <SelectTrigger className="w-48 h-8 text-sm"><SelectValue placeholder="All properties" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All properties</SelectItem>
+            {properties.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </PageHeader>
+
+      {/* Grand total */}
+      <Card className="p-4 flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">Total recurring cost (monthly equivalent)</span>
+        <span className="text-xl font-semibold">€ {grandMonthly.toFixed(2)}</span>
       </Card>
+
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : apartments.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No apartments yet — add one first.</p>
+      ) : (
+        visibleProps.map((propName) => {
+          const apts = apartments.filter((a) => (a.property_name || "—") === propName);
+          return (
+            <div key={propName} className="space-y-2">
+              <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground px-1 pt-2">{propName}</h2>
+              {apts.map((apt) => {
+                const costs = costsByApartment(apt.id);
+                const monthly = costs.reduce((s, fc) => s + monthlyEquivalent(fc), 0);
+                return (
+                  <GroupCard
+                    key={apt.id}
+                    title={apt.name}
+                    subtitle={apt.flat ? `Unit ${apt.flat}` : undefined}
+                    defaultOpen={costs.length > 0}
+                    summary={
+                      <>
+                        <Badge variant="secondary">{costs.length} cost{costs.length !== 1 ? "s" : ""}</Badge>
+                        {monthly > 0 && <span className="text-sm font-medium">€ {monthly.toFixed(2)}/mo</span>}
+                      </>
+                    }
+                  >
+                    {costs.length === 0 ? (
+                      <div className="px-4 py-3 flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">No costs for this apartment.</span>
+                        <Button variant="outline" size="sm" onClick={() => openCreate(apt.id)}>
+                          <Plus className="size-4 mr-1" /> Add cost
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Type</TableHead>
+                              <TableHead className="text-right">Amount</TableHead>
+                              <TableHead>Frequency</TableHead>
+                              <TableHead>Valid</TableHead>
+                              <TableHead className="w-20" />
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {costs.map((fc) => (
+                              <TableRow key={fc.id}>
+                                <TableCell className="font-medium">{fc.cost_type}</TableCell>
+                                <TableCell className="text-right font-mono">{fc.amount.toFixed(2)} €</TableCell>
+                                <TableCell className="text-muted-foreground capitalize">{fc.frequency}</TableCell>
+                                <TableCell className="text-muted-foreground text-xs">
+                                  {fc.valid_from || "—"}{fc.valid_to ? ` → ${fc.valid_to}` : ""}
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex gap-1 justify-end">
+                                    <Button variant="ghost" size="icon" onClick={() => openEdit(fc)}><Pencil className="size-4" /></Button>
+                                    <ConfirmButton onConfirm={() => remove.mutate(fc.id)} title="Delete cost?" message={`Delete "${fc.cost_type}" (${fc.amount.toFixed(2)} €)?`}>
+                                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
+                                    </ConfirmButton>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                        <div className="px-4 py-2 border-t border-border">
+                          <Button variant="ghost" size="sm" onClick={() => openCreate(apt.id)}>
+                            <Plus className="size-4 mr-1" /> Add cost to {apt.name}
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </GroupCard>
+                );
+              })}
+            </div>
+          );
+        })
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

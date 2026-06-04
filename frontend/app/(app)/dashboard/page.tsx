@@ -7,10 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Building2, Home, Users, FileText } from "lucide-react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Legend, Cell,
 } from "recharts";
+import { C, fmtAxis, ChartTooltip, ChartLegend } from "@/components/chart";
 
 const currentYear = new Date().getFullYear();
+const thisMonthKey = new Date().toLocaleString("en", { month: "short", year: "numeric" });
 
 function StatCard({ title, value, icon: Icon }: { title: string; value: number; icon: React.ElementType }) {
   return (
@@ -53,7 +56,14 @@ export default function DashboardPage() {
         const row = p.monthly_rows.find((r: any) => r["Month"] === month);
         if (row) { exp += row["Expected rent (€)"] || 0; act += row["Actual received (€)"] || 0; costs += row["Costs (€)"] || 0; }
       }
-      return { month, Expected: +exp.toFixed(0), Received: +act.toFixed(0), Net: +(act - costs).toFixed(0) };
+      return {
+        month,
+        Expected: +exp.toFixed(0),
+        Received: +act.toFixed(0),
+        Costs: +costs.toFixed(0),
+        Net: +(act - costs).toFixed(0), // money in − money out
+        isCurrent: month === thisMonthKey,
+      };
     });
   })();
 
@@ -70,21 +80,41 @@ export default function DashboardPage() {
 
       {chartData.length > 0 && (
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-1">
             <CardTitle className="text-sm font-medium">Monthly Overview {currentYear}</CardTitle>
+            <p className="text-xs text-muted-foreground">Net line = Received − Costs</p>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="month" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6 }} />
-                <Legend />
-                <Bar dataKey="Expected" fill="hsl(var(--muted-foreground))" opacity={0.5} />
-                <Bar dataKey="Received" fill="hsl(var(--primary))" />
-                <Bar dataKey="Net" fill="#10b981" opacity={0.8} />
-              </BarChart>
+            <ResponsiveContainer width="100%" height={260}>
+              <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="dashReceived" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.actual} stopOpacity={0.95} />
+                    <stop offset="100%" stopColor={C.actual} stopOpacity={0.5} />
+                  </linearGradient>
+                  <linearGradient id="dashCosts" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.costs} stopOpacity={0.85} />
+                    <stop offset="100%" stopColor={C.costs} stopOpacity={0.45} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis dataKey="month" tickLine={false} axisLine={false}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                <YAxis tickLine={false} axisLine={false} width={52} tickFormatter={fmtAxis}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--accent))", opacity: 0.4 }} />
+                <Legend content={<ChartLegend />} />
+                <Bar dataKey="Expected" name="Expected" fill={C.expected} fillOpacity={0.22}
+                  stroke={C.expected} strokeOpacity={0.5} strokeDasharray="3 3" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Received" name="Received" fill="url(#dashReceived)" radius={[4, 4, 0, 0]} maxBarSize={28}>
+                  {chartData.map((d: any, i: number) => (
+                    <Cell key={i} stroke={d.isCurrent ? C.actual : "transparent"} strokeWidth={d.isCurrent ? 2 : 0} />
+                  ))}
+                </Bar>
+                <Bar dataKey="Costs" name="Costs" fill="url(#dashCosts)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={2}
+                  dot={{ r: 2.5, fill: C.net, strokeWidth: 0 }} activeDot={{ r: 4 }} />
+              </ComposedChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>

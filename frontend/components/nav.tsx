@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { logout } from "@/lib/api";
+import { Logo } from "@/components/logo";
 import {
   LayoutDashboard, Building2, Home, Users, FileText,
   CreditCard, DollarSign, Gauge, BarChart3, Bell,
@@ -111,7 +112,7 @@ export function Sidebar() {
     <>
       {/* Mobile top bar */}
       <header className="md:hidden fixed top-0 inset-x-0 z-30 h-14 flex items-center justify-between px-4 border-b border-border bg-sidebar">
-        <span className="font-semibold text-sm tracking-tight">Hausverwaltung</span>
+        <Logo />
         <button onClick={() => setMobileOpen(true)} className="p-2 -mr-2 text-muted-foreground hover:text-foreground" aria-label="Open menu">
           <Menu className="size-5" />
         </button>
@@ -126,7 +127,7 @@ export function Sidebar() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="h-14 flex items-center justify-between px-4 border-b border-border">
-              <span className="font-semibold text-sm tracking-tight">Hausverwaltung</span>
+              <Logo />
               <button onClick={() => setMobileOpen(false)} className="p-2 -mr-2 text-muted-foreground hover:text-foreground" aria-label="Close menu">
                 <X className="size-5" />
               </button>
@@ -139,7 +140,7 @@ export function Sidebar() {
       {/* Desktop sidebar */}
       <aside className="hidden md:flex flex-col w-56 shrink-0 border-r border-border bg-sidebar h-screen sticky top-0">
         <div className="h-14 flex items-center px-4 border-b border-border">
-          <span className="font-semibold text-sm tracking-tight text-foreground">Hausverwaltung</span>
+          <Logo />
         </div>
         <NavContent />
       </aside>

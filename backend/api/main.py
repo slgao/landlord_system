@@ -13,8 +13,8 @@ from api.routers import (
 )
 
 app = FastAPI(
-    title="Landlord System API",
-    description="REST API for the Hausverwaltung.",
+    title="Vermio API",
+    description="REST API for Vermio — self-hosted property management.",
     version="2.0.0",
 )
 

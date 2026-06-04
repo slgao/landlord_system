@@ -3,8 +3,8 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
-  title: "Hausverwaltung",
-  description: "Landlord Management System",
+  title: "Vermio",
+  description: "Vermio — self-hosted property management for landlords.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

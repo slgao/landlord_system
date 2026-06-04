@@ -6,6 +6,7 @@ import { login } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LogoMark } from "@/components/logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -31,8 +32,11 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center">
       <div className="w-full max-w-sm space-y-6">
-        <div className="text-center space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Hausverwaltung</h1>
+        <div className="flex flex-col items-center space-y-3">
+          <LogoMark className="size-12" />
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Ver<span className="text-primary">mio</span>
+          </h1>
           <p className="text-sm text-muted-foreground">Sign in to continue</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">

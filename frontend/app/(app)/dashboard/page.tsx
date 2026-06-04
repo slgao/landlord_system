@@ -96,6 +96,9 @@ export default function DashboardPage() {
                     <stop offset="0%" stopColor={C.costs} stopOpacity={0.85} />
                     <stop offset="100%" stopColor={C.costs} stopOpacity={0.45} />
                   </linearGradient>
+                  <filter id="netGlow" x="-20%" y="-40%" width="140%" height="180%">
+                    <feDropShadow dx="0" dy="0" stdDeviation="3.5" floodColor={C.net} floodOpacity="0.75" />
+                  </filter>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="month" tickLine={false} axisLine={false}
@@ -112,8 +115,10 @@ export default function DashboardPage() {
                   ))}
                 </Bar>
                 <Bar dataKey="Costs" name="Costs" fill="url(#dashCosts)" radius={[4, 4, 0, 0]} maxBarSize={28} />
-                <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={2}
-                  dot={{ r: 2.5, fill: C.net, strokeWidth: 0 }} activeDot={{ r: 4 }} />
+                <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={3}
+                  filter="url(#netGlow)"
+                  dot={{ r: 4, fill: C.net, stroke: "hsl(var(--card))", strokeWidth: 2 }}
+                  activeDot={{ r: 6, fill: C.net, stroke: "hsl(var(--card))", strokeWidth: 2 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </CardContent>

@@ -18,7 +18,7 @@ Built to manage a handful of properties without commercial landlord software. Co
 - **Nebenkostenabrechnung** — Strom, Gas, Wasser, Heizung, Betriebskosten with day-based proration; partial occupancy and WG shared meters
 - **Mahnung Generator** — formal payment reminder PDFs with gender-aware salutation and signature
 - **Kaution tracking** — log deductions, track open balance, mark returned
-- **Balance Sheet** — monthly/annual P&L per property with per-flat breakdown
+- **Balance Sheet** — monthly/annual P&L per property with per-flat breakdown, a current-month expected-net headline, and income-vs-target / net-trend charts
 
 Also: multi-currency (EUR/CNY/USD/GBP), co-tenants (Mitmieter), fixed-term and open-ended leases, meter readings, flat costs (Hausgeld, mortgage, Grundsteuer).
 

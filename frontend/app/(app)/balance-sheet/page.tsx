@@ -13,20 +13,94 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
+  ComposedChart, Bar, Line, Area, AreaChart, XAxis, YAxis, CartesianGrid,
+  Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine,
 } from "recharts";
-import { Download, TrendingUp, TrendingDown } from "lucide-react";
+import {
+  Download, TrendingUp, TrendingDown, Wallet, Banknote, Receipt, Target,
+} from "lucide-react";
 
 const currentYear = new Date().getFullYear();
 const YEARS = Array.from({ length: 5 }, (_, i) => currentYear - i);
 
-function MetricCard({ label, value, sub, positive }: { label: string; value: string; sub?: string; positive?: boolean }) {
+// Professional, cohesive palette tuned for the dark indigo theme.
+const C = {
+  expected: "#818cf8", // indigo-400
+  actual: "#34d399",   // emerald-400
+  costs: "#fb7185",    // rose-400
+  net: "#fbbf24",      // amber-400
+};
+
+// Resolve a swatch colour by series key. Bars filled with a gradient (url(#…))
+// can't be used directly as a CSS colour, so legend/tooltip dots look up the
+// solid colour here by dataKey instead.
+const SERIES_COLOR: Record<string, string> = {
+  Expected: C.expected,
+  Actual: C.actual,
+  Costs: C.costs,
+  Net: C.net,
+  "Expected net": C.net,
+  "Actual net": C.actual,
+};
+const swatch = (key: string, fallback?: string) => SERIES_COLOR[key] ?? fallback ?? C.expected;
+
+function fmt(n: number) {
+  return `€${(n ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function fmtAxis(n: number) {
+  if (Math.abs(n) >= 1000) return `€${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k`;
+  return `€${n}`;
+}
+
+function ChartTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
   return (
-    <Card>
-      <CardContent className="p-4">
-        <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
-        <p className={`text-2xl font-semibold mt-1 ${positive === true ? "text-emerald-400" : positive === false ? "text-destructive" : ""}`}>
+    <div className="rounded-lg border border-border bg-card/95 backdrop-blur px-3 py-2 shadow-xl">
+      <p className="text-xs font-medium mb-1.5">{label}</p>
+      <div className="space-y-1">
+        {payload.map((p: any) => (
+          <div key={p.dataKey} className="flex items-center justify-between gap-5 text-xs">
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <span className="size-2 rounded-full" style={{ background: swatch(p.dataKey, p.stroke) }} />
+              {p.name}
+            </span>
+            <span className="font-mono font-medium tabular-nums">{fmt(p.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChartLegend({ payload }: any) {
+  if (!payload?.length) return null;
+  return (
+    <div className="flex flex-wrap justify-center gap-4 pt-1">
+      {payload.map((e: any) => (
+        <span key={e.dataKey ?? e.value} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="size-2 rounded-full" style={{ background: swatch(e.dataKey, e.color) }} />
+          {e.value}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function MetricCard({
+  label, value, sub, positive, accent, icon: Icon,
+}: {
+  label: string; value: string; sub?: string; positive?: boolean;
+  accent: string; icon: any;
+}) {
+  return (
+    <Card className="relative overflow-hidden">
+      <span className="absolute left-0 top-0 h-full w-1" style={{ background: accent }} />
+      <CardContent className="p-4 pl-5">
+        <div className="flex items-center gap-1.5 text-muted-foreground">
+          <Icon className="size-3.5" style={{ color: accent }} />
+          <p className="text-xs uppercase tracking-wide">{label}</p>
+        </div>
+        <p className={`text-2xl font-semibold mt-1.5 tabular-nums ${positive === true ? "text-emerald-400" : positive === false ? "text-destructive" : ""}`}>
           {value}
         </p>
         {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
@@ -35,7 +109,17 @@ function MetricCard({ label, value, sub, positive }: { label: string; value: str
   );
 }
 
-function fmt(n: number) { return `€ ${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}` }
+function StatRow({ label, value, dot, strong }: { label: string; value: string; dot?: string; strong?: boolean }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="flex items-center gap-2 text-sm text-muted-foreground">
+        {dot && <span className="size-2 rounded-full" style={{ background: dot }} />}
+        {label}
+      </span>
+      <span className={`font-mono tabular-nums ${strong ? "text-base font-semibold" : "text-sm"}`}>{value}</span>
+    </div>
+  );
+}
 
 export default function BalanceSheetPage() {
   const [year, setYear] = useState(String(currentYear));
@@ -63,24 +147,37 @@ export default function BalanceSheetPage() {
   }
 
   const properties: any[] = data?.properties || [];
+  const snapshot: any[] = data?.snapshot || [];
+  const isCurrentYear = Number(year) === currentYear;
+  const monthLabel = new Date().toLocaleString("en", { month: "long", year: "numeric" });
 
-  // Build aggregate chart data across all properties
+  // Current-month projection (snapshot reflects today's active contracts & costs).
+  const curExpected = snapshot.reduce((s, p) => s + (p.expected || 0), 0);
+  const curCosts = snapshot.reduce((s, p) => s + (p.costs || 0), 0);
+  const curNet = curExpected - curCosts;
+
+  // Build aggregate chart data across all properties.
   const allMonths = properties[0]?.monthly_rows?.map((r: any) => r["Month"]) || [];
+  const thisMonthKey = new Date().toLocaleString("en", { month: "short", year: "numeric" }); // e.g. "Jun 2026"
   const aggregateChartData = allMonths.map((month: string) => {
     const entry: any = { month };
-    let totalExpected = 0, totalActual = 0, totalCosts = 0;
+    let exp = 0, act = 0, cost = 0, netExp = 0, netAct = 0;
     for (const prop of properties) {
       const row = prop.monthly_rows.find((r: any) => r["Month"] === month);
       if (row) {
-        totalExpected += row["Expected rent (€)"] || 0;
-        totalActual += row["Actual received (€)"] || 0;
-        totalCosts += row["Costs (€)"] || 0;
+        exp += row["Expected rent (€)"] || 0;
+        act += row["Actual received (€)"] || 0;
+        cost += row["Costs (€)"] || 0;
+        netExp += row["Expected net (€)"] || 0;
+        netAct += row["Actual net (€)"] || 0;
       }
     }
-    entry["Expected"] = +totalExpected.toFixed(2);
-    entry["Actual"] = +totalActual.toFixed(2);
-    entry["Costs"] = +totalCosts.toFixed(2);
-    entry["Net"] = +(totalActual - totalCosts).toFixed(2);
+    entry["Expected"] = +exp.toFixed(2);
+    entry["Actual"] = +act.toFixed(2);
+    entry["Costs"] = +cost.toFixed(2);
+    entry["Expected net"] = +netExp.toFixed(2);
+    entry["Net"] = +netAct.toFixed(2);
+    entry.isCurrent = isCurrentYear && month === thisMonthKey;
     return entry;
   });
 
@@ -106,54 +203,108 @@ export default function BalanceSheetPage() {
         <p className="text-muted-foreground text-sm">Loading…</p>
       ) : (
         <>
+          {/* Current-month expected net — the headline figure */}
+          {isCurrentYear && snapshot.length > 0 && (
+            <Card className="overflow-hidden">
+              <CardContent className="p-0">
+                <div className="grid md:grid-cols-[1.3fr_1fr]">
+                  <div className="p-6 bg-gradient-to-br from-primary/15 via-primary/5 to-transparent">
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Wallet className="size-3.5" /> Expected net · {monthLabel}
+                    </p>
+                    <p className={`text-[2.75rem] leading-tight font-semibold mt-1 tabular-nums ${curNet >= 0 ? "text-emerald-400" : "text-destructive"}`}>
+                      {fmt(curNet)}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Projected result this month if all contracted rent is collected.
+                    </p>
+                  </div>
+                  <div className="p-6 border-t md:border-t-0 md:border-l border-border flex flex-col justify-center gap-3">
+                    <StatRow label="Expected rent" value={fmt(curExpected)} dot={C.expected} />
+                    <StatRow label="Recurring costs" value={`− ${fmt(curCosts)}`} dot={C.costs} />
+                    <div className="h-px bg-border" />
+                    <StatRow label="Expected net" value={fmt(curNet)} dot={C.net} strong />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Annual summary metrics */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <MetricCard label="Expected Rent" value={fmt(totalExpected)} />
+            <MetricCard label="Expected Rent" value={fmt(totalExpected)} accent={C.expected} icon={Target} />
             <MetricCard label="Actual Received" value={fmt(totalActual)}
               sub={`${totalActual >= totalExpected ? "+" : ""}${(totalActual - totalExpected).toFixed(2)} vs expected`}
-              positive={totalActual >= totalExpected} />
-            <MetricCard label="Total Costs" value={fmt(totalCosts)} />
-            <MetricCard label="Net (actual)" value={fmt(totalNet)} positive={totalNet >= 0} />
+              positive={totalActual >= totalExpected} accent={C.actual} icon={Banknote} />
+            <MetricCard label="Total Costs" value={fmt(totalCosts)} accent={C.costs} icon={Receipt} />
+            <MetricCard label="Net (actual)" value={fmt(totalNet)} positive={totalNet >= 0} accent={C.net} icon={Wallet} />
           </div>
 
-          {/* Monthly overview chart */}
+          {/* Monthly income: expected target vs actual, with net line overlay */}
           {aggregateChartData.length > 0 && (
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Monthly Overview {year}</CardTitle>
+              <CardHeader className="pb-1">
+                <CardTitle className="text-sm font-medium">Income vs Target · {year}</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={aggregateChartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="month" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                    <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                    <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6 }} />
-                    <Legend />
-                    <Bar dataKey="Expected" fill="hsl(var(--muted-foreground))" opacity={0.6} />
-                    <Bar dataKey="Actual" fill="hsl(var(--primary))" />
-                    <Bar dataKey="Costs" fill="hsl(var(--destructive))" opacity={0.7} />
-                  </BarChart>
+                <ResponsiveContainer width="100%" height={280}>
+                  <ComposedChart data={aggregateChartData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gActual" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={C.actual} stopOpacity={0.95} />
+                        <stop offset="100%" stopColor={C.actual} stopOpacity={0.5} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis dataKey="month" tickLine={false} axisLine={false}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                    <YAxis tickLine={false} axisLine={false} width={52} tickFormatter={fmtAxis}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--accent))", opacity: 0.4 }} />
+                    <Legend content={<ChartLegend />} />
+                    <Bar dataKey="Expected" name="Expected" fill={C.expected} fillOpacity={0.22}
+                      stroke={C.expected} strokeOpacity={0.5} strokeDasharray="3 3" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Actual" name="Actual" fill="url(#gActual)" radius={[4, 4, 0, 0]} maxBarSize={42}>
+                      {aggregateChartData.map((d: any, i: number) => (
+                        <Cell key={i} stroke={d.isCurrent ? C.actual : "transparent"} strokeWidth={d.isCurrent ? 2 : 0} />
+                      ))}
+                    </Bar>
+                    <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={2}
+                      dot={{ r: 2.5, fill: C.net, strokeWidth: 0 }} activeDot={{ r: 4 }} />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </CardContent>
             </Card>
           )}
 
-          {/* Net trend line chart */}
+          {/* Net income trend: actual vs expected projection */}
           {aggregateChartData.length > 0 && (
             <Card>
-              <CardHeader className="pb-2">
+              <CardHeader className="pb-1">
                 <CardTitle className="text-sm font-medium">Net Income Trend</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={180}>
-                  <LineChart data={aggregateChartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="month" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                    <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                    <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6 }} />
-                    <Line type="monotone" dataKey="Net" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
-                  </LineChart>
+                <ResponsiveContainer width="100%" height={200}>
+                  <AreaChart data={aggregateChartData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gNet" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={C.actual} stopOpacity={0.35} />
+                        <stop offset="100%" stopColor={C.actual} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis dataKey="month" tickLine={false} axisLine={false}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                    <YAxis tickLine={false} axisLine={false} width={52} tickFormatter={fmtAxis}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Legend content={<ChartLegend />} />
+                    <ReferenceLine y={0} stroke="hsl(var(--border))" />
+                    <Area type="monotone" dataKey="Net" name="Actual net" stroke={C.actual} strokeWidth={2}
+                      fill="url(#gNet)" dot={{ r: 2.5, fill: C.actual, strokeWidth: 0 }} activeDot={{ r: 4 }} />
+                    <Line type="monotone" dataKey="Expected net" name="Expected net" stroke={C.net}
+                      strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+                  </AreaChart>
                 </ResponsiveContainer>
               </CardContent>
             </Card>
@@ -173,7 +324,7 @@ export default function BalanceSheetPage() {
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm font-medium">{prop.name}</CardTitle>
-                    <span className={`text-sm font-semibold ${net >= 0 ? "text-emerald-400" : "text-destructive"}`}>
+                    <span className={`text-sm font-semibold tabular-nums ${net >= 0 ? "text-emerald-400" : "text-destructive"}`}>
                       {net >= 0 ? <TrendingUp className="inline size-3.5 mr-1" /> : <TrendingDown className="inline size-3.5 mr-1" />}
                       {fmt(net)}
                     </span>
@@ -185,15 +336,18 @@ export default function BalanceSheetPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <ResponsiveContainer width="100%" height={160}>
-                    <BarChart data={chartData} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="month" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                      <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} width={50} />
-                      <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6 }} />
-                      <Bar dataKey="Expected" fill="hsl(var(--muted-foreground))" opacity={0.5} />
-                      <Bar dataKey="Actual" fill="hsl(var(--primary))" />
-                    </BarChart>
+                  <ResponsiveContainer width="100%" height={170}>
+                    <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 4, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                      <XAxis dataKey="month" tickLine={false} axisLine={false}
+                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                      <YAxis tickLine={false} axisLine={false} width={50} tickFormatter={fmtAxis}
+                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                      <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--accent))", opacity: 0.4 }} />
+                      <Bar dataKey="Expected" name="Expected" fill={C.expected} fillOpacity={0.2}
+                        stroke={C.expected} strokeOpacity={0.4} strokeDasharray="3 3" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="Actual" name="Actual" fill={C.actual} fillOpacity={0.85} radius={[3, 3, 0, 0]} maxBarSize={36} />
+                    </ComposedChart>
                   </ResponsiveContainer>
 
                   <Table>

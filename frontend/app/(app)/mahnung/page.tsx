@@ -46,7 +46,9 @@ export default function MahnungPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           tenant_name: selected.tenant_name,
-          address: customAddress || selected.property_name || "",
+          // Leave blank to let the backend resolve the full property address
+          // (street + postcode + city) from the contract.
+          address: customAddress,
           amount_due: amount,
           contract_id: selected.id,
         }),

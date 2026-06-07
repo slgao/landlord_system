@@ -158,7 +158,7 @@ def nebenkostenabrechnung_pdf(body: NKRequest):
 
 class MahnungRequest(BaseModel):
     tenant_name: str
-    address: str
+    address: Optional[str] = None  # optional manual override
     amount_due: float
     contract_id: Optional[int] = None
 
@@ -168,14 +168,25 @@ def mahnung_pdf(body: MahnungRequest):
     from pdfgen import generate_mahnung
     from db import get_tenant_gender
     gender = get_tenant_gender(body.tenant_name)
-    # Fetch co-tenants (in_contract only) to mirror the Streamlit flow
+    # Resolve the full property address (street + postcode + city) from the
+    # contract, mirroring the Streamlit flow. A non-empty body.address is
+    # treated as a manual override.
+    address = (body.address or "").strip()
     co_tenants = None
     if body.contract_id:
+        if not address:
+            addr_row = fetch(
+                "SELECT p.address FROM contracts c "
+                "JOIN apartments a ON a.id = c.apartment_id "
+                "JOIN properties p ON p.id = a.property_id WHERE c.id = ?",
+                (body.contract_id,))
+            address = (addr_row[0][0] if addr_row and addr_row[0][0] else "") or ""
+        # Fetch co-tenants (in_contract only) to mirror the Streamlit flow
         rows = fetch("SELECT name, gender FROM co_tenants WHERE contract_id=? AND in_contract=1 ORDER BY id",
                      (body.contract_id,))
         co_tenants = [{"name": r[0], "gender": r[1]} for r in rows] or None
     path = generate_mahnung(
-        body.tenant_name, body.amount_due, body.address,
+        body.tenant_name, body.amount_due, address,
         gender=gender, signature_path=_sig(), co_tenants=co_tenants,
     )
     pdf_bytes = Path(path).read_bytes()

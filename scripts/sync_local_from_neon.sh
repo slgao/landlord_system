@@ -53,8 +53,13 @@ echo "=== Sync local Docker ← Neon ==="
 echo ""
 
 # ── 1. Dump from Neon using postgres:18 (matches Neon's server version) ───────
+# Neon runs a newer PostgreSQL major version than the local Docker server, so
+# pg_dump emits session GUCs the local server may not recognise (e.g.
+# transaction_timeout, added in PG17). These are harmless top-of-file SETs, but
+# an older local server errors on them; strip them so the restore stays clean.
 echo "→ Dumping from Neon..."
-docker run --rm postgres:18 pg_dump "$NEON_URL" --no-owner --no-acl > "$DUMP_FILE"
+docker run --rm postgres:18 pg_dump "$NEON_URL" --no-owner --no-acl \
+    | grep -vE '^SET (transaction_timeout)\b' > "$DUMP_FILE"
 echo "  Done."
 
 # ── 2. Wipe local schema and restore ─────────────────────────────────────────

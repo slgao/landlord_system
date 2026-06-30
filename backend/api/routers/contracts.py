@@ -55,6 +55,43 @@ def kaution_overview_top():
     return kaution_overview()
 
 
+@router.get("/{contract_id}/occupancy")
+def contract_occupancy(contract_id: int):
+    """Auto-detect how many persons the flat's utility costs are divided by:
+      • co-tenants named on the contract → 1. Mitmieter share ONE contract as a
+        single household renting the whole flat, so the main tenant is billed for
+        the entire flat; co-tenants do NOT increase the divisor (they still appear
+        named on the PDF).
+      • otherwise (e.g. a WG where each room is its own contract) → number of
+        distinct active tenants sharing the same flat in the same property.
+    """
+    row = fetch("SELECT apartment_id FROM contracts WHERE id=?", (contract_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    apartment_id = row[0][0]
+
+    co = fetch("SELECT COUNT(*) FROM co_tenants WHERE contract_id=?", (contract_id,))
+    co_count = int(co[0][0]) if co and co[0][0] else 0
+
+    if co_count > 0:
+        # Single household on one contract → main tenant covers the whole flat.
+        auto_count = 1
+    else:
+        pf = fetch("""
+            SELECT COUNT(DISTINCT c.tenant_id)
+            FROM contracts c
+            JOIN apartments a ON c.apartment_id = a.id
+            WHERE COALESCE(c.terminated, 0) = 0
+              AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= date('now')::text)
+              AND a.flat IS NOT NULL AND a.flat != ''
+              AND a.property_id = (SELECT property_id FROM apartments WHERE id=?)
+              AND a.flat = (SELECT flat FROM apartments WHERE id=?)
+        """, (apartment_id, apartment_id))
+        auto_count = int(pf[0][0]) if pf and pf[0][0] else 1
+
+    return {"auto_count": max(1, auto_count), "co_tenant_count": co_count}
+
+
 @router.get("/{contract_id}", response_model=ContractOut)
 def get_contract(contract_id: int):
     rows = fetch(f"{_SELECT} WHERE c.id=?", (contract_id,))

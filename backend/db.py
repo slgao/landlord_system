@@ -151,30 +151,53 @@ def delete(table, entry_id):
         put_conn(conn)
 
 
-def fetch(query, params=()):
+# Errors that mean the pooled connection is dead/stale (server closed it after
+# an idle timeout, the DB restarted, the TCP link dropped, …). When we hit one
+# we must DISCARD the connection instead of returning it to the pool — otherwise
+# the broken connection keeps getting handed out and poisons later requests.
+_CONN_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
+
+
+def _run_once(query, params, commit):
     conn = get_conn()
     try:
         c = conn.cursor()
         c.execute(_adapt(query), params)
-        return _normalize(c.fetchall())
-    except Exception:
-        conn.rollback()
+        result = None if commit else _normalize(c.fetchall())
+        if commit:
+            conn.commit()
+    except _CONN_ERRORS:
+        # Evict the dead connection so the pool replaces it on the next getconn().
+        try:
+            _get_pool().putconn(conn, close=True)
+        except Exception:
+            pass
         raise
-    finally:
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         put_conn(conn)
+        raise
+    else:
+        put_conn(conn)
+        return result
+
+
+def fetch(query, params=()):
+    try:
+        return _run_once(query, params, commit=False)
+    except _CONN_ERRORS:
+        # The stale connection was evicted above; retry once with a fresh one.
+        return _run_once(query, params, commit=False)
 
 
 def execute(query, params=()):
-    conn = get_conn()
     try:
-        c = conn.cursor()
-        c.execute(_adapt(query), params)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        put_conn(conn)
+        _run_once(query, params, commit=True)
+    except _CONN_ERRORS:
+        _run_once(query, params, commit=True)
 
 
 def get_tenant_address(tenant_name):

@@ -122,11 +122,20 @@ def _accent_line(color=None, thickness=3):
     return HRFlowable(width="100%", thickness=thickness, color=color, spaceAfter=0, spaceBefore=0)
 
 
-def _address_block(name, address_lines, today_str, s, co_tenants=None):
+def _honorific(gender):
+    """German salutation honorific for the address block."""
+    if gender == "male":
+        return "Herr "
+    if gender == "female":
+        return "Frau "
+    return ""
+
+
+def _address_block(name, address_lines, today_str, s, co_tenants=None, gender="diverse"):
     """Recipient address left, date right."""
-    left = [Paragraph(f"<b>{name}</b>", s["body"])]
+    left = [Paragraph(f"<b>{_honorific(gender)}{name}</b>", s["body"])]
     for ct in (co_tenants or []):
-        left.append(Paragraph(f"<b>{ct['name']}</b>", s["body"]))
+        left.append(Paragraph(f"<b>{_honorific(ct.get('gender'))}{ct['name']}</b>", s["body"]))
     for ln in address_lines:
         left.append(Paragraph(ln, s["body"]))
     right = [Spacer(1, 2), Paragraph(today_str, s["date_right"])]
@@ -275,6 +284,62 @@ def _signature_block(landlord_name, signature_path, s):
     return story
 
 
+# ── Multi-billing helpers ───────────────────────────────────────────────────────
+
+def _as_billing_list(x):
+    """Normalise a utility section param to a list of billing dicts. Accepts
+    None (→ []), a single dict (one billing → [dict]), or an existing list.
+    A utility may now carry several billing periods (e.g. one bill per year)."""
+    if not x:
+        return []
+    return x if isinstance(x, list) else [x]
+
+
+def _subtotal_line(label, value, s):
+    """Bold per-utility total line, shown when a section has >1 billing."""
+    lbl = ParagraphStyle("_sl", fontName="Helvetica-Bold", fontSize=10, leading=14, textColor=C_TEXT)
+    amt = ParagraphStyle("_sa", fontName="Helvetica-Bold", fontSize=10, leading=14,
+                         alignment=TA_RIGHT, textColor=C_TEXT)
+    t = Table([[Paragraph(label, lbl), Paragraph(f"{value:.2f} €", amt)]], colWidths=[390, 78])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), C_LBLUE),
+        ("LINEABOVE",     (0, 0), (-1, -1), 1.0, C_BLUE),
+        ("TOPPADDING",    (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 12),
+    ]))
+    return t
+
+
+def _sum_billing_flowables(d, s):
+    """Render one SUM-mode billing: the provider's bill already states the
+    total cost for the flat, so we prorate that directly with no meter rows."""
+    n = d["num_tenants"]
+    pauschale = d.get("is_pauschale", False)
+    vz = "Pauschale" if pauschale else "Vorauszahlung"
+    return [
+        _info_box(
+            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+            f"{vz}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale else "")
+            + "  ·  Gesamtbetrag laut Rechnung", s),
+        Spacer(1, 8),
+        _calc_table([
+            ["Position", "Berechnung", "Betrag"],
+            ["Gesamtkosten Wohnung", "Rechnungsbetrag (Gesamt)", f"{d['cost_flat']:.2f} €"],
+            ["Ihr Anteil (Zeitraum)", f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+             f"{d['cost']:.2f} €"],
+            [f"{vz} Zeitraum", f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+             f"{d['limit']:.2f} €"],
+            ["Nachzahlung", f"Ihr Anteil − {vz}" + (" (mind. 0 €)" if pauschale else ""),
+             f"{d['nach']:.2f} €"],
+        ], col_widths=[175, 215, 78]),
+        Spacer(1, 18),
+    ]
+
+
 # ── Nebenkostenabrechnung ──────────────────────────────────────────────────────
 
 def invoice_pdf(
@@ -293,6 +358,7 @@ def invoice_pdf(
     kaution_info=None,
     landlord_info=None,
     co_tenants=None,
+    contract_period=None,
 ):
     """
     strom / gas / water dict keys: bill_period, bill_days, period, days,
@@ -307,14 +373,17 @@ def invoice_pdf(
     story = []
     today_str = date.today().strftime("%d.%m.%Y")
 
-    # Period subtitle for header (show tenant's effective periods)
+    # Period subtitle for header (show tenant's effective periods). Each utility
+    # may have several billings, so join their periods.
+    def _periods(x):
+        return " / ".join(f"{b['period']} ({b['days']} Tage)" for b in _as_billing_list(x))
     period_parts = []
-    if strom:     period_parts.append(f"Strom: {strom['period']} ({strom['days']} Tage)")
-    if gas:       period_parts.append(f"Gas: {gas['period']} ({gas['days']} Tage)")
-    if water:     period_parts.append(f"Kaltwasser: {water['period']} ({water['days']} Tage)")
-    if warmwater: period_parts.append(f"Warmwasser: {warmwater['period']} ({warmwater['days']} Tage)")
-    if heizung:   period_parts.append(f"Heizung: {heizung['period']} ({heizung['days']} Tage)")
-    if bk:        period_parts.append(f"BK: {bk['period']} ({bk['months']} Monate)")
+    if strom:     period_parts.append(f"Strom: {_periods(strom)}")
+    if gas:       period_parts.append(f"Gas: {_periods(gas)}")
+    if water:     period_parts.append(f"Kaltwasser: {_periods(water)}")
+    if warmwater: period_parts.append(f"Warmwasser: {_periods(warmwater)}")
+    if heizung:   period_parts.append(f"Heizung: {_periods(heizung)}")
+    if bk:        period_parts.append("BK: " + " / ".join(f"{b['period']} ({b['months']} Monate)" for b in _as_billing_list(bk)))
     period_str = "  ·  ".join(period_parts)
 
     # ── Header banner ──────────────────────────────────────────────
@@ -329,7 +398,10 @@ def invoice_pdf(
             l = line.strip()
             if l:
                 addr_lines.append(l)
-    story.append(_address_block(tenant, addr_lines, today_str, s, co_tenants=co_tenants))
+    story.append(_address_block(tenant, addr_lines, today_str, s, co_tenants=co_tenants, gender=gender))
+    if contract_period:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(f"<b>Mietzeitraum:</b> {contract_period}", s["body"]))
     story.append(Spacer(1, 18))
     story.append(_accent_line(C_MGRAY, thickness=0.5))
     story.append(Spacer(1, 14))
@@ -349,362 +421,432 @@ def invoice_pdf(
     total_items = []
 
     # ── Strom ──────────────────────────────────────────────────────
-    if strom:
-        d = strom
-        n = d["num_tenants"]
-        daily_gp = d["grundpreis_monthly"] * 12 / 365
-        pauschale_s = d.get("is_pauschale", False)
-        vz_label_s  = "Pauschale" if pauschale_s else "Vorauszahlung"
-
+    _strom_list = _as_billing_list(strom)
+    if _strom_list:
         story.append(_section_header(section_num, "Stromkosten", s))
-        meter_line_s = ""
-        if d.get("meter_serial"):
-            meter_line_s = f"Stromzähler: {d['meter_serial']}"
-            if d.get("meter_description"):
-                meter_line_s += f" ({d['meter_description']})"
-            meter_line_s += "  |  "
-        story.append(_info_box(
-            f"{meter_line_s}"
-            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
-            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-            f"{vz_label_s}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
-            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_s else ""), s
-        ))
-        story.append(Spacer(1, 8))
-        story.append(_calc_table([
-            ["Position", "Berechnung", "Betrag"],
-            ["Anfang Zählerstand",       "—",
-             f"{d['start_kwh']:.2f} kWh"],
-            ["Ende Zählerstand",         "—",
-             f"{d['end_kwh']:.2f} kWh"],
-            ["Gesamtverbrauch Wohnung",  f"{d['end_kwh']:.2f} − {d['start_kwh']:.2f}",
-             f"{d['verbrauch']:.2f} kWh"],
-            ["Ihr Verbrauchsanteil",     f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
-             f"{d['verbrauch_tenant']:.2f} kWh"],
-            ["Arbeitskosten",            f"{d['verbrauch_tenant']:.2f} kWh × {d['arbeitspreis']:.3f} €/kWh",
-             f"{d['arbeitskosten']:.2f} €"],
-            ["Grundpreis (täglich)",     f"{d['grundpreis_monthly']:.2f} €/Mon × 12 ÷ 365",
-             f"{daily_gp:.3f} €/Tag"],
-            ["Grundpreis Ihr Anteil",    f"{daily_gp:.3f} € × {d['days']} Tage ÷ {n} Mieter",
-             f"{d['grundkosten']:.2f} €"],
-            ["Gesamtkosten Ihr Anteil",  "Arbeitskosten + Grundpreis",
-             f"{d['cost']:.2f} €"],
-            [f"{vz_label_s} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
-             f"{d['limit']:.2f} €"],
-            [f"Nachzahlung Strom",       f"Ihr Anteil − {vz_label_s}" + (" (mind. 0 €)" if pauschale_s else ""),
-             f"{d['nach']:.2f} €"],
-        ], col_widths=[175, 215, 78]))
-        story.append(Spacer(1, 18))
-        total_items.append(("Nachzahlung Strom", d["nach"]))
+        _multi = len(_strom_list) > 1
+        _sub = 0.0
+        for _bi, d in enumerate(_strom_list, 1):
+            n = d["num_tenants"]
+            if _multi:
+                story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
+                story.append(Spacer(1, 4))
+            if d.get("mode") == "sum":
+                story.extend(_sum_billing_flowables(d, s))
+            else:
+                daily_gp = d["grundpreis_monthly"] * 12 / 365
+                pauschale_s = d.get("is_pauschale", False)
+                vz_label_s  = "Pauschale" if pauschale_s else "Vorauszahlung"
+                meter_line_s = ""
+                if d.get("meter_serial"):
+                    meter_line_s = f"Stromzähler: {d['meter_serial']}"
+                    if d.get("meter_description"):
+                        meter_line_s += f" ({d['meter_description']})"
+                    meter_line_s += "  |  "
+                story.append(_info_box(
+                    f"{meter_line_s}"
+                    f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+                    f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+                    f"{vz_label_s}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_s else ""), s
+                ))
+                story.append(Spacer(1, 8))
+                story.append(_calc_table([
+                    ["Position", "Berechnung", "Betrag"],
+                    ["Anfang Zählerstand",       "—",
+                     f"{d['start_kwh']:.2f} kWh"],
+                    ["Ende Zählerstand",         "—",
+                     f"{d['end_kwh']:.2f} kWh"],
+                    ["Gesamtverbrauch Wohnung",  f"{d['end_kwh']:.2f} − {d['start_kwh']:.2f}",
+                     f"{d['verbrauch']:.2f} kWh"],
+                    ["Ihr Verbrauchsanteil",     f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+                     f"{d['verbrauch_tenant']:.2f} kWh"],
+                    ["Arbeitskosten",            f"{d['verbrauch_tenant']:.2f} kWh × {d['arbeitspreis']:.3f} €/kWh",
+                     f"{d['arbeitskosten']:.2f} €"],
+                    ["Grundpreis (täglich)",     f"{d['grundpreis_monthly']:.2f} €/Mon × 12 ÷ 365",
+                     f"{daily_gp:.3f} €/Tag"],
+                    ["Grundpreis Ihr Anteil",    f"{daily_gp:.3f} € × {d['days']} Tage ÷ {n} Mieter",
+                     f"{d['grundkosten']:.2f} €"],
+                    ["Gesamtkosten Ihr Anteil",  "Arbeitskosten + Grundpreis",
+                     f"{d['cost']:.2f} €"],
+                    [f"{vz_label_s} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                     f"{d['limit']:.2f} €"],
+                    [f"Nachzahlung Strom",       f"Ihr Anteil − {vz_label_s}" + (" (mind. 0 €)" if pauschale_s else ""),
+                     f"{d['nach']:.2f} €"],
+                ], col_widths=[175, 215, 78]))
+                story.append(Spacer(1, 18))
+            _sub += d["nach"]
+        if _multi:
+            story.append(_subtotal_line("Nachzahlung Strom (gesamt)", _sub, s))
+            story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Strom", round(_sub, 2)))
         section_num += 1
 
     # ── Gas ────────────────────────────────────────────────────────
-    if gas:
-        d = gas
-        n = d["num_tenants"]
-        daily_gp = d["grundpreis_monthly"] * 12 / 365
-        pauschale_g = d.get("is_pauschale", False)
-        vz_label_g  = "Pauschale" if pauschale_g else "Vorauszahlung"
-
+    _gas_list = _as_billing_list(gas)
+    if _gas_list:
         story.append(_section_header(section_num, "Gaskosten", s))
-        story.append(_info_box(
-            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
-            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-            f"{vz_label_g}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
-            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_g else ""), s
-        ))
-        story.append(Spacer(1, 8))
-        story.append(_calc_table([
-            ["Position", "Berechnung", "Betrag"],
-            ["Anfang Gaszählerstand",    "—",
-             f"{d['start_m3']:.3f} m³"],
-            ["Ende Gaszählerstand",      "—",
-             f"{d['end_m3']:.3f} m³"],
-            ["Verbrauch (m³)",           f"{d['end_m3']:.3f} − {d['start_m3']:.3f}",
-             f"{d['verbrauch_m3']:.3f} m³"],
-            ["Verbrauch (kWh)",          f"{d['verbrauch_m3']:.3f} m³ × {d['umrechnungsfaktor']:.3f} kWh/m³",
-             f"{d['verbrauch_kwh']:.2f} kWh"],
-            ["Ihr Verbrauchsanteil",     f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
-             f"{d['verbrauch_kwh_t']:.2f} kWh"],
-            ["Arbeitskosten",            f"{d['verbrauch_kwh_t']:.2f} kWh × {d['arbeitspreis']:.3f} €/kWh",
-             f"{d['arbeitskosten']:.2f} €"],
-            ["Grundpreis (täglich)",     f"{d['grundpreis_monthly']:.2f} €/Mon × 12 ÷ 365",
-             f"{daily_gp:.3f} €/Tag"],
-            ["Grundpreis Ihr Anteil",    f"{daily_gp:.3f} € × {d['days']} Tage ÷ {n} Mieter",
-             f"{d['grundkosten']:.2f} €"],
-            ["Gesamtkosten Ihr Anteil",  "Arbeitskosten + Grundpreis",
-             f"{d['cost']:.2f} €"],
-            [f"{vz_label_g} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
-             f"{d['limit']:.2f} €"],
-            ["Nachzahlung Gas",          f"Ihr Anteil − {vz_label_g}" + (" (mind. 0 €)" if pauschale_g else ""),
-             f"{d['nach']:.2f} €"],
-        ], col_widths=[175, 215, 78]))
-        story.append(Spacer(1, 18))
-        total_items.append(("Nachzahlung Gas", d["nach"]))
+        _multi = len(_gas_list) > 1
+        _sub = 0.0
+        for _bi, d in enumerate(_gas_list, 1):
+            n = d["num_tenants"]
+            if _multi:
+                story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
+                story.append(Spacer(1, 4))
+            if d.get("mode") == "sum":
+                story.extend(_sum_billing_flowables(d, s))
+            else:
+                daily_gp = d["grundpreis_monthly"] * 12 / 365
+                pauschale_g = d.get("is_pauschale", False)
+                vz_label_g  = "Pauschale" if pauschale_g else "Vorauszahlung"
+                story.append(_info_box(
+                    f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+                    f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+                    f"{vz_label_g}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_g else ""), s
+                ))
+                story.append(Spacer(1, 8))
+                story.append(_calc_table([
+                    ["Position", "Berechnung", "Betrag"],
+                    ["Anfang Gaszählerstand",    "—",
+                     f"{d['start_m3']:.3f} m³"],
+                    ["Ende Gaszählerstand",      "—",
+                     f"{d['end_m3']:.3f} m³"],
+                    ["Verbrauch (m³)",           f"{d['end_m3']:.3f} − {d['start_m3']:.3f}",
+                     f"{d['verbrauch_m3']:.3f} m³"],
+                    ["Verbrauch (kWh)",          f"{d['verbrauch_m3']:.3f} m³ × {d['umrechnungsfaktor']:.3f} kWh/m³",
+                     f"{d['verbrauch_kwh']:.2f} kWh"],
+                    ["Ihr Verbrauchsanteil",     f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+                     f"{d['verbrauch_kwh_t']:.2f} kWh"],
+                    ["Arbeitskosten",            f"{d['verbrauch_kwh_t']:.2f} kWh × {d['arbeitspreis']:.3f} €/kWh",
+                     f"{d['arbeitskosten']:.2f} €"],
+                    ["Grundpreis (täglich)",     f"{d['grundpreis_monthly']:.2f} €/Mon × 12 ÷ 365",
+                     f"{daily_gp:.3f} €/Tag"],
+                    ["Grundpreis Ihr Anteil",    f"{daily_gp:.3f} € × {d['days']} Tage ÷ {n} Mieter",
+                     f"{d['grundkosten']:.2f} €"],
+                    ["Gesamtkosten Ihr Anteil",  "Arbeitskosten + Grundpreis",
+                     f"{d['cost']:.2f} €"],
+                    [f"{vz_label_g} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                     f"{d['limit']:.2f} €"],
+                    ["Nachzahlung Gas",          f"Ihr Anteil − {vz_label_g}" + (" (mind. 0 €)" if pauschale_g else ""),
+                     f"{d['nach']:.2f} €"],
+                ], col_widths=[175, 215, 78]))
+                story.append(Spacer(1, 18))
+            _sub += d["nach"]
+        if _multi:
+            story.append(_subtotal_line("Nachzahlung Gas (gesamt)", _sub, s))
+            story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Gas", round(_sub, 2)))
         section_num += 1
 
     # ── Kaltwasser ─────────────────────────────────────────────────
-    if water:
-        d = water
-        n = d["num_tenants"]
-        pauschale_w = d.get("is_pauschale", False)
-        vz_label_w  = "Pauschale" if pauschale_w else "Vorauszahlung"
-
+    _water_list = _as_billing_list(water)
+    if _water_list:
         story.append(_section_header(section_num, "Kaltwasser", s))
-        meter_line_w = ""
-        if d.get("meter_serial"):
-            meter_line_w = f"Kaltwasserzähler: {d['meter_serial']}"
-            if d.get("meter_description"):
-                meter_line_w += f" ({d['meter_description']})"
-            meter_line_w += "  |  "
-        story.append(_info_box(
-            f"{meter_line_w}"
-            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
-            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-            f"{vz_label_w}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
-            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_w else ""), s
-        ))
-        story.append(Spacer(1, 8))
-        story.append(_calc_table([
-            ["Position", "Berechnung", "Betrag"],
-            ["Anfang Wasserzählerstand",  "—",
-             f"{d['start_m3']:.3f} m³"],
-            ["Ende Wasserzählerstand",    "—",
-             f"{d['end_m3']:.3f} m³"],
-            ["Verbrauch",                 f"{d['end_m3']:.3f} − {d['start_m3']:.3f}",
-             f"{d['verbrauch_m3']:.3f} m³"],
-            ["Frischwasser",              f"{d['frischwasser_per_m3']:.3f} €/m³",
-             f"{d['frischwasser_per_m3']:.3f} €/m³"],
-            ["Abwasser",                  f"{d['abwasser_per_m3']:.3f} €/m³",
-             f"{d['abwasser_per_m3']:.3f} €/m³"],
-            ["Gesamtpreis je m³",         "Frischwasser + Abwasser",
-             f"{d['cost_per_m3']:.3f} €/m³"],
-            ["Gesamtkosten Wohnung",      f"{d['verbrauch_m3']:.3f} m³ × {d['cost_per_m3']:.3f} €/m³",
-             f"{d['cost_flat']:.2f} €"],
-            ["Ihr Anteil",                f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
-             f"{d['cost']:.2f} €"],
-            [f"{vz_label_w} Zeitraum",    f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
-             f"{d['limit']:.2f} €"],
-            ["Nachzahlung Kaltwasser",    f"Ihr Anteil − {vz_label_w}" + (" (mind. 0 €)" if pauschale_w else ""),
-             f"{d['nach']:.2f} €"],
-        ], col_widths=[175, 215, 78]))
-        story.append(Spacer(1, 18))
-        total_items.append(("Nachzahlung Kaltwasser", d["nach"]))
+        _multi = len(_water_list) > 1
+        _sub = 0.0
+        for _bi, d in enumerate(_water_list, 1):
+            n = d["num_tenants"]
+            if _multi:
+                story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
+                story.append(Spacer(1, 4))
+            if d.get("mode") == "sum":
+                story.extend(_sum_billing_flowables(d, s))
+            else:
+                pauschale_w = d.get("is_pauschale", False)
+                vz_label_w  = "Pauschale" if pauschale_w else "Vorauszahlung"
+                meter_line_w = ""
+                if d.get("meter_serial"):
+                    meter_line_w = f"Kaltwasserzähler: {d['meter_serial']}"
+                    if d.get("meter_description"):
+                        meter_line_w += f" ({d['meter_description']})"
+                    meter_line_w += "  |  "
+                story.append(_info_box(
+                    f"{meter_line_w}"
+                    f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+                    f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+                    f"{vz_label_w}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_w else ""), s
+                ))
+                story.append(Spacer(1, 8))
+                story.append(_calc_table([
+                    ["Position", "Berechnung", "Betrag"],
+                    ["Anfang Wasserzählerstand",  "—",
+                     f"{d['start_m3']:.3f} m³"],
+                    ["Ende Wasserzählerstand",    "—",
+                     f"{d['end_m3']:.3f} m³"],
+                    ["Verbrauch",                 f"{d['end_m3']:.3f} − {d['start_m3']:.3f}",
+                     f"{d['verbrauch_m3']:.3f} m³"],
+                    ["Frischwasser",              f"{d['frischwasser_per_m3']:.3f} €/m³",
+                     f"{d['frischwasser_per_m3']:.3f} €/m³"],
+                    ["Abwasser",                  f"{d['abwasser_per_m3']:.3f} €/m³",
+                     f"{d['abwasser_per_m3']:.3f} €/m³"],
+                    ["Gesamtpreis je m³",         "Frischwasser + Abwasser",
+                     f"{d['cost_per_m3']:.3f} €/m³"],
+                    ["Gesamtkosten Wohnung",      f"{d['verbrauch_m3']:.3f} m³ × {d['cost_per_m3']:.3f} €/m³",
+                     f"{d['cost_flat']:.2f} €"],
+                    ["Ihr Anteil",                f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+                     f"{d['cost']:.2f} €"],
+                    [f"{vz_label_w} Zeitraum",    f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                     f"{d['limit']:.2f} €"],
+                    ["Nachzahlung Kaltwasser",    f"Ihr Anteil − {vz_label_w}" + (" (mind. 0 €)" if pauschale_w else ""),
+                     f"{d['nach']:.2f} €"],
+                ], col_widths=[175, 215, 78]))
+                story.append(Spacer(1, 18))
+            _sub += d["nach"]
+        if _multi:
+            story.append(_subtotal_line("Nachzahlung Kaltwasser (gesamt)", _sub, s))
+            story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Kaltwasser", round(_sub, 2)))
         section_num += 1
 
     # ── Warmwasser ─────────────────────────────────────────────────
-    if warmwater:
-        d = warmwater
-        n = d["num_tenants"]
-        pauschale_ww = d.get("is_pauschale", False)
-        vz_label_ww  = "Pauschale" if pauschale_ww else "Vorauszahlung"
-        meters_ww    = d.get("meter_details", [])
-
+    _warm_list = _as_billing_list(warmwater)
+    if _warm_list:
         story.append(_section_header(section_num, "Warmwasser", s))
-        story.append(_info_box(
-            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
-            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-            f"{vz_label_ww}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
-            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_ww else ""), s
-        ))
-        story.append(Spacer(1, 8))
-
-        rows_ww = [["Position", "Berechnung", "Betrag"]]
-        for m in meters_ww:
-            label = f"Zähler {m['serial'] or '—'}"
-            if m.get("description"):
-                label += f" ({m['description']})"
-            rows_ww.append([
-                label,
-                f"{m['end']:.3f} − {m['start']:.3f} m³",
-                f"{m['verbrauch']:.3f} m³",
-            ])
-        rows_ww.append([
-            "Verbrauch (Summe)",
-            "Σ alle Zähler" if len(meters_ww) > 1 else "—",
-            f"{d['verbrauch_m3']:.3f} m³",
-        ])
-        rows_ww.append(["Frischwasser",  f"{d['frischwasser_per_m3']:.3f} €/m³",
-                        f"{d['frischwasser_per_m3']:.3f} €/m³"])
-        rows_ww.append(["Abwasser",      f"{d['abwasser_per_m3']:.3f} €/m³",
-                        f"{d['abwasser_per_m3']:.3f} €/m³"])
-        rows_ww.append(["Heizenergie",   f"{d['heizenergie_per_m3']:.3f} €/m³",
-                        f"{d['heizenergie_per_m3']:.3f} €/m³"])
-        rows_ww.append(["Gesamtpreis je m³",
-                        "Frischwasser + Abwasser + Heizenergie",
-                        f"{d['cost_per_m3']:.3f} €/m³"])
-        rows_ww.append(["Gesamtkosten Wohnung",
-                        f"{d['verbrauch_m3']:.3f} m³ × {d['cost_per_m3']:.3f} €/m³",
-                        f"{d['cost_flat']:.2f} €"])
-        rows_ww.append(["Ihr Anteil",
-                        f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
-                        f"{d['cost']:.2f} €"])
-        rows_ww.append([f"{vz_label_ww} Zeitraum",
-                        f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
-                        f"{d['limit']:.2f} €"])
-        rows_ww.append(["Nachzahlung Warmwasser",
-                        f"Ihr Anteil − {vz_label_ww}"
-                        + (" (mind. 0 €)" if pauschale_ww else ""),
-                        f"{d['nach']:.2f} €"])
-
-        story.append(_calc_table(rows_ww, col_widths=[175, 215, 78]))
-        story.append(Spacer(1, 18))
-        total_items.append(("Nachzahlung Warmwasser", d["nach"]))
+        _multi = len(_warm_list) > 1
+        _sub = 0.0
+        for _bi, d in enumerate(_warm_list, 1):
+            n = d["num_tenants"]
+            if _multi:
+                story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
+                story.append(Spacer(1, 4))
+            if d.get("mode") == "sum":
+                story.extend(_sum_billing_flowables(d, s))
+            else:
+                pauschale_ww = d.get("is_pauschale", False)
+                vz_label_ww  = "Pauschale" if pauschale_ww else "Vorauszahlung"
+                meters_ww    = d.get("meter_details", [])
+                story.append(_info_box(
+                    f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+                    f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
+                    f"{vz_label_ww}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_ww else ""), s
+                ))
+                story.append(Spacer(1, 8))
+                rows_ww = [["Position", "Berechnung", "Betrag"]]
+                for m in meters_ww:
+                    label = f"Zähler {m['serial'] or '—'}"
+                    if m.get("description"):
+                        label += f" ({m['description']})"
+                    rows_ww.append([
+                        label,
+                        f"{m['end']:.3f} − {m['start']:.3f} m³",
+                        f"{m['verbrauch']:.3f} m³",
+                    ])
+                rows_ww.append([
+                    "Verbrauch (Summe)",
+                    "Σ alle Zähler" if len(meters_ww) > 1 else "—",
+                    f"{d['verbrauch_m3']:.3f} m³",
+                ])
+                rows_ww.append(["Frischwasser",  f"{d['frischwasser_per_m3']:.3f} €/m³",
+                                f"{d['frischwasser_per_m3']:.3f} €/m³"])
+                rows_ww.append(["Abwasser",      f"{d['abwasser_per_m3']:.3f} €/m³",
+                                f"{d['abwasser_per_m3']:.3f} €/m³"])
+                rows_ww.append(["Heizenergie",   f"{d['heizenergie_per_m3']:.3f} €/m³",
+                                f"{d['heizenergie_per_m3']:.3f} €/m³"])
+                rows_ww.append(["Gesamtpreis je m³",
+                                "Frischwasser + Abwasser + Heizenergie",
+                                f"{d['cost_per_m3']:.3f} €/m³"])
+                rows_ww.append(["Gesamtkosten Wohnung",
+                                f"{d['verbrauch_m3']:.3f} m³ × {d['cost_per_m3']:.3f} €/m³",
+                                f"{d['cost_flat']:.2f} €"])
+                rows_ww.append(["Ihr Anteil",
+                                f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+                                f"{d['cost']:.2f} €"])
+                rows_ww.append([f"{vz_label_ww} Zeitraum",
+                                f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                                f"{d['limit']:.2f} €"])
+                rows_ww.append(["Nachzahlung Warmwasser",
+                                f"Ihr Anteil − {vz_label_ww}"
+                                + (" (mind. 0 €)" if pauschale_ww else ""),
+                                f"{d['nach']:.2f} €"])
+                story.append(_calc_table(rows_ww, col_widths=[175, 215, 78]))
+                story.append(Spacer(1, 18))
+            _sub += d["nach"]
+        if _multi:
+            story.append(_subtotal_line("Nachzahlung Warmwasser (gesamt)", _sub, s))
+            story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Warmwasser", round(_sub, 2)))
         section_num += 1
 
     # ── Betriebskosten ─────────────────────────────────────────────
-    if bk:
-        d = bk
-        n = d["num_tenants"]
-        cost_per_tenant_full = d["total_cost"] / n if n else d["total_cost"]
-        bk_limit_month = d["monthly_limit"] / n if n else 0
-
+    _bk_list = _as_billing_list(bk)
+    if _bk_list:
         story.append(_section_header(section_num, "Betriebskosten", s))
-        story.append(_info_box(
-            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['num_months']} Monate  |  "
-            f"Ihr Zeitraum: {d['period']}  ·  {d['months']} Monate  ·  "
-            f"Vorauszahlung: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
-        ))
-        story.append(Spacer(1, 8))
-        story.append(_calc_table([
-            ["Position", "Berechnung", "Betrag"],
-            ["Gesamte Betriebskosten", f"Abrechnungszeitraum {d['num_months']} Monate", f"{d['total_cost']:.2f} €"],
-            ["Ihr Anteil (gesamt)", f"÷ {n} Mieter", f"{cost_per_tenant_full:.2f} €"],
-            ["Ihr Anteil (Nutzungsdauer)", f"÷ {d['num_months']} × {d['months']} Monate", f"{d['cost']:.2f} €"],
-            ["Monatliche Vorauszahlung", f"{d['monthly_limit']:.2f} € ÷ {n}", f"{bk_limit_month:.2f} €"],
-            ["Vorauszahlung Zeitraum", f"{bk_limit_month:.2f} € × {d['months']} Monate", f"{d['limit']:.2f} €"],
-            ["Nachzahlung Betriebskosten", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
-        ]))
-        story.append(Spacer(1, 18))
-        total_items.append(("Nachzahlung Betriebskosten", d["nach"]))
+        _multi = len(_bk_list) > 1
+        _sub = 0.0
+        for _bi, d in enumerate(_bk_list, 1):
+            n = d["num_tenants"]
+            cost_per_tenant_full = d["total_cost"] / n if n else d["total_cost"]
+            bk_limit_month = d["monthly_limit"] / n if n else 0
+            if _multi:
+                story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
+                story.append(Spacer(1, 4))
+            story.append(_info_box(
+                f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['num_months']} Monate  |  "
+                f"Ihr Zeitraum: {d['period']}  ·  {d['months']} Monate  ·  "
+                f"Vorauszahlung gesamt: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
+            ))
+            story.append(Spacer(1, 8))
+            story.append(_calc_table([
+                ["Position", "Berechnung", "Betrag"],
+                ["Gesamte Betriebskosten", f"Abrechnungszeitraum {d['num_months']} Monate", f"{d['total_cost']:.2f} €"],
+                ["Ihr Anteil (gesamt)", f"÷ {n} Mieter", f"{cost_per_tenant_full:.2f} €"],
+                ["Ihr Anteil (Nutzungsdauer)", f"÷ {d['num_months']} × {d['months']} Monate", f"{d['cost']:.2f} €"],
+                ["Monatliche Vorauszahlung (Ihr Anteil)", f"{d['monthly_limit']:.2f} € gesamt ÷ {n} Mieter", f"{bk_limit_month:.2f} €"],
+                ["Vorauszahlung Zeitraum", f"{bk_limit_month:.2f} € × {d['months']} Monate", f"{d['limit']:.2f} €"],
+                ["Nachzahlung Betriebskosten", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
+            ]))
+            story.append(Spacer(1, 18))
+            _sub += d["nach"]
+        if _multi:
+            story.append(_subtotal_line("Nachzahlung Betriebskosten (gesamt)", _sub, s))
+            story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Betriebskosten", round(_sub, 2)))
         section_num += 1
 
     # ── Heizkosten ─────────────────────────────────────────────────
-    if heizung:
-        d = heizung
-        n = d["num_tenants"]
-        unit  = d.get("unit_label", "Einheiten")
-        pauschale_h = d.get("is_pauschale", False)
-        vz_label_h  = "Pauschale" if pauschale_h else "Vorauszahlung"
-
+    _heiz_list = _as_billing_list(heizung)
+    if _heiz_list:
         story.append(_section_header(section_num, "Heizkosten (Heizkostenverteiler)", s))
-        price_kwh = d.get("price_kwh", 0.0)
-        story.append(_info_box(
-            f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
-            f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  |  "
-            f"Preis: {price_kwh:.4f} €/kWh  ·  "
-            f"{vz_label_h}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
-            + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_h else ""), s
-        ))
-        story.append(Spacer(1, 8))
+        _multi = len(_heiz_list) > 1
+        _sub = 0.0
+        for _bi, d in enumerate(_heiz_list, 1):
+            n = d["num_tenants"]
+            if _multi:
+                story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
+                story.append(Spacer(1, 4))
+            if d.get("mode") == "sum":
+                story.extend(_sum_billing_flowables(d, s))
+            else:
+                unit  = d.get("unit_label", "Einheiten")
+                pauschale_h = d.get("is_pauschale", False)
+                vz_label_h  = "Pauschale" if pauschale_h else "Vorauszahlung"
+                price_kwh = d.get("price_kwh", 0.0)
+                story.append(_info_box(
+                    f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
+                    f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  |  "
+                    f"Preis: {price_kwh:.4f} €/kWh  ·  "
+                    f"{vz_label_h}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_h else ""), s
+                ))
+                story.append(Spacer(1, 8))
 
-        # ── Per-meter breakdown table ─────────────────────────────
-        meter_style  = ParagraphStyle("_ms",  fontName="Helvetica",      fontSize=8, leading=11, textColor=C_TEXT)
-        meter_hdr    = ParagraphStyle("_mh",  fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_WHITE)
-        meter_right  = ParagraphStyle("_mr",  fontName="Helvetica",      fontSize=8, leading=11, textColor=C_TEXT, alignment=TA_RIGHT)
-        meter_hdr_r  = ParagraphStyle("_mhr", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_WHITE, alignment=TA_RIGHT)
-        meter_tot    = ParagraphStyle("_mt",  fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_TEXT)
-        meter_tot_r  = ParagraphStyle("_mtr", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_TEXT, alignment=TA_RIGHT)
+                # ── Per-meter breakdown table ─────────────────────────────
+                meter_style  = ParagraphStyle("_ms",  fontName="Helvetica",      fontSize=8, leading=11, textColor=C_TEXT)
+                meter_hdr    = ParagraphStyle("_mh",  fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_WHITE)
+                meter_right  = ParagraphStyle("_mr",  fontName="Helvetica",      fontSize=8, leading=11, textColor=C_TEXT, alignment=TA_RIGHT)
+                meter_hdr_r  = ParagraphStyle("_mhr", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_WHITE, alignment=TA_RIGHT)
+                meter_tot    = ParagraphStyle("_mt",  fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_TEXT)
+                meter_tot_r  = ParagraphStyle("_mtr", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=C_TEXT, alignment=TA_RIGHT)
 
-        # Check if any meter uses a conversion factor ≠ 1
-        any_factor = any(abs(m.get("conversion_factor", 1.0) - 1.0) > 1e-6
-                         for m in d.get("meter_details", []))
+                # Check if any meter uses a conversion factor ≠ 1
+                any_factor = any(abs(m.get("conversion_factor", 1.0) - 1.0) > 1e-6
+                                 for m in d.get("meter_details", []))
 
-        if any_factor:
-            # Einheiten → ×factor (per meter) → kWh → ×€/kWh (shared) → Kosten
-            mw = [100, 105, 45, 45, 52, 50, 71]
-            m_rows = [[
-                Paragraph("Seriennummer",        meter_hdr),
-                Paragraph("Beschreibung",        meter_hdr),
-                Paragraph(f"Start ({unit})",     meter_hdr_r),
-                Paragraph(f"Ende ({unit})",      meter_hdr_r),
-                Paragraph(f"Verbr. ({unit})",    meter_hdr_r),
-                Paragraph("kWh (×Faktor)",       meter_hdr_r),
-                Paragraph("Kosten",              meter_hdr_r),
-            ]]
-            for m in d.get("meter_details", []):
-                fac = m.get("conversion_factor", 1.0)
-                kwh = m.get("kwh", round(m["units"] * fac, 3))
-                m_rows.append([
-                    Paragraph(m["serial"],                       meter_style),
-                    Paragraph(m["description"],                  meter_style),
-                    Paragraph(f"{m['start']:.3f}",               meter_right),
-                    Paragraph(f"{m['end']:.3f}",                 meter_right),
-                    Paragraph(f"{m['units']:.3f}",               meter_right),
-                    Paragraph(f"{kwh:.3f} (×{fac:.4f})",        meter_right),
-                    Paragraph(f"{m['cost']:.2f} €",             meter_right),
-                ])
-            m_rows.append([
-                Paragraph("Gesamt",                        meter_tot),
-                Paragraph("",                              meter_tot),
-                Paragraph("",                              meter_tot),
-                Paragraph("",                              meter_tot),
-                Paragraph("",                              meter_tot),
-                Paragraph("",                              meter_tot),
-                Paragraph(f"{d['total_cost_flat']:.2f} €", meter_tot_r),
-            ])
-        else:
-            # Meters already read in kWh (factor = 1.0 for all)
-            mw = [120, 130, 50, 50, 60, 58]
-            m_rows = [[
-                Paragraph("Seriennummer",    meter_hdr),
-                Paragraph("Beschreibung",    meter_hdr),
-                Paragraph("Start (kWh)",     meter_hdr_r),
-                Paragraph("Ende (kWh)",      meter_hdr_r),
-                Paragraph("Verbr. (kWh)",    meter_hdr_r),
-                Paragraph("Kosten",          meter_hdr_r),
-            ]]
-            for m in d.get("meter_details", []):
-                m_rows.append([
-                    Paragraph(m["serial"],          meter_style),
-                    Paragraph(m["description"],     meter_style),
-                    Paragraph(f"{m['start']:.3f}",  meter_right),
-                    Paragraph(f"{m['end']:.3f}",    meter_right),
-                    Paragraph(f"{m['units']:.3f}",  meter_right),
-                    Paragraph(f"{m['cost']:.2f} €", meter_right),
-                ])
-            m_rows.append([
-                Paragraph("Gesamt",                        meter_tot),
-                Paragraph("",                              meter_tot),
-                Paragraph("",                              meter_tot),
-                Paragraph("",                              meter_tot),
-                Paragraph("",                              meter_tot),
-                Paragraph(f"{d['total_cost_flat']:.2f} €", meter_tot_r),
-            ])
-        mt = Table(m_rows, colWidths=mw)
-        mt.setStyle(TableStyle([
-            ("BACKGROUND",    (0, 0), (-1, 0),   C_NAVY),
-            ("ROWBACKGROUNDS",(0, 1), (-1, -2),  [C_WHITE, C_LGRAY]),
-            ("LINEBELOW",     (0, 0), (-1, -2),  0.4, C_MGRAY),
-            ("BACKGROUND",    (0, -1),(-1, -1),  C_LBLUE),
-            ("VALIGN",        (0, 0), (-1, -1),  "TOP"),
-            ("TOPPADDING",    (0, 0), (-1, -1),  5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1),  5),
-            ("LEFTPADDING",   (0, 0), (-1, -1),  6),
-            ("RIGHTPADDING",  (0, 0), (-1, -1),  6),
-        ]))
-        story.append(mt)
-        story.append(Spacer(1, 8))
+                if any_factor:
+                    # Einheiten → ×factor (per meter) → kWh → ×€/kWh (shared) → Kosten
+                    mw = [100, 105, 45, 45, 52, 50, 71]
+                    m_rows = [[
+                        Paragraph("Seriennummer",        meter_hdr),
+                        Paragraph("Beschreibung",        meter_hdr),
+                        Paragraph(f"Start ({unit})",     meter_hdr_r),
+                        Paragraph(f"Ende ({unit})",      meter_hdr_r),
+                        Paragraph(f"Verbr. ({unit})",    meter_hdr_r),
+                        Paragraph("kWh (×Faktor)",       meter_hdr_r),
+                        Paragraph("Kosten",              meter_hdr_r),
+                    ]]
+                    for m in d.get("meter_details", []):
+                        fac = m.get("conversion_factor", 1.0)
+                        kwh = m.get("kwh", round(m["units"] * fac, 3))
+                        m_rows.append([
+                            Paragraph(m["serial"],                       meter_style),
+                            Paragraph(m["description"],                  meter_style),
+                            Paragraph(f"{m['start']:.3f}",               meter_right),
+                            Paragraph(f"{m['end']:.3f}",                 meter_right),
+                            Paragraph(f"{m['units']:.3f}",               meter_right),
+                            Paragraph(f"{kwh:.3f} (×{fac:.4f})",        meter_right),
+                            Paragraph(f"{m['cost']:.2f} €",             meter_right),
+                        ])
+                    m_rows.append([
+                        Paragraph("Gesamt",                        meter_tot),
+                        Paragraph("",                              meter_tot),
+                        Paragraph("",                              meter_tot),
+                        Paragraph("",                              meter_tot),
+                        Paragraph("",                              meter_tot),
+                        Paragraph("",                              meter_tot),
+                        Paragraph(f"{d['total_cost_flat']:.2f} €", meter_tot_r),
+                    ])
+                else:
+                    # Meters already read in kWh (factor = 1.0 for all)
+                    mw = [120, 130, 50, 50, 60, 58]
+                    m_rows = [[
+                        Paragraph("Seriennummer",    meter_hdr),
+                        Paragraph("Beschreibung",    meter_hdr),
+                        Paragraph("Start (kWh)",     meter_hdr_r),
+                        Paragraph("Ende (kWh)",      meter_hdr_r),
+                        Paragraph("Verbr. (kWh)",    meter_hdr_r),
+                        Paragraph("Kosten",          meter_hdr_r),
+                    ]]
+                    for m in d.get("meter_details", []):
+                        m_rows.append([
+                            Paragraph(m["serial"],          meter_style),
+                            Paragraph(m["description"],     meter_style),
+                            Paragraph(f"{m['start']:.3f}",  meter_right),
+                            Paragraph(f"{m['end']:.3f}",    meter_right),
+                            Paragraph(f"{m['units']:.3f}",  meter_right),
+                            Paragraph(f"{m['cost']:.2f} €", meter_right),
+                        ])
+                    m_rows.append([
+                        Paragraph("Gesamt",                        meter_tot),
+                        Paragraph("",                              meter_tot),
+                        Paragraph("",                              meter_tot),
+                        Paragraph("",                              meter_tot),
+                        Paragraph("",                              meter_tot),
+                        Paragraph(f"{d['total_cost_flat']:.2f} €", meter_tot_r),
+                    ])
+                mt = Table(m_rows, colWidths=mw)
+                mt.setStyle(TableStyle([
+                    ("BACKGROUND",    (0, 0), (-1, 0),   C_NAVY),
+                    ("ROWBACKGROUNDS",(0, 1), (-1, -2),  [C_WHITE, C_LGRAY]),
+                    ("LINEBELOW",     (0, 0), (-1, -2),  0.4, C_MGRAY),
+                    ("BACKGROUND",    (0, -1),(-1, -1),  C_LBLUE),
+                    ("VALIGN",        (0, 0), (-1, -1),  "TOP"),
+                    ("TOPPADDING",    (0, 0), (-1, -1),  5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1),  5),
+                    ("LEFTPADDING",   (0, 0), (-1, -1),  6),
+                    ("RIGHTPADDING",  (0, 0), (-1, -1),  6),
+                ]))
+                story.append(mt)
+                story.append(Spacer(1, 8))
 
-        # ── Proration calculation table ───────────────────────────
-        story.append(_calc_table([
-            ["Position", "Berechnung", "Betrag"],
-            ["Gesamtkosten Wohnung",    f"Σ ({unit} × Faktor × {price_kwh:.4f} €/kWh)",
-             f"{d['total_cost_flat']:.2f} €"],
-            ["Ihr Anteil (Zeitraum)",   f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
-             f"{d['cost']:.2f} €"],
-            [f"{vz_label_h} Zeitraum",  f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage",
-             f"{d['limit']:.2f} €"],
-            [f"Nachzahlung Heizkosten", f"Ihr Anteil − {vz_label_h}" + (" (mind. 0 €)" if pauschale_h else ""),
-             f"{d['nach']:.2f} €"],
-        ], col_widths=[175, 215, 78]))
-        story.append(Spacer(1, 18))
-        total_items.append(("Nachzahlung Heizkosten", d["nach"]))
+                # ── Proration calculation table ───────────────────────────
+                story.append(_calc_table([
+                    ["Position", "Berechnung", "Betrag"],
+                    ["Gesamtkosten Wohnung",    f"Σ ({unit} × Faktor × {price_kwh:.4f} €/kWh)",
+                     f"{d['total_cost_flat']:.2f} €"],
+                    ["Ihr Anteil (Zeitraum)",   f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
+                     f"{d['cost']:.2f} €"],
+                    [f"{vz_label_h} Zeitraum",  f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                     f"{d['limit']:.2f} €"],
+                    [f"Nachzahlung Heizkosten", f"Ihr Anteil − {vz_label_h}" + (" (mind. 0 €)" if pauschale_h else ""),
+                     f"{d['nach']:.2f} €"],
+                ], col_widths=[175, 215, 78]))
+                story.append(Spacer(1, 18))
+            _sub += d["nach"]
+        if _multi:
+            story.append(_subtotal_line("Nachzahlung Heizkosten (gesamt)", _sub, s))
+            story.append(Spacer(1, 18))
+        total_items.append(("Nachzahlung Heizkosten", round(_sub, 2)))
         section_num += 1
 
     # ── Zusätzliche Positionen ─────────────────────────────────────
     if extra:
-        items = [i for i in extra.get("items", []) if i.get("description")]
+        # `extra` may arrive as a bare list of items (Next.js frontend) or as a
+        # dict {"items": [...]} (Streamlit). Normalise to a list either way.
+        _extra_items = extra.get("items", []) if isinstance(extra, dict) else extra
+        items = [i for i in (_extra_items or []) if i.get("description")]
         if items:
             subtotal = sum(i["amount"] for i in items)
             story.append(_section_header(section_num, "Zusätzliche Positionen / Vereinbarte Abzüge", s))
@@ -898,7 +1040,7 @@ def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signat
             l = line.strip()
             if l:
                 addr_lines.append(l)
-    story.append(_address_block(tenant_name, addr_lines, today_str, s, co_tenants=co_tenants))
+    story.append(_address_block(tenant_name, addr_lines, today_str, s, co_tenants=co_tenants, gender=gender))
     story.append(Spacer(1, 18))
     story.append(_accent_line(C_MGRAY, thickness=0.5))
     story.append(Spacer(1, 14))

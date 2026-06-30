@@ -74,7 +74,7 @@ def strom_calc_detail(start_kwh, end_kwh, arbeitspreis, grundpreis_monthly,
     arbeitskosten      = verbrauch_tenant * arbeitspreis
     grundkosten        = grundpreis_monthly * 12 / 365 * eff_days / n
     cost_tenant        = arbeitskosten + grundkosten
-    prepay             = prepay_monthly * 12 / 365 * eff_days
+    prepay             = prepay_monthly * 12 / 365 * eff_days / n
     nach               = cost_tenant - prepay
     if is_pauschale:
         nach = max(0.0, nach)
@@ -105,7 +105,7 @@ def gas_calc_detail(start_m3, end_m3, umrechnungsfaktor, arbeitspreis, grundprei
     arbeitskosten      = verbrauch_kwh_t * arbeitspreis
     grundkosten        = grundpreis_monthly * 12 / 365 * eff_days / n
     cost_tenant        = arbeitskosten + grundkosten
-    prepay             = prepay_monthly * 12 / 365 * eff_days
+    prepay             = prepay_monthly * 12 / 365 * eff_days / n
     nach               = cost_tenant - prepay
     if is_pauschale:
         nach = max(0.0, nach)
@@ -134,7 +134,7 @@ def water_calc_detail(start_m3, end_m3, frischwasser_per_m3, abwasser_per_m3,
     cost_per_m3    = frischwasser_per_m3 + abwasser_per_m3
     cost_flat      = verbrauch_m3 * cost_per_m3
     cost_tenant    = cost_flat * eff_days / bd / n
-    prepay         = prepay_monthly * 12 / 365 * eff_days
+    prepay         = prepay_monthly * 12 / 365 * eff_days / n
     nach           = cost_tenant - prepay
     if is_pauschale:
         nach = max(0.0, nach)
@@ -173,7 +173,7 @@ def warmwasser_calc_detail(meters, frischwasser_per_m3, abwasser_per_m3,
     cost_per_m3 = frischwasser_per_m3 + abwasser_per_m3 + heizenergie_per_m3
     cost_flat   = total_m3 * cost_per_m3
     cost_tenant = cost_flat * eff_days / bd / n
-    prepay      = prepay_monthly * 12 / 365 * eff_days
+    prepay      = prepay_monthly * 12 / 365 * eff_days / n
     nach        = cost_tenant - prepay
     if is_pauschale:
         nach = max(0.0, nach)
@@ -224,7 +224,7 @@ def heizung_calc_detail(meters, num_tenants, bill_days, eff_days,
             "cost":              cost,
         })
     cost_tenant = total_cost_flat * eff_days / bd / n
-    prepay      = prepay_monthly * 12 / 365 * eff_days
+    prepay      = prepay_monthly * 12 / 365 * eff_days / n
     nach        = cost_tenant - prepay
     if is_pauschale:
         nach = max(0.0, nach)
@@ -235,6 +235,33 @@ def heizung_calc_detail(meters, num_tenants, bill_days, eff_days,
         prepay          = round(prepay, 2),
         nach            = round(nach, 2),
         meter_details   = meter_details,
+    )
+
+
+def sum_cost_calc(cost_flat, num_tenants, bill_days, eff_days, prepay_monthly,
+                  is_pauschale=False):
+    """
+    Direct total-cost calculation for any utility (Strom/Gas/Kaltwasser/
+    Warmwasser/Heizkosten) when the provider's bill already states the total
+    cost for the flat over the billing period — no meter readings needed.
+
+    cost_flat       – total cost for the whole flat over the billing period
+    bill_days       – length of the provider's billing period in days
+    eff_days        – days the tenant actually lived in the flat
+    prepay_monthly  – the tenant's monthly prepayment (Vorauszahlung)
+    """
+    n  = max(1, num_tenants)
+    bd = max(1, bill_days)
+    cost_tenant = cost_flat * eff_days / bd / n
+    prepay      = prepay_monthly * 12 / 365 * eff_days / n
+    nach        = cost_tenant - prepay
+    if is_pauschale:
+        nach = max(0.0, nach)
+    return dict(
+        cost_flat   = round(cost_flat, 2),
+        cost_tenant = round(cost_tenant, 2),
+        prepay      = round(prepay, 2),
+        nach        = round(nach, 2),
     )
 
 

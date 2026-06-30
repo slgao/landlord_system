@@ -1,4 +1,6 @@
 """PDF generation, calculation, and report endpoints."""
+import functools
+import traceback
 from datetime import date
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
@@ -8,6 +10,24 @@ from typing import Optional, Any
 from db import get_config, fetch, execute, get_conn, put_conn
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
+
+
+def _surface_errors(fn):
+    """Convert an unhandled exception into an HTTPException(500) carrying the
+    error message. An HTTPException is rendered *below* the CORS middleware, so
+    the response keeps its Access-Control-Allow-Origin header — without this the
+    browser sees a CORS-less 500 as an opaque "NetworkError" and the real cause
+    is invisible to the client. Endpoints stay synchronous."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except HTTPException:
+            raise
+        except Exception as e:
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    return wrapper
 
 _SIG_PATH = "pdf/signature.png"
 
@@ -64,52 +84,77 @@ class NKCalcRequest(BaseModel):
     bk: Optional[Any] = None
 
 
+def _norm_billings(x):
+    """A utility section may arrive as a single billing dict or a list of
+    billing dicts (multiple yearly bills for the same metering). Normalise to
+    a list so the rest of the code is uniform."""
+    if not x:
+        return []
+    return x if isinstance(x, list) else [x]
+
+
 @router.post("/nebenkostenabrechnung/calculate")
+@_surface_errors
 def nk_calculate(body: NKCalcRequest):
     from logic import (strom_calc_detail, gas_calc_detail, water_calc_detail,
-                       warmwasser_calc_detail, heizung_calc_detail, betriebskosten_calc)
+                       warmwasser_calc_detail, heizung_calc_detail,
+                       betriebskosten_calc, sum_cost_calc)
+
+    def _sum(d):
+        return sum_cost_calc(
+            d["cost_flat"], d["num_tenants"], d["bill_days"], d["eff_days"],
+            d["prepay_monthly"], d.get("is_pauschale", False))
+
+    # Each utility returns a LIST of results (one per billing period). A billing
+    # with mode == "sum" uses the direct total-cost calc; otherwise meters.
     result = {}
+
+    def _calc_list(items, meter_fn):
+        out = []
+        for d in items:
+            out.append(_sum(d) if d.get("mode") == "sum" else meter_fn(d))
+        return out
+
     if body.strom:
-        s = body.strom
-        result["strom"] = strom_calc_detail(
+        result["strom"] = _calc_list(_norm_billings(body.strom), lambda s: strom_calc_detail(
             s["start_kwh"], s["end_kwh"], s["arbeitspreis"], s["grundpreis_monthly"],
             s["num_tenants"], s["bill_days"], s["eff_days"], s["prepay_monthly"],
-            s.get("is_pauschale", False))
+            s.get("is_pauschale", False)))
     if body.gas:
-        g = body.gas
-        result["gas"] = gas_calc_detail(
+        result["gas"] = _calc_list(_norm_billings(body.gas), lambda g: gas_calc_detail(
             g["start_m3"], g["end_m3"], g["umrechnungsfaktor"], g["arbeitspreis"],
             g["grundpreis_monthly"], g["num_tenants"], g["bill_days"],
-            g["eff_days"], g["prepay_monthly"], g.get("is_pauschale", False))
+            g["eff_days"], g["prepay_monthly"], g.get("is_pauschale", False)))
     if body.water:
-        w = body.water
-        result["water"] = water_calc_detail(
+        result["water"] = _calc_list(_norm_billings(body.water), lambda w: water_calc_detail(
             w["start_m3"], w["end_m3"], w["frischwasser_per_m3"], w["abwasser_per_m3"],
             w["num_tenants"], w["bill_days"], w["eff_days"],
-            w["prepay_monthly"], w.get("is_pauschale", False))
+            w["prepay_monthly"], w.get("is_pauschale", False)))
     if body.warmwater:
-        ww = body.warmwater
-        result["warmwater"] = warmwasser_calc_detail(
+        result["warmwater"] = _calc_list(_norm_billings(body.warmwater), lambda ww: warmwasser_calc_detail(
             ww["meters"], ww["frischwasser_per_m3"], ww["abwasser_per_m3"],
             ww["heizenergie_per_m3"], ww["num_tenants"], ww["bill_days"],
-            ww["eff_days"], ww["prepay_monthly"], ww.get("is_pauschale", False))
+            ww["eff_days"], ww["prepay_monthly"], ww.get("is_pauschale", False)))
     if body.heizung:
-        h = body.heizung
-        result["heizung"] = heizung_calc_detail(
+        result["heizung"] = _calc_list(_norm_billings(body.heizung), lambda h: heizung_calc_detail(
             h["meters"], h["num_tenants"], h["bill_days"],
-            h["eff_days"], h["prepay_monthly"], h.get("is_pauschale", False))
+            h["eff_days"], h["prepay_monthly"], h.get("is_pauschale", False)))
     if body.bk:
-        bk = body.bk
         from datetime import date as _date
-        bk_start = _date.fromisoformat(bk["bk_start"])
-        bk_end = _date.fromisoformat(bk["bk_end"])
-        ct, pc, lp, nach = betriebskosten_calc(
-            bk["cost_flat"], bk["tenants"], bk["months"], bk_start, bk_end,
-            bk.get("limit_per_month", 206))
-        result["bk"] = {"cost_per_tenant": round(float(ct), 2),
-                        "period_cost": round(float(pc), 2),
-                        "limit_period": round(float(lp), 2),
-                        "nach": round(float(nach), 2)}
+
+        def _bk(bk):
+            bk_start = _date.fromisoformat(bk["bk_start"])
+            bk_end = _date.fromisoformat(bk["bk_end"])
+            ct, pc, lp, nach = betriebskosten_calc(
+                bk["cost_flat"], bk["tenants"], bk["months"], bk_start, bk_end,
+                bk.get("limit_per_month", 206))
+            return {"cost_per_tenant": round(float(ct), 2),
+                    "period_cost": round(float(pc), 2),
+                    "limit_period": round(float(lp), 2),
+                    "nach": round(float(nach), 2)}
+
+        # Betriebskosten may now hold several yearly bills, like the utilities.
+        result["bk"] = [_bk(b) for b in _norm_billings(body.bk)]
     return result
 
 
@@ -129,25 +174,66 @@ class NKRequest(BaseModel):
     extra: Optional[Any] = None
     kaution_info: Optional[Any] = None
     landlord_info: Optional[Any] = None
+    # When true, offset the Nachzahlung against the still-held deposit (Kaution).
+    deduct_kaution: bool = False
 
 
 @router.post("/nebenkostenabrechnung/pdf")
+@_surface_errors
 def nebenkostenabrechnung_pdf(body: NKRequest):
     from pdfgen import invoice_pdf
+    from db import get_tenant_gender
+    # Resolve the primary tenant's gender for the salutation/honorific (the
+    # frontend sends a placeholder "diverse").
+    gender = get_tenant_gender(body.tenant) or body.gender
     # Co-tenants in the contract appear in the salutation/address block
     co_tenants = None
+    address = (body.address or "").strip()
+    contract_period = None
     if body.contract_id:
         rows = fetch("SELECT name, gender FROM co_tenants WHERE contract_id=? AND in_contract=1 ORDER BY id",
                      (body.contract_id,))
         co_tenants = [{"name": r[0], "gender": r[1]} for r in rows] or None
+        # Resolve the full property address (street + postcode + city) and the
+        # tenant's contract period from the contract, mirroring the Mahnung flow.
+        meta = fetch(
+            "SELECT p.address, c.start_date, c.end_date FROM contracts c "
+            "JOIN apartments a ON a.id = c.apartment_id "
+            "JOIN properties p ON p.id = a.property_id WHERE c.id = ?",
+            (body.contract_id,))
+        if meta:
+            full_addr, c_start, c_end = meta[0]
+            if not address:
+                address = (full_addr or "") or ""
+            def _de(d):
+                try:
+                    return date.fromisoformat(str(d)).strftime("%d.%m.%Y")
+                except (TypeError, ValueError):
+                    return None
+            s = _de(c_start)
+            e = _de(c_end) if (c_end and str(c_end) != "None") else "unbefristet"
+            if s:
+                contract_period = f"{s} – {e}"
+
+    # Optionally offset against the deposit, but only if it's still held
+    # (an amount exists and it has not yet been returned).
+    kaution_info = body.kaution_info
+    if body.deduct_kaution and body.contract_id and not kaution_info:
+        krow = fetch(
+            "SELECT kaution_amount, COALESCE(kaution_currency,'EUR'), kaution_returned_date "
+            "FROM contracts WHERE id=?", (body.contract_id,))
+        if krow and krow[0][0] and not (krow[0][2] and str(krow[0][2]) != "None"):
+            kaution_info = {"kaution_amount": float(krow[0][0]),
+                            "kaution_currency": krow[0][1]}
     # invoice_pdf writes to disk and returns the file path
     path = invoice_pdf(
-        tenant=body.tenant, address=body.address,
-        landlord_name=_landlord_name(), gender=body.gender,
+        tenant=body.tenant, address=address,
+        landlord_name=_landlord_name(), gender=gender,
         signature_path=_sig(), strom=body.strom, gas=body.gas,
         water=body.water, warmwater=body.warmwater, heizung=body.heizung,
-        bk=body.bk, extra=body.extra, kaution_info=body.kaution_info,
+        bk=body.bk, extra=body.extra, kaution_info=kaution_info,
         landlord_info=body.landlord_info, co_tenants=co_tenants,
+        contract_period=contract_period,
     )
     pdf_bytes = Path(path).read_bytes()
     return Response(content=pdf_bytes, media_type="application/pdf",
@@ -164,6 +250,7 @@ class MahnungRequest(BaseModel):
 
 
 @router.post("/mahnung/pdf")
+@_surface_errors
 def mahnung_pdf(body: MahnungRequest):
     from pdfgen import generate_mahnung
     from db import get_tenant_gender

@@ -21,7 +21,7 @@
 
 Built to manage a handful of properties without commercial landlord software. Covers the full rental lifecycle — contracts, rent tracking, and legally-formatted PDFs at year end.
 
-- **Nebenkostenabrechnung** — Strom, Gas, Wasser, Heizung, Betriebskosten with day-based proration; partial occupancy and WG shared meters
+- **Nebenkostenabrechnung** — Strom, Gas, Wasser, Heizung, Betriebskosten with day-based proration; partial occupancy and WG shared meters. Each utility takes meter readings *or* a direct total-cost figure, and can hold several billing periods (e.g. one provider bill per year) summed into one statement
 - **Mahnung Generator** — formal payment reminder PDFs with gender-aware salutation and signature
 - **Kaution tracking** — log deductions, track open balance, mark returned
 - **Balance Sheet** — monthly/annual P&L per property with per-flat breakdown, a current-month expected-net headline, and income-vs-target / net-trend charts

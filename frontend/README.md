@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vermio — Frontend
 
-## Getting Started
+Next.js 14 (App Router) + TypeScript + Tailwind CSS + shadcn/ui + Recharts UI for
+the Vermio property-management system. It talks to the FastAPI backend over REST
+with a JWT Bearer token.
 
-First, run the development server:
+For the full project (Docker setup, backend, database, scripts), see the
+[root README](../README.md).
+
+## Develop
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install --legacy-peer-deps
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Point the app at the API by setting it in `frontend/.env.local`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`NEXT_PUBLIC_API_URL` is read at **build time**, so the Docker image bakes it in
+via the `NEXT_PUBLIC_API_URL` build arg (see `docker-compose.yml`).
 
-## Learn More
+## Build
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run build        # production build
+npm run start        # serve the production build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Layout
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+app/
+  (app)/             # authenticated pages (dashboard, contracts, nebenkostenabrechnung, …)
+  login/             # login page
+lib/                 # api client (axios + auth interceptor), types, helpers
+components/           # shared UI (shadcn/ui wrappers, page chrome)
+```
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Auth: the JWT is stored in `localStorage` under `token`; `lib/api.ts` attaches it
+to every request and redirects to `/login` on a 401.

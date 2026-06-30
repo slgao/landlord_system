@@ -21,9 +21,9 @@
 
 Built to manage a handful of properties without commercial landlord software. Covers the full rental lifecycle — contracts, rent tracking, and legally-formatted PDFs at year end.
 
-- **Nebenkostenabrechnung** — Strom, Gas, Wasser, Heizung, Betriebskosten with day-based proration; partial occupancy and WG shared meters. Each utility takes meter readings *or* a direct total-cost figure, and can hold several billing periods (e.g. one provider bill per year) summed into one statement
-- **Mahnung Generator** — formal payment reminder PDFs with gender-aware salutation and signature
-- **Kaution tracking** — log deductions, track open balance, mark returned
+- **Nebenkostenabrechnung** — Strom, Gas, Wasser, Heizung, Betriebskosten with day-based, per-person proration. Each cost type takes meter readings *or* a direct total-cost figure, and can hold several billing periods (e.g. one provider bill per year) that are shown separately and summed into one statement. Person counts are WG-aware (co-tenant household vs. one contract per room); each Betriebskosten bill has its own editable *living period* from the contract; the outstanding amount can be offset against a still-held deposit. Generated PDFs carry the tenant's full address (street + postcode + city), the contract period, and a gender-aware salutation (Herr/Frau). Settings are saved as reusable billing profiles you can update in place.
+- **Mahnung Generator** — formal payment reminder PDFs with gender-aware salutation, full property address, and signature
+- **Kaution tracking** — log deductions, track open balance, mark returned, and offset against a Nebenkostenabrechnung
 - **Balance Sheet** — monthly/annual P&L per property with per-flat breakdown, a current-month expected-net headline, and income-vs-target / net-trend charts
 
 Also: multi-currency (EUR/CNY/USD/GBP), co-tenants (Mitmieter), fixed-term and open-ended leases, meter readings, flat costs (Hausgeld, mortgage, Grundsteuer).
@@ -43,10 +43,11 @@ Also: multi-currency (EUR/CNY/USD/GBP), co-tenants (Mitmieter), fixed-term and o
 | Container | Docker Compose |
 
 The Next.js UI covers everything: dashboard with monthly charts, full CRUD for
-properties/apartments/tenants/contracts, the 6-section Nebenkostenabrechnung
-wizard (with live calculation preview and reusable billing profiles), Mahnung
-generation, balance-sheet charts, per-meter reading history, co-tenant and
-Kaution management, payment reminders, and SMTP/landlord settings.
+properties/apartments/tenants/contracts, the multi-section Nebenkostenabrechnung
+wizard (live calculation preview, per-period meter/total-cost billings, and
+reusable, in-place-updatable billing profiles), Mahnung generation, balance-sheet
+charts, per-meter reading history, co-tenant and Kaution management, payment
+reminders, and SMTP/landlord settings.
 
 ---
 

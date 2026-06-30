@@ -49,9 +49,11 @@ severity. Checkboxes track progress.
   `api/routers/contracts.py` — redundant because the FK is `ON DELETE CASCADE`.
   Harmless, but misleading. Low priority.
 
-- [ ] **Clean up stale create-next-app docs.**
-  `frontend/AGENTS.md` and `frontend/CLAUDE.md` say "this is NOT the Next.js you
-  know" referencing v16, but the project runs Next 14. Update or delete.
+- [x] **Clean up stale create-next-app docs.**
+  `frontend/AGENTS.md` claimed "this is NOT the Next.js you know" and pointed at a
+  non-existent `node_modules/next/dist/docs/` path; the project runs standard
+  Next 14. Replaced with accurate project guidance; `frontend/CLAUDE.md` imports
+  it via `@AGENTS.md`. `frontend/README.md` boilerplate also replaced.
 
 ---
 

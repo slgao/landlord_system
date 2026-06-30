@@ -156,11 +156,22 @@ def update_contract(contract_id: int, body: ContractIn):
 
 @router.post("/{contract_id}/terminate", response_model=ContractOut)
 def terminate_contract(contract_id: int, end_date: str | None = None):
-    rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))
+    rows = fetch("SELECT end_date FROM contracts WHERE id=?", (contract_id,))
     if not rows:
         raise HTTPException(status_code=404, detail="Contract not found")
     from datetime import date as _date
-    ed = end_date or str(_date.today())
+    existing = rows[0][0]
+    existing = existing if (existing and str(existing) != "None") else None
+    # Resolve the end date without ever silently clobbering a real one:
+    #   • explicit end_date          → use it
+    #   • no end_date, contract has   → keep the contracted end date
+    #   • no end_date, open-ended     → today (early termination)
+    if end_date:
+        ed = end_date
+    elif existing:
+        ed = existing
+    else:
+        ed = str(_date.today())
     execute("UPDATE contracts SET terminated=1, end_date=? WHERE id=?", (ed, contract_id))
     rows = fetch(f"{_SELECT} WHERE c.id=?", (contract_id,))
     return _row(rows[0])

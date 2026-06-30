@@ -13,16 +13,27 @@ _ZERO = Decimal("0")
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _expected_rent(prop_id, m_start, m_end):
-    """Sum of contracted rent for all contracts active during the given month.
-    Terminated contracts are included — their end_date already caps the active period."""
+    """Expected rent for a property in a month.
+
+    For each apartment, take the rent of the most-recently-started contract that
+    is active in the month, then sum across apartments. This avoids
+    double-counting when two contracts overlap on the *same* apartment (e.g. a
+    stale/incorrect end_date on an old contract): one apartment only ever
+    contributes one tenant's rent. WG flats model each room as its own
+    apartment, so they still sum correctly. Terminated contracts still count for
+    the months they were genuinely active."""
     rows = fetch("""
-        SELECT c.rent FROM contracts c
-        JOIN apartments a ON c.apartment_id = a.id
-        WHERE a.property_id = ?
-          AND c.start_date <= ?
-          AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
+        SELECT COALESCE(SUM(rent), 0) FROM (
+            SELECT DISTINCT ON (c.apartment_id) c.rent
+            FROM contracts c
+            JOIN apartments a ON c.apartment_id = a.id
+            WHERE a.property_id = ?
+              AND c.start_date <= ?
+              AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
+            ORDER BY c.apartment_id, c.start_date DESC, c.id DESC
+        ) t
     """, (prop_id, m_end, m_start))
-    return sum(r[0] for r in rows)
+    return rows[0][0]
 
 
 def _actual_income(prop_id, m_start, m_end):

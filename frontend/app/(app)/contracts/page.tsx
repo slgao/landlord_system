@@ -42,6 +42,10 @@ export default function ContractsPage() {
   const [form, setForm] = useState<typeof CONTRACT_EMPTY>(CONTRACT_EMPTY);
   const [showAll, setShowAll] = useState(false);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
+  // Terminate dialog: which date to record as the contract's end date
+  const [terminateTarget, setTerminateTarget] = useState<Contract | null>(null);
+  const [terminateChoice, setTerminateChoice] = useState<"contract" | "today" | "custom">("contract");
+  const [terminateCustom, setTerminateCustom] = useState("");
 
   // Co-tenant form
   const [ctForm, setCtForm] = useState({ name: "", gender: "diverse", email: "", in_contract: false });
@@ -76,8 +80,9 @@ export default function ContractsPage() {
   });
 
   const terminate = useMutation({
-    mutationFn: (id: number) => api.post(`/api/contracts/${id}/terminate`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contracts"] }); toast.success("Contract terminated"); setTab("contracts"); },
+    mutationFn: ({ id, end_date }: { id: number; end_date?: string }) =>
+      api.post(`/api/contracts/${id}/terminate`, null, end_date ? { params: { end_date } } : undefined),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contracts"] }); toast.success("Contract terminated"); setTerminateTarget(null); },
   });
 
   const reopen = useMutation({
@@ -200,7 +205,11 @@ export default function ContractsPage() {
                         <div className="flex gap-1 justify-end">
                           <Button variant="ghost" size="icon" onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
                           {!c.terminated && (
-                            <Button variant="ghost" size="icon" title="Terminate" onClick={() => terminate.mutate(c.id)}>
+                            <Button variant="ghost" size="icon" title="Terminate" onClick={() => {
+                              setTerminateTarget(c);
+                              setTerminateChoice(c.end_date ? "contract" : "today");
+                              setTerminateCustom(c.end_date || new Date().toISOString().split("T")[0]);
+                            }}>
                               <XCircle className="size-4 text-amber-400" />
                             </Button>
                           )}
@@ -441,6 +450,57 @@ export default function ContractsPage() {
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button onClick={() => save.mutate(form)} disabled={!form.tenant_id || !form.apartment_id || !form.start_date || save.isPending}>
               {save.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Terminate confirmation — choose which date to record as the end date */}
+      <Dialog open={!!terminateTarget} onOpenChange={(o) => { if (!o) setTerminateTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Terminate contract</DialogTitle>
+          </DialogHeader>
+          {terminateTarget && (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                Which date should be recorded as the end date for{" "}
+                <span className="text-foreground font-medium">{terminateTarget.tenant_name}</span>
+                {" "}({terminateTarget.apartment_name})?
+              </p>
+              <div className="space-y-2">
+                {terminateTarget.end_date && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" className="accent-primary" checked={terminateChoice === "contract"}
+                      onChange={() => setTerminateChoice("contract")} />
+                    Contract end date — <b>{terminateTarget.end_date}</b> <span className="text-muted-foreground">(runs full term)</span>
+                  </label>
+                )}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" className="accent-primary" checked={terminateChoice === "today"}
+                    onChange={() => setTerminateChoice("today")} />
+                  Today — <b>{new Date().toISOString().split("T")[0]}</b> <span className="text-muted-foreground">(early termination)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" className="accent-primary" checked={terminateChoice === "custom"}
+                    onChange={() => setTerminateChoice("custom")} />
+                  Custom date:
+                  <Input type="date" className="h-8 w-40" value={terminateCustom}
+                    onChange={(e) => { setTerminateCustom(e.target.value); setTerminateChoice("custom"); }} />
+                </label>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTerminateTarget(null)}>Cancel</Button>
+            <Button onClick={() => {
+              if (!terminateTarget) return;
+              const end_date = terminateChoice === "contract" ? (terminateTarget.end_date || undefined)
+                : terminateChoice === "today" ? new Date().toISOString().split("T")[0]
+                : (terminateCustom || undefined);
+              terminate.mutate({ id: terminateTarget.id, end_date });
+            }} disabled={terminate.isPending || (terminateChoice === "custom" && !terminateCustom)}>
+              {terminate.isPending ? "Terminating…" : "Terminate"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -34,7 +34,9 @@ up:
 	@# If a standalone dev database container (landlord-pg) is running, make sure
 	@# it shares the compose network so the api can reach it by name. Harmless and
 	@# skipped when the container or network is absent.
-	@docker network inspect landlord_system_default >/dev/null 2>&1 || docker network create landlord_system_default >/dev/null 2>&1 || true
+	@# Compose v2 refuses to adopt an unlabeled network, so pre-create it with
+	@# the labels compose expects.
+	@docker network inspect landlord_system_default >/dev/null 2>&1 || docker network create --label com.docker.compose.network=default --label com.docker.compose.project=landlord_system landlord_system_default >/dev/null 2>&1 || true
 	-@docker network connect landlord_system_default landlord-pg >/dev/null 2>&1 || true
 	$(COMPOSE) up -d --build
 	@echo ""

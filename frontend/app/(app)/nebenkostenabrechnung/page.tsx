@@ -73,8 +73,26 @@ function baseBilling() {
   return {
     mode: "meter" as Mode,
     bill_start: isoDate(Y, 1, 1), bill_end: isoDate(Y, 12, 31),
+    // Ihr Zeitraum (tenant's living period) — auto-filled from the contract ∩ bill
+    // period, editable. Lets a tenancy spanning several contracts (e.g. a rent
+    // raise via Nachtrag) be billed over its true continuous living period.
+    eff_start: "", eff_end: "",
     prepay_monthly: 0, is_pauschale: false, cost_flat: 0,
   };
+}
+
+// Fill each billing's living period (eff_start/eff_end) from the contract ∩ bill
+// period, but only where the user hasn't set it yet — editable afterwards.
+// `sField`/`eField` name the billing-period fields (bill_* for metered, bk_* for BK).
+function fillEff(arr: any[], sField: string, eField: string, cStart?: string, cEnd?: string) {
+  let changed = false;
+  const next = arr.map((b) => {
+    if (b.eff_start && b.eff_end) return b;
+    const eff = clampPeriod(b[sField], b[eField], cStart, cEnd);
+    changed = true;
+    return { ...b, eff_start: b.eff_start || eff.start, eff_end: b.eff_end || eff.end };
+  });
+  return changed ? next : arr;
 }
 const defStrom = () => ({ ...baseBilling(), start_kwh: 0, end_kwh: 0, arbeitspreis: 0, grundpreis_monthly: 0 });
 const defGas = () => ({ ...baseBilling(), start_m3: 0, end_m3: 0, umrechnungsfaktor: 10.0, arbeitspreis: 0, grundpreis_monthly: 0 });
@@ -211,10 +229,23 @@ function BillingShell({ idx, count, b, set, onRemove, costLabel, preview, childr
           </Button>
         )}
       </div>
-      <FieldRow>
-        <DateF label="Bill start" value={b.bill_start} onChange={(v) => set({ bill_start: v })} />
-        <DateF label="Bill end" value={b.bill_end} onChange={(v) => set({ bill_end: v })} />
-      </FieldRow>
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">Abrechnungszeitraum (billing period)</Label>
+        <FieldRow>
+          <DateF label="Bill start" value={b.bill_start} onChange={(v) => set({ bill_start: v })} />
+          <DateF label="Bill end" value={b.bill_end} onChange={(v) => set({ bill_end: v })} />
+        </FieldRow>
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs text-primary">Ihr Zeitraum (tenant&apos;s living period — from the contract, editable)</Label>
+        <FieldRow>
+          <DateF label="Start" value={b.eff_start} onChange={(v) => set({ eff_start: v })} />
+          <DateF label="End" value={b.eff_end} onChange={(v) => set({ eff_end: v })} />
+        </FieldRow>
+        <p className="text-xs text-muted-foreground">
+          = {b.eff_start && b.eff_end ? billDays(b.eff_start, b.eff_end) : "–"} Tage (used for proration)
+        </p>
+      </div>
       <ModeToggle mode={b.mode} onChange={(m) => set({ mode: m })} />
       {b.mode === "sum"
         ? <div className="md:w-1/2"><Num label={costLabel} value={b.cost_flat} onChange={(v) => set({ cost_flat: v })} /></div>
@@ -275,6 +306,17 @@ export default function NebenkostenabrechnungPage() {
     setter((arr) => arr.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   }
 
+  // Append a new metered billing with its living period pre-filled from the contract.
+  function addMeteredBilling(setter: React.Dispatch<React.SetStateAction<any[]>>, def: () => any) {
+    setter((a) => {
+      const nb = def();
+      const eff = selected
+        ? clampPeriod(nb.bill_start, nb.bill_end, selected.start_date, selected.end_date)
+        : { start: "", end: "" };
+      return [...a, { ...nb, eff_start: eff.start, eff_end: eff.end }];
+    });
+  }
+
   // ── all contracts (active + expired) ──
   const { data: contracts = [] } = useQuery<Contract[]>({
     queryKey: ["contracts-all-nbk"],
@@ -325,21 +367,27 @@ export default function NebenkostenabrechnungPage() {
     setDeductKaution(false);
   }, [selected?.id]);
 
-  // Auto-fill each BK billing's "Ihr Zeitraum" (living period) from the contract
-  // ∩ billing period, only where the user hasn't set it yet. Editable afterwards.
+  // Auto-fill each billing's "Ihr Zeitraum" (living period) from the contract ∩
+  // billing period, only where the user hasn't set it yet. Editable afterwards.
+  // Metered utilities key off bill_start/bill_end; Betriebskosten off bk_start/bk_end.
   useEffect(() => {
     if (!selected) return;
-    setBkB((arr) => {
-      let changed = false;
-      const next = arr.map((b) => {
-        if (b.eff_start && b.eff_end) return b;
-        const eff = clampPeriod(b.bk_start, b.bk_end, selected.start_date, selected.end_date);
-        changed = true;
-        return { ...b, eff_start: b.eff_start || eff.start, eff_end: b.eff_end || eff.end };
-      });
-      return changed ? next : arr;
-    });
+    const cs = selected.start_date, ce = selected.end_date;
+    setStromB((a) => fillEff(a, "bill_start", "bill_end", cs, ce));
+    setGasB((a) => fillEff(a, "bill_start", "bill_end", cs, ce));
+    setWaterB((a) => fillEff(a, "bill_start", "bill_end", cs, ce));
+    setWarmB((a) => fillEff(a, "bill_start", "bill_end", cs, ce));
+    setHeizB((a) => fillEff(a, "bill_start", "bill_end", cs, ce));
+    setBkB((a) => fillEff(a, "bk_start", "bk_end", cs, ce));
   }, [selected?.id]);
+
+  // Keep the Betriebskosten per-billing tenant count in sync with the master
+  // "Number of tenants" (auto-detected from occupancy or set manually), so BK is
+  // divided by the same number of persons as the metered utilities.
+  useEffect(() => {
+    setBkB((arr) => (arr.every((b) => b.tenants === numTenants)
+      ? arr : arr.map((b) => ({ ...b, tenants: numTenants }))));
+  }, [numTenants]);
 
   // Auto-fill gas Umrechnungsfaktor from a registered gas meter (still-default
   // entries only), in an effect, never during render.
@@ -359,10 +407,14 @@ export default function NebenkostenabrechnungPage() {
   function buildCalcPayload() {
     const cs = selected?.start_date || "";
     const ce = selected?.end_date;
+    // Prefer the (editable) living period; fall back to contract ∩ bill period.
+    const effDays = (b: any) => (b.eff_start && b.eff_end)
+      ? billDays(b.eff_start, b.eff_end)
+      : effectiveDays(b.bill_start, b.bill_end, cs, ce);
     const mk = (b: any) => ({
       ...b, num_tenants: numTenants,
       bill_days: billDays(b.bill_start, b.bill_end),
-      eff_days: effectiveDays(b.bill_start, b.bill_end, cs, ce),
+      eff_days: effDays(b),
     });
     const p: any = {};
     if (useStrom) p.strom = stromB.map(mk);
@@ -382,14 +434,20 @@ export default function NebenkostenabrechnungPage() {
   function buildPdfPayload(calc: any) {
     const cs = selected?.start_date || "";
     const ce = selected?.end_date;
-    const common = (b: any, c: any) => ({
-      bill_period: fmtPeriod(b.bill_start, b.bill_end),
-      bill_days: billDays(b.bill_start, b.bill_end),
-      period: fmtPeriod(b.bill_start, b.bill_end),
-      days: effectiveDays(b.bill_start, b.bill_end, cs, ce),
-      num_tenants: numTenants, monthly_limit: b.prepay_monthly,
-      cost: c.cost_tenant, limit: c.prepay, is_pauschale: b.is_pauschale, mode: b.mode,
-    });
+    const common = (b: any, c: any) => {
+      const hasEff = b.eff_start && b.eff_end;
+      const effS = hasEff ? b.eff_start : b.bill_start;
+      const effE = hasEff ? b.eff_end : b.bill_end;
+      return {
+        // Abrechnungszeitraum = full bill period; Ihr Zeitraum = living period.
+        bill_period: fmtPeriod(b.bill_start, b.bill_end),
+        bill_days: billDays(b.bill_start, b.bill_end),
+        period: fmtPeriod(effS, effE),
+        days: hasEff ? billDays(effS, effE) : effectiveDays(b.bill_start, b.bill_end, cs, ce),
+        num_tenants: numTenants, monthly_limit: b.prepay_monthly,
+        cost: c.cost_tenant, limit: c.prepay, is_pauschale: b.is_pauschale, mode: b.mode,
+      };
+    };
     const zip = (list: any[], res: any[]) =>
       list.map((b, i) => ({ ...(res?.[i] || {}), ...b, ...common(b, res?.[i] || {}) }));
     const payload: any = {};
@@ -677,7 +735,7 @@ export default function NebenkostenabrechnungPage() {
             </FieldRow>
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => setStromB((a) => [...a, defStrom()])}>
+        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setStromB, defStrom)}>
           <Plus className="size-4 mr-1" /> Add billing
         </Button>
       </SectionCard>
@@ -706,7 +764,7 @@ export default function NebenkostenabrechnungPage() {
             </>
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => setGasB((a) => [...a, defGas()])}>
+        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setGasB, defGas)}>
           <Plus className="size-4 mr-1" /> Add billing
         </Button>
       </SectionCard>
@@ -727,7 +785,7 @@ export default function NebenkostenabrechnungPage() {
             </FieldRow>
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => setWaterB((a) => [...a, defWater()])}>
+        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setWaterB, defWater)}>
           <Plus className="size-4 mr-1" /> Add billing
         </Button>
       </SectionCard>
@@ -767,7 +825,7 @@ export default function NebenkostenabrechnungPage() {
             </>
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => setWarmB((a) => [...a, defWarm()])}>
+        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setWarmB, defWarm)}>
           <Plus className="size-4 mr-1" /> Add billing
         </Button>
       </SectionCard>
@@ -806,7 +864,7 @@ export default function NebenkostenabrechnungPage() {
             </>
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => setHeizB((a) => [...a, defHeiz()])}>
+        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setHeizB, defHeiz)}>
           <Plus className="size-4 mr-1" /> Add billing
         </Button>
       </SectionCard>

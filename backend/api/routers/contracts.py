@@ -223,7 +223,8 @@ def kaution_overview():
         SELECT c.id, t.name, a.name, p.name,
                c.kaution_amount, COALESCE(c.kaution_currency,'EUR'),
                c.kaution_paid_date, c.kaution_returned_date, c.kaution_returned_amount,
-               COALESCE((SELECT SUM(amount) FROM kaution_deductions WHERE contract_id=c.id), 0)
+               COALESCE((SELECT SUM(amount) FROM kaution_deductions WHERE contract_id=c.id), 0),
+               COALESCE((SELECT SUM(amount) FROM kaution_payments WHERE contract_id=c.id), 0)
         FROM contracts c
         JOIN tenants t ON t.id=c.tenant_id
         JOIN apartments a ON a.id=c.apartment_id
@@ -235,13 +236,16 @@ def kaution_overview():
     for r in rows:
         k_amt = float(r[4]) if r[4] else 0.0
         deducted = float(r[9]) if r[9] else 0.0
+        paid = float(r[10]) if r[10] else 0.0
         result.append({
             "contract_id": r[0], "tenant_name": r[1], "apartment_name": r[2],
             "property_name": r[3], "kaution_amount": k_amt,
             "kaution_currency": r[5], "kaution_paid_date": r[6],
             "kaution_returned_date": r[7],
             "kaution_returned_amount": float(r[8]) if r[8] else None,
-            "deducted": deducted, "balance": round(k_amt - deducted, 2),
+            "deducted": deducted, "paid": paid,
+            "outstanding": round(k_amt - paid, 2),
+            "balance": round(k_amt - deducted, 2),
         })
     return result
 

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Contract, Tenant, Apartment, CoTenant, KautionDeduction } from "@/lib/types";
+import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
-import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2 } from "lucide-react";
+import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X } from "lucide-react";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
 const KAUTION_CATS = ["NK Nachzahlung", "Schaden", "Reinigung", "Mietrückstand", "Sonstiges"];
@@ -51,6 +51,10 @@ export default function ContractsPage() {
   const [ctForm, setCtForm] = useState({ name: "", gender: "diverse", email: "", in_contract: false });
   // Kaution deduction form
   const [kdForm, setKdForm] = useState({ date: new Date().toISOString().split("T")[0], amount: 0, category: "Sonstiges", reason: "" });
+  // Kaution installment (payment) form + inline-edit state
+  const [kpForm, setKpForm] = useState({ date: new Date().toISOString().split("T")[0], amount: 0, note: "" });
+  const [editPay, setEditPay] = useState<{ id: number; date: string; amount: number; note: string } | null>(null);
+  const [editDed, setEditDed] = useState<{ id: number; date: string; amount: number; category: string; reason: string } | null>(null);
 
   const { data: contracts = [], isLoading } = useQuery<Contract[]>({
     queryKey: ["contracts", showAll],
@@ -70,6 +74,11 @@ export default function ContractsPage() {
   const { data: kautionDeductions = [] } = useQuery<KautionDeduction[]>({
     queryKey: ["kaution-deductions", selectedContract?.id],
     queryFn: () => api.get(`/api/kaution-deductions/?contract_id=${selectedContract!.id}`).then((r) => r.data),
+    enabled: !!selectedContract,
+  });
+  const { data: kautionPayments = [] } = useQuery<KautionPayment[]>({
+    queryKey: ["kaution-payments", selectedContract?.id],
+    queryFn: () => api.get(`/api/kaution-payments/?contract_id=${selectedContract!.id}`).then((r) => r.data),
     enabled: !!selectedContract,
   });
 
@@ -136,6 +145,36 @@ export default function ContractsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["kaution-deductions"] }),
   });
 
+  const updateDeduction = useMutation({
+    mutationFn: (d: NonNullable<typeof editDed>) =>
+      api.put(`/api/kaution-deductions/${d.id}`, {
+        contract_id: selectedContract!.id, date: d.date, amount: d.amount,
+        category: d.category, reason: d.reason || null,
+      }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); setEditDed(null); toast.success("Deduction updated"); },
+    onError: () => toast.error("Failed to update deduction"),
+  });
+
+  const addPayment = useMutation({
+    mutationFn: () => api.post("/api/kaution-payments/", { ...kpForm, note: kpForm.note || null, contract_id: selectedContract!.id }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-payments"] }); setKpForm({ date: new Date().toISOString().split("T")[0], amount: 0, note: "" }); toast.success("Installment added"); },
+    onError: () => toast.error("Failed to add installment"),
+  });
+
+  const updatePayment = useMutation({
+    mutationFn: (p: NonNullable<typeof editPay>) =>
+      api.put(`/api/kaution-payments/${p.id}`, {
+        contract_id: selectedContract!.id, date: p.date, amount: p.amount, note: p.note || null,
+      }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-payments"] }); setEditPay(null); toast.success("Installment updated"); },
+    onError: () => toast.error("Failed to update installment"),
+  });
+
+  const removePayment = useMutation({
+    mutationFn: (id: number) => api.delete(`/api/kaution-payments/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["kaution-payments"] }),
+  });
+
   function openCreate() { setEditing(null); setForm(CONTRACT_EMPTY); setOpen(true); }
   function openEdit(c: Contract) {
     setEditing(c);
@@ -149,8 +188,24 @@ export default function ContractsPage() {
 
   function openDetail(c: Contract) { setSelectedContract(c); setTab("detail"); }
 
+  // Jump from the overview into a contract's detail (to record installments,
+  // deductions or mark the deposit returned). The row may be a contract that
+  // isn't in the current active-only list, so fetch it if needed.
+  async function openContractById(id: number) {
+    const found = contracts.find((c) => c.id === id);
+    const c = found ?? (await api.get(`/api/contracts/${id}`)).data;
+    openDetail(c);
+  }
+
   const totalDeducted = kautionDeductions.reduce((s, d) => s + d.amount, 0);
   const kautionBalance = (selectedContract?.kaution_amount || 0) - totalDeducted;
+  const installmentsPaid = kautionPayments.reduce((s, p) => s + p.amount, 0);
+  // Legacy deposits (from old contracts) have no installments but a paid date,
+  // which means the tenant paid the full deposit up front. Treat those as paid
+  // in full so "Paid so far / Outstanding" isn't misleading.
+  const legacyFullyPaid = kautionPayments.length === 0 && !!selectedContract?.kaution_paid_date;
+  const totalPaid = legacyFullyPaid ? (selectedContract?.kaution_amount || 0) : installmentsPaid;
+  const kautionOutstanding = (selectedContract?.kaution_amount || 0) - totalPaid;
 
   const statusColor = (c: Contract) => {
     if (c.terminated) return "bg-secondary text-secondary-foreground";
@@ -234,7 +289,7 @@ export default function ContractsPage() {
             </Table>
           </Card>
         </>
-      ) : (
+      ) : tab === "detail" && selectedContract ? (
         // ── Detail view ──
         <>
           <PageHeader title={`${selectedContract?.tenant_name} — ${selectedContract?.apartment_name}`}>
@@ -247,21 +302,89 @@ export default function ContractsPage() {
               <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><CreditCard className="size-4" />Kaution</CardTitle></CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-3 gap-3 text-sm">
-                  <div><p className="text-xs text-muted-foreground">Amount</p><p className="font-semibold">{selectedContract?.kaution_amount?.toFixed(2) || "—"} {selectedContract?.kaution_currency}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Agreed amount</p><p className="font-semibold">{selectedContract?.kaution_amount?.toFixed(2) || "—"} {selectedContract?.kaution_currency}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Paid so far</p><p className="font-semibold text-emerald-400">{totalPaid.toFixed(2)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Outstanding</p><p className={`font-semibold ${kautionOutstanding <= 0.001 ? "text-emerald-400" : "text-amber-400"}`}>{kautionOutstanding.toFixed(2)}</p></div>
+                </div>
+                {legacyFullyPaid && (
+                  <p className="text-xs text-muted-foreground -mt-1">
+                    Marked paid in full on {selectedContract?.kaution_paid_date} (no installments recorded). Add installments below to track a Ratenzahlung instead.
+                  </p>
+                )}
+
+                {/* Installments (Ratenzahlung) — deposit can be paid in parts */}
+                <div className="space-y-2">
+                  <p className="text-xs font-medium">Installments (Ratenzahlung)</p>
+                  {kautionPayments.length > 0 && (
+                    <Table>
+                      <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Note</TableHead><TableHead className="text-right">Amount</TableHead><TableHead className="w-16" /></TableRow></TableHeader>
+                      <TableBody>
+                        {kautionPayments.map((p) => editPay?.id === p.id ? (
+                          <TableRow key={p.id}>
+                            <TableCell><Input type="date" className="h-7 text-xs" value={editPay.date} onChange={(e) => setEditPay({ ...editPay, date: e.target.value })} /></TableCell>
+                            <TableCell><Input className="h-7 text-xs" placeholder="Note" value={editPay.note} onChange={(e) => setEditPay({ ...editPay, note: e.target.value })} /></TableCell>
+                            <TableCell className="text-right"><Input type="number" step="0.01" className="h-7 text-xs w-24 ml-auto" value={editPay.amount || ""} onChange={(e) => setEditPay({ ...editPay, amount: Number(e.target.value) })} /></TableCell>
+                            <TableCell className="flex gap-1">
+                              <Button variant="ghost" size="icon" onClick={() => updatePayment.mutate(editPay)} disabled={!editPay.amount || updatePayment.isPending}><Check className="size-3 text-emerald-400" /></Button>
+                              <Button variant="ghost" size="icon" onClick={() => setEditPay(null)}><X className="size-3" /></Button>
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          <TableRow key={p.id}>
+                            <TableCell className="text-muted-foreground">{p.date}</TableCell>
+                            <TableCell className="text-muted-foreground text-xs">{p.note || "—"}</TableCell>
+                            <TableCell className="text-right font-mono">{p.amount.toFixed(2)}</TableCell>
+                            <TableCell className="flex gap-1">
+                              <Button variant="ghost" size="icon" onClick={() => setEditPay({ id: p.id, date: p.date, amount: p.amount, note: p.note || "" })}><Pencil className="size-3" /></Button>
+                              <ConfirmButton onConfirm={() => removePayment.mutate(p.id)} title="Delete installment?" message={`Delete the ${p.amount.toFixed(2)} installment?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                  <div className="flex gap-2">
+                    <Input type="date" className="h-8 text-sm" value={kpForm.date} onChange={(e) => setKpForm((f) => ({ ...f, date: e.target.value }))} />
+                    <Input type="number" step="0.01" className="h-8 text-sm w-28" placeholder="Amount" value={kpForm.amount || ""} onChange={(e) => setKpForm((f) => ({ ...f, amount: Number(e.target.value) }))} />
+                    <Input className="h-8 text-sm" placeholder="Note (e.g. 1. Rate)" value={kpForm.note} onChange={(e) => setKpForm((f) => ({ ...f, note: e.target.value }))} />
+                    <Button size="sm" onClick={() => addPayment.mutate()} disabled={!kpForm.amount || addPayment.isPending}><Plus className="size-4 mr-1" />Add</Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-sm border-t border-border pt-3">
                   <div><p className="text-xs text-muted-foreground">Deducted</p><p className="font-semibold text-destructive">{totalDeducted.toFixed(2)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Balance</p><p className={`font-semibold ${kautionBalance >= 0 ? "text-emerald-400" : "text-destructive"}`}>{kautionBalance.toFixed(2)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Balance (after deductions)</p><p className={`font-semibold ${kautionBalance >= 0 ? "text-emerald-400" : "text-destructive"}`}>{kautionBalance.toFixed(2)}</p></div>
                 </div>
                 {kautionDeductions.length > 0 && (
                   <Table>
-                    <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Category</TableHead><TableHead>Reason</TableHead><TableHead className="text-right">Amount</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Category</TableHead><TableHead>Reason</TableHead><TableHead className="text-right">Amount</TableHead><TableHead className="w-16" /></TableRow></TableHeader>
                     <TableBody>
-                      {kautionDeductions.map((d) => (
+                      {kautionDeductions.map((d) => editDed?.id === d.id ? (
+                        <TableRow key={d.id}>
+                          <TableCell><Input type="date" className="h-7 text-xs" value={editDed.date} onChange={(e) => setEditDed({ ...editDed, date: e.target.value })} /></TableCell>
+                          <TableCell>
+                            <Select value={editDed.category} onValueChange={(v) => setEditDed({ ...editDed, category: v })}>
+                              <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>{KAUTION_CATS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell><Input className="h-7 text-xs" placeholder="Reason" value={editDed.reason} onChange={(e) => setEditDed({ ...editDed, reason: e.target.value })} /></TableCell>
+                          <TableCell className="text-right"><Input type="number" step="0.01" className="h-7 text-xs w-24 ml-auto" value={editDed.amount || ""} onChange={(e) => setEditDed({ ...editDed, amount: Number(e.target.value) })} /></TableCell>
+                          <TableCell className="flex gap-1">
+                            <Button variant="ghost" size="icon" onClick={() => updateDeduction.mutate(editDed)} disabled={!editDed.amount || updateDeduction.isPending}><Check className="size-3 text-emerald-400" /></Button>
+                            <Button variant="ghost" size="icon" onClick={() => setEditDed(null)}><X className="size-3" /></Button>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
                         <TableRow key={d.id}>
                           <TableCell className="text-muted-foreground">{d.date}</TableCell>
                           <TableCell>{d.category}</TableCell>
                           <TableCell className="text-muted-foreground text-xs">{d.reason || "—"}</TableCell>
                           <TableCell className="text-right font-mono">{d.amount.toFixed(2)}</TableCell>
-                          <TableCell><ConfirmButton onConfirm={() => removeDeduction.mutate(d.id)} title="Delete deduction?" message={`Delete the ${d.amount.toFixed(2)} deduction (${d.category})?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
+                          <TableCell className="flex gap-1">
+                            <Button variant="ghost" size="icon" onClick={() => setEditDed({ id: d.id, date: d.date, amount: d.amount, category: d.category, reason: d.reason || "" })}><Pencil className="size-3" /></Button>
+                            <ConfirmButton onConfirm={() => removeDeduction.mutate(d.id)} title="Delete deduction?" message={`Delete the ${d.amount.toFixed(2)} deduction (${d.category})?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -351,7 +474,7 @@ export default function ContractsPage() {
             </Card>
           </div>
         </>
-      )}
+      ) : null}
 
       {/* Kaution Overview tab */}
       {tab === "kaution-overview" && (
@@ -359,6 +482,11 @@ export default function ContractsPage() {
           <PageHeader title="Kaution Overview">
             <Button variant="outline" size="sm" onClick={() => setTab("contracts")}>← Back</Button>
           </PageHeader>
+          <p className="text-sm text-muted-foreground mb-3">
+            Every contract with a deposit on file. <span className="text-foreground">Paid</span> = installments received
+            (amber shows what is still <em>offen</em>); <span className="text-foreground">Balance</span> = what you would owe
+            back today (Kaution − deductions). Click a row to record an installment, add a deduction, or mark the deposit returned.
+          </p>
           <Card>
             <Table>
               <TableHeader>
@@ -366,7 +494,7 @@ export default function ContractsPage() {
                   <TableHead>Tenant</TableHead>
                   <TableHead>Apartment</TableHead>
                   <TableHead className="text-right">Kaution</TableHead>
-                  <TableHead>Paid Date</TableHead>
+                  <TableHead className="text-right">Paid</TableHead>
                   <TableHead className="text-right">Deducted</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead>Returned</TableHead>
@@ -377,11 +505,20 @@ export default function ContractsPage() {
                   <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-10">No Kaution on file.</TableCell></TableRow>
                 ) : (
                   (kautionOverview as any[]).map((r: any) => (
-                    <TableRow key={r.contract_id}>
+                    <TableRow key={r.contract_id} className="cursor-pointer" onClick={() => openContractById(r.contract_id)}>
                       <TableCell className="font-medium">{r.tenant_name}</TableCell>
                       <TableCell className="text-muted-foreground">{r.apartment_name}<br /><span className="text-xs">{r.property_name}</span></TableCell>
                       <TableCell className="text-right font-mono">{r.kaution_amount?.toFixed(2)} {r.kaution_currency}</TableCell>
-                      <TableCell className="text-muted-foreground">{r.kaution_paid_date || "—"}</TableCell>
+                      <TableCell className="text-right font-mono">
+                        {(r.paid ?? 0) > 0 ? (
+                          <>
+                            <span className="text-emerald-400">{r.paid.toFixed(2)}</span>
+                            {(r.outstanding ?? 0) > 0.001 && <span className="text-amber-400 text-xs block">−{r.outstanding.toFixed(2)} offen</span>}
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">{r.kaution_paid_date || "—"}</span>
+                        )}
+                      </TableCell>
                       <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{r.deducted?.toFixed(2)}</TableCell>
                       <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-emerald-400" : "text-destructive"}`}>{r.balance?.toFixed(2)}</TableCell>
                       <TableCell className="text-muted-foreground">
@@ -393,6 +530,30 @@ export default function ContractsPage() {
                   ))
                 )}
               </TableBody>
+              {(kautionOverview as any[]).length > 0 && (() => {
+                const rows = kautionOverview as any[];
+                const active = rows.filter((r) => !r.kaution_returned_date);
+                const sum = (f: (r: any) => number) => active.reduce((s, r) => s + (f(r) || 0), 0);
+                const totKaution = sum((r) => r.kaution_amount);
+                // "offen" only means something for deposits tracked via installments;
+                // legacy deposits (a paid_date, no installments) are already fully paid.
+                const totOutstanding = active
+                  .filter((r) => (r.paid ?? 0) > 0)
+                  .reduce((s, r) => s + (r.outstanding || 0), 0);
+                const totBalance = sum((r) => r.balance);
+                return (
+                  <TableBody className="border-t border-border font-medium">
+                    <TableRow>
+                      <TableCell colSpan={2} className="text-xs text-muted-foreground">Totals (deposits not yet returned)</TableCell>
+                      <TableCell className="text-right font-mono">{totKaution.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-amber-400">{totOutstanding > 0.001 ? `−${totOutstanding.toFixed(2)} offen` : "—"}</TableCell>
+                      <TableCell />
+                      <TableCell className="text-right font-mono text-emerald-400">{totBalance.toFixed(2)}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">held now</TableCell>
+                    </TableRow>
+                  </TableBody>
+                );
+              })()}
             </Table>
           </Card>
         </div>

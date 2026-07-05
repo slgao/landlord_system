@@ -43,6 +43,7 @@ app.include_router(config.router,           prefix="/api", dependencies=_auth)
 app.include_router(reports.router,          prefix="/api", dependencies=_auth)
 app.include_router(co_tenants.router,       prefix="/api", dependencies=_auth)
 app.include_router(kaution.router,          prefix="/api", dependencies=_auth)
+app.include_router(kaution.payments_router, prefix="/api", dependencies=_auth)
 app.include_router(billing_profiles.router, prefix="/api", dependencies=_auth)
 
 

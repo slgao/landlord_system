@@ -56,6 +56,14 @@ export interface KautionDeduction {
   reason?: string;
 }
 
+export interface KautionPayment {
+  id: number;
+  contract_id: number;
+  date: string;
+  amount: number;
+  note?: string;
+}
+
 export interface Payment {
   id: number;
   contract_id: number;

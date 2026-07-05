@@ -22,8 +22,15 @@ import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
 import { Trash2, Calendar } from "lucide-react";
 
-const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
+const FOREIGN_CURRENCIES = ["CNY", "USD", "GBP"];
 const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "$", GBP: "£" };
+
+// The tender note shown next to a EUR amount when the tenant paid in another
+// currency, e.g. "(paid ¥5655)". Empty when the payment was made in EUR.
+function foreignNote(p: { orig_amount?: number | null; orig_currency?: string | null }) {
+  if (!p.orig_currency || p.orig_amount == null) return "";
+  return `paid ${CURRENCY_SYMBOLS[p.orig_currency] || p.orig_currency}${p.orig_amount.toFixed(2)}`;
+}
 
 function currentYearMonth() {
   const d = new Date();
@@ -35,7 +42,7 @@ export default function RentTrackingPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
-  const [form, setForm] = useState({ amount: 0, payment_date: new Date().toISOString().split("T")[0], currency: "EUR" });
+  const [form, setForm] = useState({ amount: 0, payment_date: new Date().toISOString().split("T")[0], paidForeign: false, orig_amount: 0, orig_currency: "CNY" });
   const [monthFilter, setMonthFilter] = useState(currentYearMonth());
 
   const { data: contracts = [] } = useQuery<Contract[]>({
@@ -61,7 +68,7 @@ export default function RentTrackingPage() {
   const displayContracts = showInactive ? contracts : contracts.filter((c) => !c.terminated);
 
   const add = useMutation({
-    mutationFn: (data: { contract_id: number; amount: number; payment_date: string; currency: string }) =>
+    mutationFn: (data: { contract_id: number; amount: number; payment_date: string; orig_amount?: number | null; orig_currency?: string | null }) =>
       api.post("/api/payments/", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["payments"] });
@@ -81,14 +88,14 @@ export default function RentTrackingPage() {
 
   function openAdd() {
     setSelectedContract(null);
-    setForm({ amount: 0, payment_date: new Date().toISOString().split("T")[0], currency: "EUR" });
+    setForm({ amount: 0, payment_date: new Date().toISOString().split("T")[0], paidForeign: false, orig_amount: 0, orig_currency: "CNY" });
     setAddOpen(true);
   }
 
   function handleContractSelect(contractId: string) {
     const c = contracts.find((c) => String(c.id) === contractId) || null;
     setSelectedContract(c);
-    if (c) setForm((f) => ({ ...f, amount: c.rent, currency: c.currency }));
+    if (c) setForm((f) => ({ ...f, amount: c.rent }));
   }
 
   // Build month options (current year ±1)
@@ -150,9 +157,12 @@ export default function RentTrackingPage() {
                     <TableCell className="text-muted-foreground">{p.payment_date}</TableCell>
                     <TableCell className="font-medium">{p.tenant_name}</TableCell>
                     <TableCell className="text-muted-foreground">{p.apartment_name}</TableCell>
-                    <TableCell className="text-right font-mono">{p.amount.toFixed(2)} {p.currency || "EUR"}</TableCell>
+                    <TableCell className="text-right font-mono">
+                      {p.amount.toFixed(2)} EUR
+                      {foreignNote(p) && <span className="block text-xs text-muted-foreground">({foreignNote(p)})</span>}
+                    </TableCell>
                     <TableCell>
-                      <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${p.amount.toFixed(2)} ${p.currency || "EUR"} payment from ${p.payment_date}?`}>
+                      <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${p.amount.toFixed(2)} EUR payment from ${p.payment_date}?`}>
                         <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
                           <Trash2 className="size-4" />
                         </Button>
@@ -192,9 +202,12 @@ export default function RentTrackingPage() {
                   <TableCell className="text-muted-foreground">{p.payment_date}</TableCell>
                   <TableCell className="font-medium">{p.tenant_name}</TableCell>
                   <TableCell className="text-muted-foreground">{p.apartment_name}</TableCell>
-                  <TableCell className="text-right font-mono">{p.amount.toFixed(2)} {p.currency || "EUR"}</TableCell>
+                  <TableCell className="text-right font-mono">
+                    {p.amount.toFixed(2)} EUR
+                    {foreignNote(p) && <span className="block text-xs text-muted-foreground">({foreignNote(p)})</span>}
+                  </TableCell>
                   <TableCell>
-                    <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${p.amount.toFixed(2)} ${p.currency || "EUR"} payment from ${p.payment_date}?`}>
+                    <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${p.amount.toFixed(2)} EUR payment from ${p.payment_date}?`}>
                       <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
                         <Trash2 className="size-4" />
                       </Button>
@@ -234,18 +247,32 @@ export default function RentTrackingPage() {
             {selectedContract && selectedContract.terminated && (
               <p className="text-xs text-amber-400">⚠ This is an inactive/terminated contract.</p>
             )}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label>Amount</Label>
-                <Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Currency</Label>
-                <Select value={form.currency} onValueChange={(v) => setForm((f) => ({ ...f, currency: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-1.5">
+              <Label>Amount (EUR)</Label>
+              <Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))} />
+              <p className="text-xs text-muted-foreground">The EUR value that counts as income. Defaults to the contract rent.</p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.paidForeign} onChange={(e) => setForm((f) => ({ ...f, paidForeign: e.target.checked }))} className="accent-primary" />
+                Tenant paid in another currency
+              </label>
+              {form.paidForeign && (
+                <div className="grid grid-cols-2 gap-4 pt-1">
+                  <div className="space-y-1.5">
+                    <Label>Paid amount</Label>
+                    <Input type="number" step="0.01" value={form.orig_amount || ""} placeholder="e.g. 5655" onChange={(e) => setForm((f) => ({ ...f, orig_amount: Number(e.target.value) }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Currency</Label>
+                    <Select value={form.orig_currency} onValueChange={(v) => setForm((f) => ({ ...f, orig_currency: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{FOREIGN_CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <p className="col-span-2 text-xs text-muted-foreground -mt-1">Recorded as a note only — the {form.orig_currency} amount is never added into EUR totals.</p>
+                </div>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label>Payment Date</Label>
@@ -255,7 +282,11 @@ export default function RentTrackingPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
             <Button
-              onClick={() => selectedContract && add.mutate({ contract_id: selectedContract.id, amount: form.amount, payment_date: form.payment_date, currency: form.currency })}
+              onClick={() => selectedContract && add.mutate({
+                contract_id: selectedContract.id, amount: form.amount, payment_date: form.payment_date,
+                orig_amount: form.paidForeign ? form.orig_amount : null,
+                orig_currency: form.paidForeign ? form.orig_currency : null,
+              })}
               disabled={!selectedContract || !form.amount || !form.payment_date || add.isPending}
             >
               {add.isPending ? "Saving…" : "Record Payment"}

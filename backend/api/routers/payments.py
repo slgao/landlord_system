@@ -11,12 +11,14 @@ def _row(r) -> PaymentOut:
         tenant_name=r[2], apartment_name=r[3],
         amount=float(r[4]), payment_date=r[5],
         currency=r[6] or "EUR",
+        orig_amount=float(r[7]) if r[7] is not None else None,
+        orig_currency=r[8],
     )
 
 
 _SELECT = """
     SELECT p.id, p.contract_id, t.name, a.name, p.amount, p.payment_date,
-           COALESCE(p.currency,'EUR')
+           COALESCE(p.currency,'EUR'), p.orig_amount, p.orig_currency
     FROM payments p
     JOIN contracts c ON c.id = p.contract_id
     JOIN tenants t ON t.id = c.tenant_id
@@ -42,10 +44,15 @@ def create_payment(body: PaymentIn):
     conn = get_conn()
     try:
         c = conn.cursor()
+        # EUR is the accounting currency; `amount` is always the EUR value.
+        # A foreign tender is stored only as a note (orig_amount/orig_currency).
+        has_foreign = bool(body.orig_currency) and body.orig_currency != "EUR"
+        orig_currency = body.orig_currency if has_foreign else None
+        orig_amount = body.orig_amount if has_foreign else None
         c.execute("""
-            INSERT INTO payments (contract_id, amount, payment_date, currency)
-            VALUES (%s,%s,%s,%s) RETURNING id
-        """, (body.contract_id, body.amount, body.payment_date, body.currency))
+            INSERT INTO payments (contract_id, amount, payment_date, currency, orig_amount, orig_currency)
+            VALUES (%s,%s,%s,'EUR',%s,%s) RETURNING id
+        """, (body.contract_id, body.amount, body.payment_date, orig_amount, orig_currency))
         new_id = c.fetchone()[0]
         conn.commit()
     except Exception:

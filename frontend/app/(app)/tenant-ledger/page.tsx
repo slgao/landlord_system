@@ -135,7 +135,14 @@ export default function TenantLedgerPage() {
                       <TableRow key={p.id}>
                         <TableCell className="text-muted-foreground">{p.payment_date}</TableCell>
                         <TableCell>{p.apartment_name}</TableCell>
-                        <TableCell className="font-mono">{p.amount.toFixed(2)} {p.currency || "EUR"}</TableCell>
+                        <TableCell className="font-mono">
+                          {p.amount.toFixed(2)} EUR
+                          {p.orig_currency && p.orig_amount != null && (
+                            <span className="block text-xs text-muted-foreground">
+                              (paid {CURRENCY_SYMBOLS[p.orig_currency] || p.orig_currency}{p.orig_amount.toFixed(2)})
+                            </span>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))
                   )}

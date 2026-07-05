@@ -69,9 +69,11 @@ export interface Payment {
   contract_id: number;
   tenant_name?: string;
   apartment_name?: string;
-  amount: number;
+  amount: number;          // EUR value that counts as income
   payment_date: string;
-  currency?: string;
+  currency?: string;       // always "EUR" for the counted value
+  orig_amount?: number | null;    // foreign tender note, if paid in another currency
+  orig_currency?: string | null;
 }
 
 export interface FlatCost {

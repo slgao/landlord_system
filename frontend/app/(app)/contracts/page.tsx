@@ -533,24 +533,34 @@ export default function ContractsPage() {
               {(kautionOverview as any[]).length > 0 && (() => {
                 const rows = kautionOverview as any[];
                 const active = rows.filter((r) => !r.kaution_returned_date);
-                const sum = (f: (r: any) => number) => active.reduce((s, r) => s + (f(r) || 0), 0);
-                const totKaution = sum((r) => r.kaution_amount);
-                // "offen" only means something for deposits tracked via installments;
-                // legacy deposits (a paid_date, no installments) are already fully paid.
-                const totOutstanding = active
-                  .filter((r) => (r.paid ?? 0) > 0)
-                  .reduce((s, r) => s + (r.outstanding || 0), 0);
-                const totBalance = sum((r) => r.balance);
+                // Group by deposit currency so we never add e.g. ¥ into €.
+                const byCurr: Record<string, { kaution: number; outstanding: number; balance: number }> = {};
+                for (const r of active) {
+                  const cur = r.kaution_currency || "EUR";
+                  const b = byCurr[cur] || (byCurr[cur] = { kaution: 0, outstanding: 0, balance: 0 });
+                  b.kaution += r.kaution_amount || 0;
+                  // "offen" only means something for deposits tracked via installments.
+                  if ((r.paid ?? 0) > 0) b.outstanding += r.outstanding || 0;
+                  b.balance += r.balance || 0;
+                }
+                const currs = Object.keys(byCurr).sort();
                 return (
                   <TableBody className="border-t border-border font-medium">
-                    <TableRow>
-                      <TableCell colSpan={2} className="text-xs text-muted-foreground">Totals (deposits not yet returned)</TableCell>
-                      <TableCell className="text-right font-mono">{totKaution.toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-mono text-amber-400">{totOutstanding > 0.001 ? `−${totOutstanding.toFixed(2)} offen` : "—"}</TableCell>
-                      <TableCell />
-                      <TableCell className="text-right font-mono text-emerald-400">{totBalance.toFixed(2)}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">held now</TableCell>
-                    </TableRow>
+                    {currs.map((cur, i) => {
+                      const b = byCurr[cur];
+                      return (
+                        <TableRow key={cur}>
+                          <TableCell colSpan={2} className="text-xs text-muted-foreground">
+                            {i === 0 ? "Totals (not yet returned)" : ""}{currs.length > 1 ? ` · ${cur}` : ""}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">{b.kaution.toFixed(2)} {cur}</TableCell>
+                          <TableCell className="text-right font-mono text-amber-400">{b.outstanding > 0.001 ? `−${b.outstanding.toFixed(2)} offen` : "—"}</TableCell>
+                          <TableCell />
+                          <TableCell className="text-right font-mono text-emerald-400">{b.balance.toFixed(2)} {cur}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">held now</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 );
               })()}

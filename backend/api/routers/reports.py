@@ -44,7 +44,7 @@ def _landlord_name() -> str:
 
 @router.get("/balance-sheet/{year}")
 def balance_sheet_data(year: int):
-    from page_modules.balance_sheet import _compute_snapshot
+    from balance_compute import _compute_snapshot
     snapshot, props = _compute_snapshot(year)
     # serialise Decimal values for JSON
     def _f(v):
@@ -65,7 +65,7 @@ def balance_sheet_data(year: int):
 
 @router.get("/balance-sheet/{year}/pdf")
 def balance_sheet_pdf(year: int):
-    from page_modules.balance_sheet import _compute_snapshot
+    from balance_compute import _compute_snapshot
     from pdfgen import balance_sheet_pdf as gen_pdf
     snapshot, props = _compute_snapshot(year)
     pdf_bytes = gen_pdf(year, snapshot, props, landlord_name=_landlord_name(), signature_path=_sig())

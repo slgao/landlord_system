@@ -17,7 +17,7 @@ Setup
     3. Seed it:
            python seed_demo.py --reset
     4. Launch the app pointing at the demo DB:
-           env $(grep ^DATABASE_URL .env.demo) streamlit run app.py
+           env $(grep ^DATABASE_URL .env.demo) uvicorn api.main:app
 """
 
 import argparse
@@ -323,7 +323,7 @@ def main() -> None:
         print(f"  {k:<18} {v}")
 
     print("\nLaunch the app against the demo DB:")
-    print('  env $(grep ^DATABASE_URL .env.demo) streamlit run app.py')
+    print('  env $(grep ^DATABASE_URL .env.demo) uvicorn api.main:app')
 
 
 if __name__ == "__main__":

@@ -36,7 +36,6 @@ Also: multi-currency (EUR/CNY/USD/GBP), co-tenants (Mitmieter), fixed-term and o
 |---|---|
 | Frontend | **Next.js 14** + TypeScript + Tailwind CSS + shadcn/ui + Recharts |
 | API | **FastAPI** + Uvicorn (JWT auth) |
-| Legacy UI | Streamlit (kept in parallel; the Next.js UI now has full feature parity) |
 | Database | PostgreSQL 16 (Docker locally, Neon in cloud) |
 | Migrations | Alembic |
 | PDFs | ReportLab |
@@ -68,7 +67,6 @@ make up                # build and start all containers
 | **Next.js UI** | http://localhost:3000 |
 | FastAPI | http://localhost:8000 |
 | API docs | http://localhost:8000/docs |
-| Streamlit (legacy) | http://localhost:8501 |
 
 The database schema is created automatically on first start (Alembic runs at API startup).
 
@@ -82,7 +80,7 @@ The database schema is created automatically on first start (Alembic runs at API
 cp .env.example .env
 ./setup.sh                        # creates venv, starts landlord-pg container, runs migrations
 source venv/bin/activate
-honcho start                      # starts api + streamlit together
+honcho start                      # starts api + frontend together
 ```
 
 For the Next.js frontend in dev mode:
@@ -141,15 +139,14 @@ Update `DATABASE_URL` in `.env`. Alembic runs automatically on startup.
 ```
 landlord_system/
 ├── Makefile                    # container orchestration (make up / down / …)
-├── docker-compose.yml          # db + api + frontend + streamlit
-├── backend/                    # all Python (FastAPI + Streamlit + shared core)
-│   ├── Dockerfile              # Python image (api + streamlit)
+├── docker-compose.yml          # db + api + frontend
+├── backend/                    # all Python (FastAPI + shared core)
+│   ├── Dockerfile              # Python image (api)
 │   ├── api/                    # FastAPI routers + Pydantic schemas
 │   │   ├── routers/            # properties, tenants, contracts, payments,
 │   │   │                       # dashboard, flat-costs, meters, config, reports
 │   │   └── schemas/
-│   ├── page_modules/           # Streamlit page modules (legacy)
-│   ├── app.py                  # Streamlit entry point
+│   ├── balance_compute.py      # balance-sheet computations (used by reports)
 │   ├── db.py                   # DB connection + CRUD helpers
 │   ├── logic.py                # Billing calculations
 │   ├── pdfgen.py               # ReportLab PDF generation

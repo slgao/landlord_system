@@ -68,30 +68,6 @@ def verify_access_token(token: str) -> str:
         )
 
 
-# ── Streamlit ────────────────────────────────────────────────────────────────
-
-def streamlit_gate() -> None:
-    try:
-        import streamlit as st
-    except ImportError:
-        return
-
-    if _password_hash() is None:
-        return
-    if st.session_state.get("_authed"):
-        return
-
-    st.title("🔒 Hausverwaltung")
-    pw = st.text_input("Password", type="password", key="_login_pw")
-    if st.button("Sign in", key="_login_btn"):
-        if _verify(pw):
-            st.session_state["_authed"] = True
-            st.rerun()
-        else:
-            st.error("Wrong password.")
-    st.stop()
-
-
 # ── FastAPI ──────────────────────────────────────────────────────────────────
 
 _basic = HTTPBasic(auto_error=False)

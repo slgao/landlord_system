@@ -41,18 +41,6 @@ services:
     depends_on:
       - api
 
-  streamlit:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file: .env
-    ports:
-      - "8501:8501"
-    volumes:
-      - pdf_data:/app/pdf
-    command: ["streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]
-
 volumes:
   pgdata:
   pdf_data:

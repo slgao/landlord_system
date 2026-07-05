@@ -18,7 +18,7 @@ COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compos
 
 help:
 	@echo "Hausverwaltung — available targets:"
-	@echo "  make up       start all containers (db, api, frontend, streamlit)"
+	@echo "  make up       start all containers (db, api, frontend)"
 	@echo "  make down     stop and remove containers"
 	@echo "  make logs     follow logs from all services"
 	@echo "  make ps       list running containers"
@@ -42,7 +42,6 @@ up:
 	@echo ""
 	@echo "  Frontend  → http://localhost:3000"
 	@echo "  FastAPI   → http://localhost:8000  (docs at /docs)"
-	@echo "  Streamlit → http://localhost:8501"
 
 down:
 	@# Detach the external dev database (if attached) so compose can remove the

@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/FastAPI-0.136-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL" />
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker" />
-  <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
+  <img src="https://img.shields.io/badge/License-BSL%201.1-orange" alt="License" />
 </p>
 
 ---
@@ -182,4 +182,8 @@ landlord_system/
 
 ## License
 
-MIT
+[Business Source License 1.1](LICENSE). Source-available: you may read, modify,
+and self-host it to manage your own rental properties, but offering it to third
+parties as a hosted/commercial service is not permitted before the Change Date
+(2030-07-06), after which it converts to Apache-2.0. For other arrangements,
+contact the author.

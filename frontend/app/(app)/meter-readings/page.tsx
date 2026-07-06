@@ -1,12 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { MeterReading, StromMeter, GasMeter, WasserMeter, HeizungMeter, Apartment } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { GroupCard } from "@/components/group-card";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,6 +52,108 @@ function MeterChart({ readings }: { readings: MeterReading[] }) {
   );
 }
 
+// One meter's detail block. Hoisted to module scope and memoized so that
+// unrelated page re-renders (e.g. typing in a dialog) don't remount every
+// block and its Recharts chart. `readings` is the React Query array (stable
+// reference between renders), and the handlers are stabilized with useCallback,
+// so memo can skip re-rendering while the user types.
+const MeterBlock = memo(function MeterBlock({
+  type, m, readings, onAddReading, onEditMeter, onDeleteMeter, onDeleteReading,
+}: {
+  type: MeterType;
+  m: any;
+  readings: MeterReading[];
+  onAddReading: (type: MeterType, meterId: number) => void;
+  onEditMeter: (type: MeterType, m: any) => void;
+  onDeleteMeter: (type: string, id: number) => void;
+  onDeleteReading: (id: number) => void;
+}) {
+  const mrs = useMemo(
+    () => readings.filter((r) => r.meter_type === type && r.meter_id === m.id)
+      .sort((a, b) => a.reading_date.localeCompare(b.reading_date)),
+    [readings, type, m.id],
+  );
+  let stats = null;
+  if (mrs.length >= 2) {
+    const first = mrs[0], last = mrs[mrs.length - 1];
+    const total = (last.reading - first.reading);
+    const days = Math.max(1, Math.round((new Date(last.reading_date).getTime() - new Date(first.reading_date).getTime()) / 86400000));
+    stats = { total: total.toFixed(3), perDay: (total / days).toFixed(3), from: first.reading_date, to: last.reading_date };
+  }
+  return (
+    <div className="px-4 py-3 border-t border-border first:border-t-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Badge className={TYPE_META[type].badge}>{TYPE_META[type].icon} {TYPE_META[type].label}</Badge>
+            <span className="text-sm font-medium">{m.serial_number || "No serial"}</span>
+            {type === "wasser" && <span className="text-xs text-muted-foreground">({m.type})</span>}
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {m.description || "—"}
+            {type === "gas" && `  ·  z=${m.z_zahl} · Bw=${m.brennwert}`}
+            {type === "heizung" && `  ·  ${m.unit_price} €/kWh · factor ${m.conversion_factor}`}
+          </p>
+        </div>
+        <div className="flex gap-1 shrink-0">
+          <Button variant="outline" size="sm" onClick={() => onAddReading(type, m.id)}>
+            <Plus className="size-3.5 mr-1" /> Reading
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => onEditMeter(type, m)}><Pencil className="size-4" /></Button>
+          <ConfirmButton
+            onConfirm={() => onDeleteMeter(type, m.id)}
+            title="Delete meter?"
+            message={`Delete this ${TYPE_META[type].label} meter and all its readings?`}
+          >
+            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
+          </ConfirmButton>
+        </div>
+      </div>
+
+      {mrs.length === 0 ? (
+        <p className="text-xs text-muted-foreground mt-2">No readings yet.</p>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {stats && (
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total used</p><p className="text-sm font-semibold">{stats.total}</p></div>
+              <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Avg / day</p><p className="text-sm font-semibold">{stats.perDay}</p></div>
+              <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Period</p><p className="text-[11px] font-medium">{stats.from} → {stats.to}</p></div>
+            </div>
+          )}
+          <MeterChart readings={mrs} />
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead className="text-right">Reading</TableHead>
+                <TableHead className="text-right">Δ</TableHead>
+                <TableHead>Note</TableHead>
+                <TableHead className="w-8" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {[...mrs].reverse().map((r, i, arr) => {
+                const prev = arr[i + 1];
+                const delta = prev ? (r.reading - prev.reading).toFixed(3) : "—";
+                return (
+                  <TableRow key={r.id}>
+                    <TableCell className="text-muted-foreground">{r.reading_date}</TableCell>
+                    <TableCell className="text-right font-mono">{r.reading.toFixed(3)}</TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">{delta}</TableCell>
+                    <TableCell className="text-muted-foreground text-xs">{r.note || "—"}</TableCell>
+                    <TableCell><ConfirmButton onConfirm={() => onDeleteReading(r.id)} title="Delete reading?" message={`Delete the reading of ${r.reading.toFixed(3)} from ${r.reading_date}?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+});
+
 export default function MeterReadingsPage() {
   const qc = useQueryClient();
   const [readingOpen, setReadingOpen] = useState(false);
@@ -77,11 +178,6 @@ export default function MeterReadingsPage() {
   const metersByType = (type: MeterType): any[] =>
     type === "strom" ? stromMeters : type === "gas" ? gasMeters : type === "wasser" ? wasserMeters : heizungMeters;
 
-  function readingsFor(type: string, id: number) {
-    return readings.filter((r) => r.meter_type === type && r.meter_id === id)
-      .sort((a, b) => a.reading_date.localeCompare(b.reading_date));
-  }
-
   const addReading = useMutation({
     mutationFn: () => api.post("/api/meters/readings", readForm),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["meter-readings"] }); setReadingOpen(false); toast.success("Reading added"); },
@@ -104,12 +200,12 @@ export default function MeterReadingsPage() {
     } catch { toast.error("Failed"); }
   }
 
-  async function deleteMeter(type: string, id: number) {
+  const deleteMeter = useCallback(async (type: string, id: number) => {
     await api.delete(`/api/meters/${type}/${id}`);
     qc.invalidateQueries({ queryKey: [`${type}-meters`] });
     qc.invalidateQueries({ queryKey: ["meter-readings"] });
     toast.success("Deleted");
-  }
+  }, [qc]);
 
   function openNewMeter(type: MeterType, apartmentId?: number) {
     setMeterType(type); setEditingMeter(null);
@@ -121,103 +217,19 @@ export default function MeterReadingsPage() {
     setMeterOpen(true);
   }
 
-  function openEditMeter(type: MeterType, m: any) {
+  const openEditMeter = useCallback((type: MeterType, m: any) => {
     setMeterType(type); setEditingMeter(m);
     if (type === "strom") setStromForm({ apartment_id: m.apartment_id, serial_number: m.serial_number || "", description: m.description || "", scope: m.scope });
     else if (type === "gas") setGasForm({ apartment_id: m.apartment_id, serial_number: m.serial_number || "", description: m.description || "", z_zahl: m.z_zahl, brennwert: m.brennwert, scope: m.scope });
     else if (type === "wasser") setWasserForm({ apartment_id: m.apartment_id, serial_number: m.serial_number || "", description: m.description || "", type: m.type, scope: m.scope });
     else setHeizungForm({ apartment_id: m.apartment_id, serial_number: m.serial_number || "", description: m.description || "", unit_price: m.unit_price, unit_label: m.unit_label, conversion_factor: m.conversion_factor, scope: m.scope });
     setMeterOpen(true);
-  }
+  }, []);
 
-  function openAddReading(type: MeterType, meterId: number) {
+  const openAddReading = useCallback((type: MeterType, meterId: number) => {
     setReadForm({ meter_type: type, meter_id: meterId, reading_date: new Date().toISOString().split("T")[0], reading: 0, note: "" });
     setReadingOpen(true);
-  }
-
-  // ── one meter's detail block ──
-  function MeterBlock({ type, m }: { type: MeterType; m: any }) {
-    const mrs = readingsFor(type, m.id);
-    let stats = null;
-    if (mrs.length >= 2) {
-      const first = mrs[0], last = mrs[mrs.length - 1];
-      const total = (last.reading - first.reading);
-      const days = Math.max(1, Math.round((new Date(last.reading_date).getTime() - new Date(first.reading_date).getTime()) / 86400000));
-      stats = { total: total.toFixed(3), perDay: (total / days).toFixed(3), from: first.reading_date, to: last.reading_date };
-    }
-    return (
-      <div className="px-4 py-3 border-t border-border first:border-t-0">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Badge className={TYPE_META[type].badge}>{TYPE_META[type].icon} {TYPE_META[type].label}</Badge>
-              <span className="text-sm font-medium">{m.serial_number || "No serial"}</span>
-              {type === "wasser" && <span className="text-xs text-muted-foreground">({m.type})</span>}
-            </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {m.description || "—"}
-              {type === "gas" && `  ·  z=${m.z_zahl} · Bw=${m.brennwert}`}
-              {type === "heizung" && `  ·  ${m.unit_price} €/kWh · factor ${m.conversion_factor}`}
-            </p>
-          </div>
-          <div className="flex gap-1 shrink-0">
-            <Button variant="outline" size="sm" onClick={() => openAddReading(type, m.id)}>
-              <Plus className="size-3.5 mr-1" /> Reading
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => openEditMeter(type, m)}><Pencil className="size-4" /></Button>
-            <ConfirmButton
-              onConfirm={() => deleteMeter(type, m.id)}
-              title="Delete meter?"
-              message={`Delete this ${TYPE_META[type].label} meter and all its readings?`}
-            >
-              <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
-            </ConfirmButton>
-          </div>
-        </div>
-
-        {mrs.length === 0 ? (
-          <p className="text-xs text-muted-foreground mt-2">No readings yet.</p>
-        ) : (
-          <div className="mt-3 space-y-3">
-            {stats && (
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total used</p><p className="text-sm font-semibold">{stats.total}</p></div>
-                <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Avg / day</p><p className="text-sm font-semibold">{stats.perDay}</p></div>
-                <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Period</p><p className="text-[11px] font-medium">{stats.from} → {stats.to}</p></div>
-              </div>
-            )}
-            <MeterChart readings={mrs} />
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Reading</TableHead>
-                  <TableHead className="text-right">Δ</TableHead>
-                  <TableHead>Note</TableHead>
-                  <TableHead className="w-8" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {[...mrs].reverse().map((r, i, arr) => {
-                  const prev = arr[i + 1];
-                  const delta = prev ? (r.reading - prev.reading).toFixed(3) : "—";
-                  return (
-                    <TableRow key={r.id}>
-                      <TableCell className="text-muted-foreground">{r.reading_date}</TableCell>
-                      <TableCell className="text-right font-mono">{r.reading.toFixed(3)}</TableCell>
-                      <TableCell className="text-right font-mono text-muted-foreground">{delta}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">{r.note || "—"}</TableCell>
-                      <TableCell><ConfirmButton onConfirm={() => deleteReading.mutate(r.id)} title="Delete reading?" message={`Delete the reading of ${r.reading.toFixed(3)} from ${r.reading_date}?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </div>
-    );
-  }
+  }, []);
 
   const properties = Array.from(new Set(apartments.map((a) => a.property_name || "—"))).sort();
   const visibleProps = filterProp === "all" ? properties : properties.filter((p) => p === filterProp);
@@ -274,7 +286,18 @@ export default function MeterReadingsPage() {
                     {meters.length === 0 ? (
                       <p className="px-4 py-3 text-sm text-muted-foreground">No meters registered for this apartment.</p>
                     ) : (
-                      meters.map(({ type, m }) => <MeterBlock key={`${type}-${m.id}`} type={type} m={m} />)
+                      meters.map(({ type, m }) => (
+                        <MeterBlock
+                          key={`${type}-${m.id}`}
+                          type={type}
+                          m={m}
+                          readings={readings}
+                          onAddReading={openAddReading}
+                          onEditMeter={openEditMeter}
+                          onDeleteMeter={deleteMeter}
+                          onDeleteReading={deleteReading.mutate}
+                        />
+                      ))
                     )}
                     {/* Add-meter toolbar */}
                     <div className="px-4 py-2 border-t border-border flex flex-wrap gap-1.5">

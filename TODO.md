@@ -29,11 +29,12 @@ severity. Checkboxes track progress.
 
 ## 🟠 Performance
 
-- [ ] **Collapse `payment-reminders` into a single query.**
-  `api/routers/reports.py` → `detect_overdue(months_back=12)` runs ~12 payment
-  queries per active contract, then the endpoint adds one more `meta` query per
-  overdue contract for the property name (N+1 ×2). On Neon (~30–50 ms/query) this
-  is the slowest endpoint. Replace with one JOIN + grouped subquery.
+- [x] **Collapse `payment-reminders` into a single query.**
+  Done: `detect_overdue` now uses two queries total — active contracts, then
+  payments summed per contract per month via one `GROUP BY substr(payment_date,
+  1,7)`. It also selects the property name + currency, so `payment-reminders`
+  no longer runs a per-contract enrichment query. Was ~(1 + contracts×12 + N)
+  queries; now 2. Covered by `backend/tests/test_detect_overdue.py`.
 
 ---
 

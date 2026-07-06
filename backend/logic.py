@@ -282,6 +282,11 @@ def detect_overdue(months_back=3):
     For every active (non-terminated) contract, compare expected monthly rent
     against recorded payments for the last `months_back` months.
     Returns a list of dicts for contracts with at least one underpaid month.
+
+    Uses exactly two queries regardless of contract/month count: one for the
+    active contracts and one that sums payments per contract per month across
+    the whole window (grouped in SQL), avoiding the previous per-contract,
+    per-month N+1.
     """
     today = _date.today()
 
@@ -295,16 +300,37 @@ def detect_overdue(months_back=3):
             y -= 1
         months_to_check.append(_date(y, m, 1))
 
+    if not months_to_check:
+        return []
+
+    window_start = str(months_to_check[0])
+    _last = months_to_check[-1]
+    window_end = str(_last.replace(day=_calendar.monthrange(_last.year, _last.month)[1]))
+
     active_contracts = fetch("""
-        SELECT c.id, t.name, t.email, a.name, c.rent, c.start_date, c.end_date
+        SELECT c.id, t.name, t.email, a.name, c.rent, c.start_date, c.end_date,
+               p.name, COALESCE(c.currency, 'EUR')
         FROM contracts c
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
+        JOIN properties p ON a.property_id = p.id
         WHERE COALESCE(c.terminated, 0) = 0
     """)
 
+    # One grouped query: payments summed per (contract, calendar month) over the
+    # whole window. payment_date is ISO text, so substr(...,1,7) is 'YYYY-MM'.
+    paid_rows = fetch("""
+        SELECT p.contract_id, substr(p.payment_date, 1, 7), COALESCE(SUM(p.amount), 0)
+        FROM payments p
+        JOIN contracts c ON p.contract_id = c.id
+        WHERE COALESCE(c.terminated, 0) = 0
+          AND p.payment_date >= ? AND p.payment_date <= ?
+        GROUP BY p.contract_id, substr(p.payment_date, 1, 7)
+    """, (window_start, window_end))
+    paid_by = {(cid, ym): total for cid, ym, total in paid_rows}
+
     results = []
-    for cid, t_name, t_email, apt_name, rent, start_str, end_str in active_contracts:
+    for cid, t_name, t_email, apt_name, rent, start_str, end_str, prop_name, currency in active_contracts:
         contract_start = _date.fromisoformat(start_str)
         contract_end   = (_date.fromisoformat(end_str)
                           if end_str and end_str != "None" else None)
@@ -322,10 +348,7 @@ def detect_overdue(months_back=3):
             if contract_end and contract_end < m_start:
                 continue
 
-            paid = fetch("""
-                SELECT COALESCE(SUM(amount), 0) FROM payments
-                WHERE contract_id=? AND payment_date >= ? AND payment_date <= ?
-            """, (cid, str(m_start), str(m_end)))[0][0]
+            paid = paid_by.get((cid, m_start.strftime("%Y-%m")), _ZERO)
 
             gap = round(rent - paid, 2)
             if gap > 0:
@@ -343,6 +366,8 @@ def detect_overdue(months_back=3):
                 "tenant":         t_name,
                 "email":          t_email or "",
                 "apartment":      apt_name,
+                "property_name":  prop_name,
+                "currency":       currency,
                 "overdue_months": overdue_months,
                 "total_due":      float(round(total_due, 2)),
             })

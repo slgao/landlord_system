@@ -285,31 +285,19 @@ def mahnung_pdf(body: MahnungRequest):
 @router.get("/payment-reminders")
 def payment_reminders():
     from logic import detect_overdue
-    overdue = detect_overdue(months_back=12)
-    # Enrich with property name and currency
-    result = []
-    for item in overdue:
-        meta = fetch("""
-            SELECT p.name, COALESCE(c.currency,'EUR')
-            FROM contracts c
-            JOIN apartments a ON a.id=c.apartment_id
-            JOIN properties p ON p.id=a.property_id
-            WHERE c.id=?
-        """, (item["contract_id"],))
-        prop_name = meta[0][0] if meta else ""
-        currency = meta[0][1] if meta else "EUR"
-        result.append({
-            "contract_id":    item["contract_id"],
-            "tenant_name":    item["tenant"],
-            "tenant_email":   item.get("email", ""),
-            "apartment_name": item["apartment"],
-            "property_name":  prop_name,
-            "months_due":     len(item["overdue_months"]),
-            "amount_due":     round(float(item["total_due"]), 2),
-            "currency":       currency,
-            "overdue_months": item["overdue_months"],
-        })
-    return result
+    # detect_overdue already includes property_name and currency, so no
+    # per-contract enrichment query is needed here.
+    return [{
+        "contract_id":    item["contract_id"],
+        "tenant_name":    item["tenant"],
+        "tenant_email":   item.get("email", ""),
+        "apartment_name": item["apartment"],
+        "property_name":  item.get("property_name", ""),
+        "months_due":     len(item["overdue_months"]),
+        "amount_due":     round(float(item["total_due"]), 2),
+        "currency":       item.get("currency", "EUR"),
+        "overdue_months": item["overdue_months"],
+    } for item in detect_overdue(months_back=12)]
 
 
 class ReminderIn(BaseModel):

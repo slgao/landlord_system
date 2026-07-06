@@ -7,16 +7,14 @@ severity. Checkboxes track progress.
 
 ## 🔴 Security (fix before any non-localhost deployment)
 
-- [ ] **Authenticate the signature endpoints.**
-  `GET/POST /api/signature` and `GET /api/signature-pad` are registered directly
-  on `app` in `api/main.py`, bypassing the `require_auth` dependency that guards
-  every `/api/*` router. An unauthenticated caller can overwrite the landlord's
-  signature PNG (`POST`) or read it.
-  - Trade-off: the Settings page loads the signature through an `<iframe>`/`<img>`
-    that cannot send a `Bearer` header. It currently passes `?token=` in the query
-    string, which the endpoint ignores.
-  - Fix: validate a query-param token on these routes (or move to a short-lived
-    signed URL) and update `frontend/app/(app)/settings/page.tsx` accordingly.
+- [x] **Authenticate the signature endpoints.**
+  `GET/POST /api/signature` and `GET /api/signature-pad` were registered directly
+  on `app`, bypassing `require_auth`.
+  - Done: `_check_signature_access()` validates a token from the `Authorization`
+    header or a `?token=` query param (needed because `<img>`/`<iframe>` can't set
+    a header). Open when `APP_PASSWORD_HASH` is unset (no regression). The pad
+    injects the caller's token into its POST; the Settings page passes the token
+    to both the `<img>` and the pad `<iframe>`.
 
 - [x] **Set real secrets in production.**
   `JWT_SECRET` defaults to the hardcoded string `change-this-in-production-32chars`
@@ -41,15 +39,15 @@ severity. Checkboxes track progress.
 
 ## 🟡 Minor / UX
 
-- [ ] **Refresh the contract detail view after Kaution/terminate mutations.**
-  In `frontend/app/(app)/contracts/page.tsx`, `selectedContract` is a snapshot
-  taken at `openDetail`. After "Mark Returned" / terminate / reopen, the list
-  refetches but the open detail card shows stale `kaution_returned_date` until
-  reopened. Re-derive `selectedContract` from the live query data.
+- [x] **Refresh the contract detail view after Kaution/terminate mutations.**
+  `frontend/app/(app)/contracts/page.tsx` — terminate/reopen/mark-returned/
+  clear-return and edit-save now update `selectedContract` from the mutation
+  response (each endpoint returns the fresh contract), so the open detail card
+  is no longer stale.
 
-- [ ] **Remove the explicit `DELETE FROM payments` in `delete_contract`.**
-  `api/routers/contracts.py` — redundant because the FK is `ON DELETE CASCADE`.
-  Harmless, but misleading. Low priority.
+- [x] **Remove the explicit `DELETE FROM payments` in `delete_contract`.**
+  `api/routers/contracts.py` — removed; `ON DELETE CASCADE` handles it (verified
+  the live FK is CASCADE).
 
 - [x] **Clean up stale create-next-app docs.**
   `frontend/AGENTS.md` claimed "this is NOT the Next.js you know" and pointed at a

@@ -91,22 +91,22 @@ export default function ContractsPage() {
   const terminate = useMutation({
     mutationFn: ({ id, end_date }: { id: number; end_date?: string }) =>
       api.post(`/api/contracts/${id}/terminate`, null, end_date ? { params: { end_date } } : undefined),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contracts"] }); toast.success("Contract terminated"); setTerminateTarget(null); },
+    onSuccess: (res, vars) => { qc.invalidateQueries({ queryKey: ["contracts"] }); if (selectedContract?.id === vars.id) setSelectedContract(res.data); toast.success("Contract terminated"); setTerminateTarget(null); },
   });
 
   const reopen = useMutation({
     mutationFn: (id: number) => api.post(`/api/contracts/${id}/reopen`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contracts"] }); toast.success("Contract reopened"); },
+    onSuccess: (res, id) => { qc.invalidateQueries({ queryKey: ["contracts"] }); if (selectedContract?.id === id) setSelectedContract(res.data); toast.success("Contract reopened"); },
   });
 
   const markKautionReturned = useMutation({
     mutationFn: () => api.post(`/api/contracts/${selectedContract!.id}/kaution-return`, kautionReturnForm),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contracts"] }); toast.success("Kaution marked as returned"); },
+    onSuccess: (res) => { qc.invalidateQueries({ queryKey: ["contracts"] }); setSelectedContract(res.data); toast.success("Kaution marked as returned"); },
   });
 
   const clearKautionReturn = useMutation({
     mutationFn: () => api.post(`/api/contracts/${selectedContract!.id}/kaution-return/clear`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contracts"] }); toast.success("Kaution return cleared"); },
+    onSuccess: (res) => { qc.invalidateQueries({ queryKey: ["contracts"] }); setSelectedContract(res.data); toast.success("Kaution return cleared"); },
   });
 
   const save = useMutation({
@@ -116,7 +116,7 @@ export default function ContractsPage() {
         kaution_amount: data.kaution_amount || null, kaution_returned_amount: data.kaution_returned_amount || null };
       return editing ? api.put(`/api/contracts/${editing.id}`, body) : api.post("/api/contracts/", body);
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contracts"] }); toast.success(editing ? "Updated" : "Created"); setOpen(false); },
+    onSuccess: (res) => { qc.invalidateQueries({ queryKey: ["contracts"] }); if (editing && selectedContract?.id === editing.id) setSelectedContract(res.data); toast.success(editing ? "Updated" : "Created"); setOpen(false); },
     onError: () => toast.error("Failed to save"),
   });
 

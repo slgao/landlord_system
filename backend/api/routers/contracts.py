@@ -179,10 +179,25 @@ def terminate_contract(contract_id: int, end_date: str | None = None):
 
 @router.post("/{contract_id}/reopen", response_model=ContractOut)
 def reopen_contract(contract_id: int):
-    rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))
+    rows = fetch("SELECT end_date FROM contracts WHERE id=?", (contract_id,))
     if not rows:
         raise HTTPException(status_code=404, detail="Contract not found")
-    execute("UPDATE contracts SET terminated=0, end_date=NULL WHERE id=?", (contract_id,))
+    from datetime import date as _date
+    existing = rows[0][0]
+    existing = existing if (existing and str(existing) != "None") else None
+    # Preserve a genuine fixed-term end date that is still in the future; only
+    # clear an end date that termination set to today/the past (which restores
+    # the open-ended contract it used to be).
+    keep_end = False
+    if existing:
+        try:
+            keep_end = _date.fromisoformat(existing) > _date.today()
+        except ValueError:
+            keep_end = False
+    if keep_end:
+        execute("UPDATE contracts SET terminated=0 WHERE id=?", (contract_id,))
+    else:
+        execute("UPDATE contracts SET terminated=0, end_date=NULL WHERE id=?", (contract_id,))
     rows = fetch(f"{_SELECT} WHERE c.id=?", (contract_id,))
     return _row(rows[0])
 
@@ -262,5 +277,6 @@ def delete_contract(contract_id: int):
     rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))
     if not rows:
         raise HTTPException(status_code=404, detail="Contract not found")
-    execute("DELETE FROM payments WHERE contract_id=?", (contract_id,))
+    # Child rows (payments, kaution_deductions, kaution_payments, co_tenants,
+    # reminders) are removed automatically by their ON DELETE CASCADE FKs.
     execute("DELETE FROM contracts WHERE id=?", (contract_id,))

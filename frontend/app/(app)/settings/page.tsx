@@ -18,6 +18,9 @@ export default function SettingsPage() {
   const [form, setForm] = useState<Config>({});
   const [smtp, setSmtp] = useState({ smtp_host: "", smtp_port: "587", smtp_user: "", smtp_from: "", smtp_password: "" });
   const [sigUrl, setSigUrl] = useState<string | null>(null);
+  // Built in an effect (not during render) so reading localStorage doesn't
+  // cause a server/client hydration mismatch on the iframe src.
+  const [padSrc, setPadSrc] = useState<string | null>(null);
 
   const { data: config } = useQuery<Config>({
     queryKey: ["config"],
@@ -29,6 +32,10 @@ export default function SettingsPage() {
     queryFn: () => api.get("/api/config/smtp").then((r) => r.data),
   });
 
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    setPadSrc(`${API}/api/signature-pad${token ? `?token=${token}` : ""}`);
+  }, []);
   useEffect(() => { if (config) setForm(config); }, [config]);
   useEffect(() => { if (smtpConfig) setSmtp({ ...smtp, ...smtpConfig }); }, [smtpConfig]);
 
@@ -109,7 +116,7 @@ export default function SettingsPage() {
         <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Signature</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">Draw your signature below. It will be used in all generated PDFs.</p>
-          <iframe src={`${API}/api/signature-pad`} className="w-full h-48 rounded-md border border-border bg-white" />
+          {padSrc && <iframe src={padSrc} className="w-full h-48 rounded-md border border-border bg-white" />}
           <Button variant="outline" size="sm" onClick={loadSig}>View saved signature</Button>
           {sigUrl && (
             <div className="p-3 rounded-md border border-border bg-white inline-block">

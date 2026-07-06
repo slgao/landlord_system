@@ -1,12 +1,15 @@
 import base64
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from db import migrate_to_head
-from auth import require_auth, _USERNAME, _verify, create_access_token, verify_startup_config
+from auth import (
+    require_auth, _USERNAME, _verify, create_access_token, verify_startup_config,
+    _password_hash, verify_access_token,
+)
 from api.routers import (
     properties, apartments, tenants, contracts, payments,
     dashboard, flat_costs, meters, config, reports,
@@ -115,6 +118,8 @@ _SIGNATURE_PAD_HTML = """<!DOCTYPE html>
   <div id="msg"></div>
 </div>
 <script>
+// Injected server-side; empty when the API runs without a password gate.
+const TOKEN = "__SIG_TOKEN__";
 const canvas = document.getElementById('sig');
 const ctx    = canvas.getContext('2d');
 ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#000';
@@ -201,7 +206,8 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   msg.style.color = '#333';
   msg.textContent = 'Saving…';
   try {
-    const res = await fetch('/api/signature', {
+    const url = '/api/signature' + (TOKEN ? ('?token=' + encodeURIComponent(TOKEN)) : '');
+    const res = await fetch(url, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({data_url: cropDataUrl()}),
@@ -223,8 +229,24 @@ document.getElementById('btn-save').addEventListener('click', async () => {
 </html>"""
 
 
+def _check_signature_access(request: Request, token: str | None) -> None:
+    """Guard the signature endpoints. These are registered on `app` (outside the
+    require_auth-protected routers) because the browser loads them via <img> and
+    <iframe>, which can't set an Authorization header — so a token is accepted in
+    the query string as well. When no password is configured the API is open and
+    this is a no-op, matching the behaviour of require_auth."""
+    if _password_hash() is None:
+        return
+    auth_header = request.headers.get("Authorization", "")
+    tok = auth_header[7:] if auth_header.startswith("Bearer ") else token
+    if not tok:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    verify_access_token(tok)  # raises 401 if invalid/expired
+
+
 @app.get("/api/signature", tags=["Files"])
-def get_signature():
+def get_signature(request: Request, token: str | None = None):
+    _check_signature_access(request, token)
     dest = Path("pdf/signature.png")
     if not dest.exists():
         raise HTTPException(status_code=404, detail="No signature on file")
@@ -232,8 +254,11 @@ def get_signature():
 
 
 @app.get("/api/signature-pad", tags=["Files"], response_class=HTMLResponse)
-def signature_pad():
-    return HTMLResponse(_SIGNATURE_PAD_HTML)
+def signature_pad(request: Request, token: str | None = None):
+    _check_signature_access(request, token)
+    # Inject the caller's token so the pad's POST can authenticate too.
+    html = _SIGNATURE_PAD_HTML.replace("__SIG_TOKEN__", token or "")
+    return HTMLResponse(html)
 
 
 class SignaturePayload(BaseModel):
@@ -241,7 +266,8 @@ class SignaturePayload(BaseModel):
 
 
 @app.post("/api/signature", tags=["Files"])
-def save_signature(body: SignaturePayload):
+def save_signature(body: SignaturePayload, request: Request, token: str | None = None):
+    _check_signature_access(request, token)
     _, _, b64 = body.data_url.partition(",")
     if not b64:
         raise HTTPException(status_code=400, detail="Invalid data URL")

@@ -1,21 +1,33 @@
 import base64
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from db import migrate_to_head
-from auth import require_auth, _USERNAME, _verify, create_access_token
+from auth import require_auth, _USERNAME, _verify, create_access_token, verify_startup_config
 from api.routers import (
     properties, apartments, tenants, contracts, payments,
     dashboard, flat_costs, meters, config, reports,
     co_tenants, kaution, billing_profiles,
 )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Fail fast on insecure production config, then bring the schema to head
+    # once, before serving requests.
+    verify_startup_config()
+    migrate_to_head()
+    yield
+
+
 app = FastAPI(
     title="Vermio API",
     description="REST API for Vermio — self-hosted property management.",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -237,11 +249,6 @@ def save_signature(body: SignaturePayload):
     dest.parent.mkdir(exist_ok=True)
     dest.write_bytes(base64.b64decode(b64))
     return {"status": "saved"}
-
-
-@app.on_event("startup")
-def startup():
-    migrate_to_head()
 
 
 @app.get("/", tags=["Health"])

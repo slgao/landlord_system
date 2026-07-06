@@ -18,12 +18,14 @@ severity. Checkboxes track progress.
   - Fix: validate a query-param token on these routes (or move to a short-lived
     signed URL) and update `frontend/app/(app)/settings/page.tsx` accordingly.
 
-- [ ] **Set real secrets in production.**
+- [x] **Set real secrets in production.**
   `JWT_SECRET` defaults to the hardcoded string `change-this-in-production-32chars`
   in `docker-compose.yml`; with it unset, tokens can be forged. `APP_PASSWORD_HASH`
   empty = fully open access.
-  - Document required prod env vars and fail fast (refuse to start) when
-    `JWT_SECRET`/`APP_PASSWORD_HASH` are unset outside local dev.
+  - Done: `auth.verify_startup_config()` runs in the FastAPI lifespan. With
+    `APP_ENV=production` it refuses to start when `JWT_SECRET` is unset/placeholder
+    or `APP_PASSWORD_HASH` is empty; in dev it only logs a warning. `APP_ENV` is
+    documented in `.env.example`.
 
 ---
 
@@ -79,4 +81,8 @@ severity. Checkboxes track progress.
 - [ ] Email sending for Mahnung (SMTP config exists in Settings but the send flow
       isn't wired into the Next.js UI — only "log reminder" is).
 - [ ] Edit Payment in Rent Tracking (currently add/delete only).
-- [ ] Tests: no automated test suite yet for the API routers or calculation logic.
+- [x] Tests: pure calculation logic now covered — `backend/tests/` has a pytest
+      suite for `logic.py` (Nebenkosten proration), `currencies.py`, `db._adapt`
+      (SQL translation), and the auth startup guard. Run with `make test` or
+      `cd backend && pytest`. Still todo: integration tests for the DB-backed
+      routers (`detect_overdue`, `tenant_ledger`, balance-sheet snapshot).

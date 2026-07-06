@@ -94,6 +94,21 @@ Set `NEXT_PUBLIC_API_URL=http://localhost:8000` in `frontend/.env.local`.
 
 ---
 
+## Tests
+
+The backend calculation logic has a `pytest` suite (pure functions — no database
+required):
+
+```bash
+pip install -r backend/requirements-dev.txt
+make test            # or: cd backend && pytest
+```
+
+Covers the Nebenkostenabrechnung proration (`logic.py`), currency formatting,
+the SQLite→PostgreSQL query translation (`db._adapt`), and the auth startup guard.
+
+---
+
 ## Auth
 
 Protected by a bcrypt-hashed password. Set `APP_PASSWORD_HASH` in `.env`:
@@ -151,9 +166,11 @@ landlord_system/
 │   ├── logic.py                # Billing calculations
 │   ├── pdfgen.py               # ReportLab PDF generation
 │   ├── currencies.py           # EUR/CNY/USD/GBP symbol map
-│   ├── auth.py                 # JWT + HTTP Basic auth
+│   ├── auth.py                 # JWT + HTTP Basic auth + prod-config guard
 │   ├── alembic/                # Schema migrations
-│   └── requirements.txt
+│   ├── tests/                  # pytest suite (calculation logic, auth)
+│   ├── requirements.txt
+│   └── requirements-dev.txt    # test-only deps (pytest)
 ├── frontend/                   # Next.js app
 │   ├── Dockerfile
 │   ├── app/                    # App Router pages

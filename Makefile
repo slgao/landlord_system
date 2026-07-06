@@ -14,7 +14,7 @@
 COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
 .DEFAULT_GOAL := help
-.PHONY: help up down logs ps restart build migrate seed clean
+.PHONY: help up down logs ps restart build migrate seed clean test
 
 help:
 	@echo "Hausverwaltung — available targets:"
@@ -26,6 +26,7 @@ help:
 	@echo "  make build    rebuild images"
 	@echo "  make migrate  run database migrations"
 	@echo "  make seed     load demo data"
+	@echo "  make test     run the backend pytest suite"
 	@echo "  make clean    stop and remove containers + volumes (wipes the DB)"
 	@echo ""
 	@echo "Using: $(COMPOSE)"
@@ -66,6 +67,11 @@ migrate:
 
 seed:
 	$(COMPOSE) exec api python seed_demo.py
+
+test:
+	@# Pure-function suite (no DB needed — conftest sets a dummy DATABASE_URL).
+	@# Prefer the project venv; fall back to whatever python is on PATH.
+	cd backend && { [ -x ../venv/bin/python ] && ../venv/bin/python -m pytest || python3 -m pytest; }
 
 clean:
 	$(COMPOSE) down -v

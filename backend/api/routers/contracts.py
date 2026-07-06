@@ -236,7 +236,14 @@ def kaution_overview():
     for r in rows:
         k_amt = float(r[4]) if r[4] else 0.0
         deducted = float(r[9]) if r[9] else 0.0
-        paid = float(r[10]) if r[10] else 0.0
+        installments = float(r[10]) if r[10] else 0.0
+        # Legacy deposits carry no installment rows but a kaution_paid_date,
+        # which means the tenant paid the full amount up front. Treat that as
+        # fully paid so "outstanding" isn't reported as the entire deposit.
+        # Mirrors the `legacyFullyPaid` rule in the contracts detail view.
+        paid_date = r[6] and str(r[6]) != "None"
+        legacy_fully_paid = installments == 0.0 and bool(paid_date)
+        paid = k_amt if legacy_fully_paid else installments
         result.append({
             "contract_id": r[0], "tenant_name": r[1], "apartment_name": r[2],
             "property_name": r[3], "kaution_amount": k_amt,

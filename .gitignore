@@ -218,3 +218,6 @@ backups/
 # Emacs undo-tree backup files
 *.~undo-tree~
 local_backup.sql
+
+# Local-only legal notes / evidence (never push to remote)
+legal/

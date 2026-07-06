@@ -11,11 +11,24 @@
 #
 # ================================================================
 import calendar as _calendar
+import math as _math
 from datetime import date as _date
 from decimal import Decimal
 from db import fetch
 
 _ZERO = Decimal("0")
+
+
+def _month_first(d):
+    """First day of d's month."""
+    return d.replace(day=1)
+
+
+def _add_months(first_of_month, delta):
+    """Shift a day-1 date by `delta` whole months (delta may be negative)."""
+    idx = first_of_month.year * 12 + (first_of_month.month - 1) + delta
+    y, m = divmod(idx, 12)
+    return _date(y, m + 1, 1)
 
 
 def strom_calc(cost_flat, tenants, bill_days, eff_days, limit_per_month=50):
@@ -277,48 +290,63 @@ def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end, limit_per_
     return cost_per_tenant, period_cost, limit_period, nachzahlung
 
 
-def detect_overdue(months_back=3):
+def detect_overdue(default_months_back=12):
     """
-    For every active (non-terminated) contract, compare expected monthly rent
-    against recorded payments for the last `months_back` months.
-    Returns a list of dicts for contracts with at least one underpaid month.
+    For every active (non-terminated) contract, compare the total rent due over
+    a look-back window against the total recorded payments in that window, using
+    a *cumulative balance* (not independent per-month checks). This means:
 
-    Uses exactly two queries regardless of contract/month count: one for the
-    active contracts and one that sums payments per contract per month across
-    the whole window (grouped in SQL), avoiding the previous per-contract,
-    per-month N+1.
+      • A payment made before the month it covers still counts (it falls inside
+        the window), so paying rent early is not flagged as a gap.
+      • Overpaying one month offsets an earlier shortfall (e.g. a double payment
+        after a missed month nets to zero), so it is not flagged either.
+      • Payments recorded in the current (incomplete) month count as credit
+        against arrears, so catching up clears the reminder.
+
+    Per-contract window start:
+      • If the contract has `rent_settled_until` set, evaluation starts the month
+        AFTER it (everything up to that date is assumed settled — handy when old
+        payments were never entered).
+      • Otherwise it starts `default_months_back` months before the current month.
+
+    Only complete months (up to and including last month) count toward the
+    expected total. Uses two queries total regardless of contract/month count.
     """
     today = _date.today()
+    cur_first = today.replace(day=1)
+    end_first = _add_months(cur_first, -1)                 # last complete month
+    default_start = _add_months(cur_first, -default_months_back)
+    cur_ym = cur_first.strftime("%Y-%m")
 
-    # Build the list of month start dates to examine (oldest first)
-    months_to_check = []
-    for i in range(months_back, 0, -1):
-        m = today.month - i
-        y = today.year
-        while m <= 0:
-            m += 12
-            y -= 1
-        months_to_check.append(_date(y, m, 1))
-
-    if not months_to_check:
-        return []
-
-    window_start = str(months_to_check[0])
-    _last = months_to_check[-1]
-    window_end = str(_last.replace(day=_calendar.monthrange(_last.year, _last.month)[1]))
-
-    active_contracts = fetch("""
+    contracts = fetch("""
         SELECT c.id, t.name, t.email, a.name, c.rent, c.start_date, c.end_date,
-               p.name, COALESCE(c.currency, 'EUR')
+               p.name, COALESCE(c.currency, 'EUR'), c.rent_settled_until
         FROM contracts c
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
         JOIN properties p ON a.property_id = p.id
         WHERE COALESCE(c.terminated, 0) = 0
+        ORDER BY t.name
     """)
+    if not contracts:
+        return []
 
-    # One grouped query: payments summed per (contract, calendar month) over the
-    # whole window. payment_date is ISO text, so substr(...,1,7) is 'YYYY-MM'.
+    # Resolve each contract's window start (month-1 date).
+    starts = {}
+    for row in contracts:
+        cid, settled = row[0], row[9]
+        s = None
+        if settled and str(settled) != "None":
+            try:
+                s = _date.fromisoformat(settled)
+            except ValueError:
+                s = None
+        starts[cid] = _add_months(_month_first(s), 1) if s else default_start
+
+    # One grouped query: payments summed per (contract, calendar month) from the
+    # earliest needed month through today. payment_date is ISO text, so
+    # substr(...,1,7) is 'YYYY-MM'.
+    min_start = min(starts.values())
     paid_rows = fetch("""
         SELECT p.contract_id, substr(p.payment_date, 1, 7), COALESCE(SUM(p.amount), 0)
         FROM payments p
@@ -326,51 +354,76 @@ def detect_overdue(months_back=3):
         WHERE COALESCE(c.terminated, 0) = 0
           AND p.payment_date >= ? AND p.payment_date <= ?
         GROUP BY p.contract_id, substr(p.payment_date, 1, 7)
-    """, (window_start, window_end))
+    """, (str(min_start), str(today)))
     paid_by = {(cid, ym): total for cid, ym, total in paid_rows}
 
     results = []
-    for cid, t_name, t_email, apt_name, rent, start_str, end_str, prop_name, currency in active_contracts:
+    for row in contracts:
+        cid, t_name, t_email, apt_name, rent, start_str, end_str, prop_name, currency, settled = row
         contract_start = _date.fromisoformat(start_str)
         contract_end   = (_date.fromisoformat(end_str)
-                          if end_str and end_str != "None" else None)
+                          if end_str and str(end_str) != "None" else None)
 
-        overdue_months = []
-        total_due      = _ZERO
+        # Complete months in [window start, last complete month] the contract is active.
+        months = []
+        m = starts[cid]
+        while m <= end_first:
+            m_end = m.replace(day=_calendar.monthrange(m.year, m.month)[1])
+            if not (contract_start > m_end or (contract_end and contract_end < m)):
+                months.append(m)
+            m = _add_months(m, 1)
+        if not months:
+            continue
 
-        for m_start in months_to_check:
-            m_end = m_start.replace(
-                day=_calendar.monthrange(m_start.year, m_start.month)[1]
-            )
-            # Skip months before contract started or after it ended
-            if contract_start > m_end:
-                continue
-            if contract_end and contract_end < m_start:
-                continue
+        expected_total = rent * len(months)
 
-            paid = paid_by.get((cid, m_start.strftime("%Y-%m")), _ZERO)
+        # Total paid across the window, INCLUDING the current (incomplete) month
+        # so pre-payments and catch-up payments count as credit.
+        start_ym = starts[cid].strftime("%Y-%m")
+        paid_total = _ZERO
+        for (pc, ym), val in paid_by.items():
+            if pc == cid and start_ym <= ym <= cur_ym:
+                paid_total += val
 
-            gap = round(rent - paid, 2)
-            if gap > 0:
-                overdue_months.append({
-                    "month":    m_start.strftime("%B %Y"),
-                    "expected": float(rent),
-                    "paid":     float(paid),
-                    "gap":      float(gap),
-                })
-                total_due += gap
+        balance = paid_total - expected_total
+        amount_due = -balance
+        if amount_due <= Decimal("0.005"):
+            continue
 
-        if overdue_months:
-            results.append({
-                "contract_id":    cid,
-                "tenant":         t_name,
-                "email":          t_email or "",
-                "apartment":      apt_name,
-                "property_name":  prop_name,
-                "currency":       currency,
-                "overdue_months": overdue_months,
-                "total_due":      float(round(total_due, 2)),
+        # Per-month breakdown with a running balance, for verification in the UI.
+        month_rows = []
+        running = _ZERO
+        for mm in months:
+            pm = paid_by.get((cid, mm.strftime("%Y-%m")), _ZERO)
+            running += pm - rent
+            month_rows.append({
+                "month":         mm.strftime("%B %Y"),
+                "expected":      float(rent),
+                "paid":          float(pm),
+                "balance_after": float(round(running, 2)),
             })
+
+        rent_f = float(rent)
+        months_due = _math.ceil(float(amount_due) / rent_f) if rent_f > 0 else len(months)
+        results.append({
+            "contract_id":       cid,
+            "tenant":            t_name,
+            "email":             t_email or "",
+            "apartment":         apt_name,
+            "property_name":     prop_name,
+            "currency":          currency,
+            "rent":              rent_f,
+            "settled_until":     settled if (settled and str(settled) != "None") else None,
+            "first_month":       months[0].strftime("%B %Y"),
+            "last_month":        months[-1].strftime("%B %Y"),
+            "expected_total":    float(round(expected_total, 2)),
+            "paid_total":        float(round(paid_total, 2)),
+            "balance":           float(round(balance, 2)),
+            "amount_due":        float(round(amount_due, 2)),
+            "current_month_paid": float(paid_by.get((cid, cur_ym), _ZERO)),
+            "months_due":        months_due,
+            "months":            month_rows,
+        })
 
     return results
 

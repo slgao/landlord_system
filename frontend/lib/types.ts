@@ -169,10 +169,18 @@ export interface PaymentReminder {
   tenant_email: string;
   apartment_name: string;
   property_name: string;
+  currency: string;
+  rent: number;
+  settled_until: string | null;
   months_due: number;
   amount_due: number;
-  currency: string;
-  overdue_months: { month: string; expected: number; paid: number; gap: number }[];
+  balance: number;
+  expected_total: number;
+  paid_total: number;
+  current_month_paid: number;
+  first_month: string | null;
+  last_month: string | null;
+  months: { month: string; expected: number; paid: number; balance_after: number }[];
 }
 
 export interface BillingProfile {

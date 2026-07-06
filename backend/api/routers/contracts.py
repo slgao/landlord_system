@@ -210,6 +210,23 @@ class KautionReturnIn(_BM):
     returned_amount: float
 
 
+class RentSettleIn(_BM):
+    settled_until: _Opt[str] = None   # ISO date, or null/empty to clear
+
+
+@router.post("/{contract_id}/settle-rent")
+def settle_rent(contract_id: int, body: RentSettleIn):
+    """Mark a contract's rent as settled through a date (or clear it with null).
+    Used from Payment Reminders to dismiss false positives from unrecorded old
+    payments; the reminder calc then only evaluates months after this date."""
+    rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    settled = (body.settled_until or "").strip() or None
+    execute("UPDATE contracts SET rent_settled_until=? WHERE id=?", (settled, contract_id))
+    return {"contract_id": contract_id, "rent_settled_until": settled}
+
+
 @router.post("/{contract_id}/kaution-return", response_model=ContractOut)
 def mark_kaution_returned(contract_id: int, body: KautionReturnIn):
     rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))

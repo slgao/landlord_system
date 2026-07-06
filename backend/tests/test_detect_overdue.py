@@ -2,28 +2,34 @@
 
 detect_overdue issues exactly two DB queries (active contracts, then payments
 grouped per contract per month). We monkeypatch `logic.fetch` to route each
-query to canned rows, so these run without a database and pin down both the
-overdue math and the N+1 rewrite (payments come from the grouped dict, not a
-per-month query).
+query to canned rows, so these run without a database. The model is a running
+cumulative balance over a per-contract window, so the tests focus on that:
+early payments and double payments net out, current-month payments are credit,
+and `rent_settled_until` moves the window start.
 """
 from datetime import date
-from decimal import Decimal
+import calendar
 
 import logic
 
 
-def _checked_months(months_back):
-    """Replicate detect_overdue's month window (oldest first, current month
-    excluded) so tests can target specific months deterministically."""
-    today = date.today()
-    out = []
-    for i in range(months_back, 0, -1):
-        m, y = today.month - i, today.year
-        while m <= 0:
-            m += 12
-            y -= 1
-        out.append(date(y, m, 1))
-    return out
+def _add_months(first, delta):
+    idx = first.year * 12 + (first.month - 1) + delta
+    y, m = divmod(idx, 12)
+    return date(y, m + 1, 1)
+
+
+def _cur_first():
+    t = date.today()
+    return date(t.year, t.month, 1)
+
+
+def _ym(first):
+    return first.strftime("%Y-%m")
+
+
+def _month_end(first):
+    return first.replace(day=calendar.monthrange(first.year, first.month)[1])
 
 
 def _install_fetch(monkeypatch, contracts, payments):
@@ -37,58 +43,84 @@ def _install_fetch(monkeypatch, contracts, payments):
     monkeypatch.setattr(logic, "fetch", fake_fetch)
 
 
-# Contract row shape returned by the active-contracts query:
-# (id, tenant, email, apartment, rent, start_date, end_date, property, currency)
-def _contract(rent="700", start="2020-01-01", end=None, currency="EUR"):
-    return (1, "Alice", "a@x.de", "Apt 1", Decimal(rent), start, end, "Haus A", currency)
+# Active-contracts row shape:
+# (id, tenant, email, apartment, rent, start, end, property, currency, settled)
+def _contract(rent=700, start="2020-01-01", end=None, settled=None):
+    return (1, "Alice", "a@x.de", "Apt 1", rent, start, end, "Haus A", "EUR", settled)
 
 
-def test_all_months_unpaid(monkeypatch):
-    _install_fetch(monkeypatch, [_contract()], [])   # no payments at all
-    res = logic.detect_overdue(months_back=3)
+def test_all_months_unpaid_flagged(monkeypatch):
+    _install_fetch(monkeypatch, [_contract()], [])          # no payments
+    res = logic.detect_overdue(default_months_back=3)
     assert len(res) == 1
     r = res[0]
-    assert r["tenant"] == "Alice"
-    assert r["property_name"] == "Haus A"      # enriched, no extra query
-    assert r["currency"] == "EUR"
-    assert len(r["overdue_months"]) == 3
-    assert r["total_due"] == 2100.0            # 700 × 3
-    assert all(m["gap"] == 700.0 and m["paid"] == 0.0 for m in r["overdue_months"])
+    assert r["property_name"] == "Haus A" and r["currency"] == "EUR"
+    assert r["expected_total"] == 2100.0                     # 3 × 700
+    assert r["paid_total"] == 0.0
+    assert r["amount_due"] == 2100.0
+    assert r["months_due"] == 3
+    assert len(r["months"]) == 3
 
 
-def test_fully_paid_month_excluded(monkeypatch):
-    months = _checked_months(3)
-    paid_ym = months[-1].strftime("%Y-%m")     # newest checked month paid in full
-    payments = [(1, paid_ym, Decimal("700"))]
+def test_double_payment_covers_previous_month(monkeypatch):
+    # 2-month window; nothing in the first month, double rent in the second.
+    prev1 = _add_months(_cur_first(), -1)
+    payments = [(1, _ym(prev1), 1400)]                       # covers both months
     _install_fetch(monkeypatch, [_contract()], payments)
-    res = logic.detect_overdue(months_back=3)
-    r = res[0]
-    assert len(r["overdue_months"]) == 2
-    assert months[-1].strftime("%B %Y") not in [m["month"] for m in r["overdue_months"]]
-    assert r["total_due"] == 1400.0
+    assert logic.detect_overdue(default_months_back=2) == []  # nets to zero → not flagged
 
 
-def test_partial_payment_leaves_gap(monkeypatch):
-    ym = _checked_months(1)[0].strftime("%Y-%m")
-    payments = [(1, ym, Decimal("300"))]
+def test_early_payment_before_month_counts(monkeypatch):
+    # Both months' rent paid up front in the earlier month.
+    prev2 = _add_months(_cur_first(), -2)
+    payments = [(1, _ym(prev2), 1400)]
     _install_fetch(monkeypatch, [_contract()], payments)
-    res = logic.detect_overdue(months_back=1)
-    m = res[0]["overdue_months"][0]
-    assert m["paid"] == 300.0
-    assert m["gap"] == 400.0                    # 700 − 300
+    assert logic.detect_overdue(default_months_back=2) == []
 
 
-def test_fully_paid_contract_absent(monkeypatch):
-    payments = [(1, mo.strftime("%Y-%m"), Decimal("700")) for mo in _checked_months(3)]
+def test_current_month_payment_is_credit(monkeypatch):
+    # Two complete months unpaid, but a catch-up payment lands this month.
+    cur = _cur_first()
+    payments = [(1, _ym(cur), 1400)]
     _install_fetch(monkeypatch, [_contract()], payments)
-    assert logic.detect_overdue(months_back=3) == []
+    assert logic.detect_overdue(default_months_back=2) == []
 
 
-def test_contract_starting_in_future_skipped(monkeypatch):
+def test_partial_payment_leaves_balance(monkeypatch):
+    prev1 = _add_months(_cur_first(), -1)
+    payments = [(1, _ym(prev1), 700)]                        # only one of two months
+    _install_fetch(monkeypatch, [_contract()], payments)
+    r = logic.detect_overdue(default_months_back=2)[0]
+    assert r["expected_total"] == 1400.0
+    assert r["paid_total"] == 700.0
+    assert r["amount_due"] == 700.0
+    assert r["months_due"] == 1
+
+
+def test_settled_until_clears_everything(monkeypatch):
+    # Settle through the last complete month → window becomes empty → not flagged.
+    end_first = _add_months(_cur_first(), -1)
+    settled = str(_month_end(end_first))
+    _install_fetch(monkeypatch, [_contract(settled=settled)], [])
+    assert logic.detect_overdue(default_months_back=3) == []
+
+
+def test_settled_until_partial_window(monkeypatch):
+    # Settle through 2 months ago → only the most recent complete month is left.
+    prev2 = _add_months(_cur_first(), -2)
+    settled = str(_month_end(prev2))
+    _install_fetch(monkeypatch, [_contract(settled=settled)], [])
+    r = logic.detect_overdue(default_months_back=3)[0]
+    assert len(r["months"]) == 1
+    assert r["amount_due"] == 700.0
+    assert r["first_month"] == r["last_month"]
+
+
+def test_future_contract_not_flagged(monkeypatch):
     _install_fetch(monkeypatch, [_contract(start="2999-01-01")], [])
-    assert logic.detect_overdue(months_back=3) == []
+    assert logic.detect_overdue(default_months_back=3) == []
 
 
-def test_terminated_end_date_before_window_skipped(monkeypatch):
+def test_ended_before_window_not_flagged(monkeypatch):
     _install_fetch(monkeypatch, [_contract(end="2000-01-01")], [])
-    assert logic.detect_overdue(months_back=3) == []
+    assert logic.detect_overdue(default_months_back=3) == []

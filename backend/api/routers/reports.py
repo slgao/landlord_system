@@ -285,19 +285,27 @@ def mahnung_pdf(body: MahnungRequest):
 @router.get("/payment-reminders")
 def payment_reminders():
     from logic import detect_overdue
-    # detect_overdue already includes property_name and currency, so no
-    # per-contract enrichment query is needed here.
+    # detect_overdue returns a cumulative-balance view already enriched with the
+    # property name, currency and per-month breakdown — no extra queries here.
     return [{
-        "contract_id":    item["contract_id"],
-        "tenant_name":    item["tenant"],
-        "tenant_email":   item.get("email", ""),
-        "apartment_name": item["apartment"],
-        "property_name":  item.get("property_name", ""),
-        "months_due":     len(item["overdue_months"]),
-        "amount_due":     round(float(item["total_due"]), 2),
-        "currency":       item.get("currency", "EUR"),
-        "overdue_months": item["overdue_months"],
-    } for item in detect_overdue(months_back=12)]
+        "contract_id":        item["contract_id"],
+        "tenant_name":        item["tenant"],
+        "tenant_email":       item.get("email", ""),
+        "apartment_name":     item["apartment"],
+        "property_name":      item.get("property_name", ""),
+        "currency":           item.get("currency", "EUR"),
+        "rent":               item["rent"],
+        "settled_until":      item.get("settled_until"),
+        "months_due":         item["months_due"],
+        "amount_due":         item["amount_due"],
+        "balance":            item["balance"],
+        "expected_total":     item["expected_total"],
+        "paid_total":         item["paid_total"],
+        "current_month_paid": item["current_month_paid"],
+        "first_month":        item.get("first_month"),
+        "last_month":         item.get("last_month"),
+        "months":             item["months"],
+    } for item in detect_overdue(default_months_back=12)]
 
 
 class ReminderIn(BaseModel):

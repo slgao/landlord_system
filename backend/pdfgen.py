@@ -843,8 +843,8 @@ def invoice_pdf(
 
     # ── Zusätzliche Positionen ─────────────────────────────────────
     if extra:
-        # `extra` may arrive as a bare list of items (Next.js frontend) or as a
-        # dict {"items": [...]} (Streamlit). Normalise to a list either way.
+        # `extra` may arrive as a bare list of items or as a dict
+        # {"items": [...]} (legacy). Normalise to a list either way.
         _extra_items = extra.get("items", []) if isinstance(extra, dict) else extra
         items = [i for i in (_extra_items or []) if i.get("description")]
         if items:

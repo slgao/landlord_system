@@ -80,7 +80,7 @@ else
     sleep 4
 fi
 
-# ── Join compose network so api/streamlit containers can reach landlord-pg ────
+# ── Join compose network so the api container can reach landlord-pg ───────────
 COMPOSE_NETWORK="landlord_system_default"
 if docker network ls --format '{{.Name}}' | grep -q "^${COMPOSE_NETWORK}$"; then
     if ! docker inspect "$CONTAINER" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' | grep -q "$COMPOSE_NETWORK"; then
@@ -106,6 +106,6 @@ echo ""
 echo "  source venv/bin/activate"
 echo "  honcho start"
 echo ""
-echo "  Streamlit → http://localhost:8501"
+echo "  Frontend  → http://localhost:3000"
 echo "  FastAPI   → http://localhost:8000"
 echo ""

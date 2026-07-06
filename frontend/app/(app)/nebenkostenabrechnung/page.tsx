@@ -108,7 +108,7 @@ const defBk = (tenants = 1) => ({
 });
 
 // Normalise a stored profile value (array OR legacy single object, with possible
-// Streamlit field aliases) into an array of billing entries matching the default.
+// legacy field aliases) into an array of billing entries matching the default.
 function billingsFrom(stored: any, def: () => any, hasMeters: boolean, heiz: boolean) {
   const arr = Array.isArray(stored) ? stored : (stored ? [stored] : []);
   return arr.map((s: any) => {
@@ -344,7 +344,7 @@ export default function NebenkostenabrechnungPage() {
 
   // Auto person count from the backend: co-tenants on the contract, or — for a
   // WG where each room is a separate contract — the number of active tenants
-  // sharing the same flat. Mirrors the Streamlit logic.
+  // sharing the same flat.
   const { data: occupancy } = useQuery<{ auto_count: number; co_tenant_count: number }>({
     queryKey: ["nk-occupancy", selected?.id],
     queryFn: () => api.get(`/api/contracts/${selected!.id}/occupancy`).then((r) => r.data),
@@ -617,7 +617,7 @@ export default function NebenkostenabrechnungPage() {
     setSec(d.warmwater, d.useWarmwater, setWarmB, defWarm, setUseWarmwater, true, false);
     setSec(d.heizung, d.useHeizung, setHeizB, defHeiz, setUseHeizung, true, true);
 
-    // ── Betriebskosten — list (handles legacy single object + Streamlit ints) ──
+    // ── Betriebskosten — list (handles legacy single object + int aliases) ──
     if (d.bk) {
       const arr = Array.isArray(d.bk) ? d.bk : [d.bk];
       const mapped = arr.map((b: any) => {

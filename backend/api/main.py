@@ -21,7 +21,6 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:8501",   # Streamlit
         "http://localhost:3000",   # Next.js dev
     ],
     allow_credentials=True,

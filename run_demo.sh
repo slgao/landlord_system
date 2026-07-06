@@ -37,15 +37,15 @@ if ! grep -qE "^DATABASE_URL=.+" "$DEMO_ENV"; then
     exit 1
 fi
 
-# Pick up python / streamlit from venv if present (use absolute paths so they
+# Pick up python / honcho from venv if present (use absolute paths so they
 # stay valid after we cd into backend/).
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$ROOT/venv/bin/python" ]; then
     PYTHON="$ROOT/venv/bin/python"
-    STREAMLIT="$ROOT/venv/bin/streamlit"
+    HONCHO="$ROOT/venv/bin/honcho"
 else
     PYTHON="${PYTHON:-python3}"
-    STREAMLIT="${STREAMLIT:-streamlit}"
+    HONCHO="${HONCHO:-honcho}"
 fi
 
 # ── Export demo DATABASE_URL (overrides any production URL in the shell) ──────
@@ -58,19 +58,20 @@ set +a
 echo "Demo DB: $DATABASE_URL"
 echo ""
 
-# Python sources live in backend/; run from there so imports and relative
-# pdf/ paths resolve correctly.
-cd "$ROOT/backend"
-
-# ── Seed (skipped automatically if DB already has data) ───────────────────────
-
+# Seed from backend/ so imports and relative pdf/ paths resolve correctly.
 # shellcheck disable=SC2086
-"$PYTHON" seed_demo.py $SEED_ARGS
+( cd "$ROOT/backend" && "$PYTHON" seed_demo.py $SEED_ARGS )
 
 echo ""
 
 # ── Launch ────────────────────────────────────────────────────────────────────
 
-echo "Starting demo app — press Ctrl+C to stop."
+echo "Starting demo app (API + frontend) — press Ctrl+C to stop."
 echo ""
-"$STREAMLIT" run app.py
+echo "  Frontend  → http://localhost:3000"
+echo "  FastAPI   → http://localhost:8000"
+echo ""
+# honcho reads the Procfile (api + frontend). Pass the demo env explicitly so it
+# wins over any .env in the project root.
+cd "$ROOT"
+"$HONCHO" -e "$DEMO_ENV" start

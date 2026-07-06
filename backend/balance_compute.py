@@ -1,8 +1,7 @@
 """Balance-sheet computations — no UI framework required.
 
-These functions were extracted from the (removed) Streamlit page module so the
-FastAPI reports router can compute the balance sheet without pulling in
-Streamlit/pandas. Pure DB reads + arithmetic.
+Used by the FastAPI reports router to compute the balance sheet.
+Pure DB reads + arithmetic — no UI framework or pandas.
 """
 import calendar
 from datetime import date

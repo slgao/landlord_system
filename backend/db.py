@@ -64,8 +64,8 @@ def _normalize(rows):
 _migration_done = False
 
 def migrate_to_head() -> None:
-    """Run `alembic upgrade head` once per process. Re-running it on every
-    Streamlit rerun causes KeyError in Alembic's EnvironmentContext cleanup."""
+    """Run `alembic upgrade head` once per process. Guarded by a module-level
+    flag so repeated calls in the same process are no-ops."""
     global _migration_done
     if _migration_done:
         return

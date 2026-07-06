@@ -256,8 +256,7 @@ def mahnung_pdf(body: MahnungRequest):
     from db import get_tenant_gender
     gender = get_tenant_gender(body.tenant_name)
     # Resolve the full property address (street + postcode + city) from the
-    # contract, mirroring the Streamlit flow. A non-empty body.address is
-    # treated as a manual override.
+    # contract. A non-empty body.address is treated as a manual override.
     address = (body.address or "").strip()
     co_tenants = None
     if body.contract_id:
@@ -268,7 +267,7 @@ def mahnung_pdf(body: MahnungRequest):
                 "JOIN properties p ON p.id = a.property_id WHERE c.id = ?",
                 (body.contract_id,))
             address = (addr_row[0][0] if addr_row and addr_row[0][0] else "") or ""
-        # Fetch co-tenants (in_contract only) to mirror the Streamlit flow
+        # Fetch co-tenants (in_contract only) for the salutation / recipients
         rows = fetch("SELECT name, gender FROM co_tenants WHERE contract_id=? AND in_contract=1 ORDER BY id",
                      (body.contract_id,))
         co_tenants = [{"name": r[0], "gender": r[1]} for r in rows] or None

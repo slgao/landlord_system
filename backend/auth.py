@@ -1,6 +1,5 @@
 """
 Auth module supporting:
-- Streamlit password gate
 - FastAPI HTTP Basic (backward compat)
 - FastAPI JWT Bearer (Next.js)
 

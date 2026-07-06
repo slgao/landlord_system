@@ -65,7 +65,7 @@ severity. Checkboxes track progress.
 - Decimal→float JSON serialization handled (balance-sheet `_f()`, explicit
   `float()` in kaution-overview / payments).
 - PDF endpoints read file bytes correctly; billing-profile loader handles both
-  the Streamlit and Next.js profile schemas.
+  both the legacy and current billing-profile schemas.
 - TanStack Query v5 usage correct (no `onSuccess` on `useQuery`).
 - FK constraints correct (RESTRICT on contracts→tenants/apartments, CASCADE on
   child rows); contract delete is safe.

@@ -76,6 +76,17 @@ class RelevanceIn(BaseModel):
     tax_relevant: bool
 
 
+# Every computed/derived figure in the report can be manually overridden per
+# (property, year). Manual always wins; the computed value stays visible.
+OVERRIDE_FIELDS = {
+    "income_total",      # total income (payments sum or contract estimate)
+    "income_kaltmiete",  # Kaltmiete line; Umlagen derive as total - Kaltmiete
+    "afa",               # building depreciation
+    "schuldzinsen",      # mortgage interest
+    "recurring_total",   # sum of recurring flat costs
+}
+
+
 def _clean(v):
     return None if v is None or v == "None" else v
 
@@ -254,6 +265,45 @@ def expense_categories():
     return EXPENSE_CATEGORIES
 
 
+@router.get("/expenses/inventory/pdf")
+def expense_inventory_pdf(year: int, property_id: int | None = None):
+    """Belegliste: all bills PAID in `year` (by expense_date, full amounts —
+    §82b spreading is noted per row, not applied), grouped per property with
+    subtotals and a grand total."""
+    from pdfgen import generate_expense_inventory
+    rows = fetch("""
+        SELECT p.name, a.name, e.expense_date, e.amount, e.category,
+               e.vendor, e.note, e.distribute_years, e.source_file, e.property_id
+        FROM expenses e
+        JOIN properties p ON p.id = e.property_id
+        LEFT JOIN apartments a ON a.id = e.apartment_id
+        WHERE substr(e.expense_date,1,4) = ?
+        ORDER BY p.name, e.expense_date
+    """, (str(year),))
+    groups: dict[str, dict] = {}
+    grand_total = 0.0
+    for pname, aname, edate, amount, cat, vendor, note, dyears, src, pid in rows:
+        if property_id is not None and pid != property_id:
+            continue
+        amount = float(amount)
+        dyears = int(dyears or 1)
+        g = groups.setdefault(pname, {"property_name": pname, "rows": [], "subtotal": 0.0})
+        g["rows"].append({
+            "expense_date": edate, "amount": amount, "category": cat,
+            "vendor": _clean(vendor), "apartment_name": _clean(aname),
+            "source_file": _clean(src), "distribute_years": dyears,
+            "share_this_year": round(amount / dyears, 2),
+        })
+        g["subtotal"] = round(g["subtotal"] + amount, 2)
+        grand_total = round(grand_total + amount, 2)
+    if not groups:
+        raise HTTPException(status_code=404, detail=f"No expenses recorded for {year}")
+    pdf_bytes = generate_expense_inventory(year, list(groups.values()), grand_total)
+    return Response(content=pdf_bytes, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="Belegliste_{year}.pdf"',
+    })
+
+
 # ── Kaltmiete / NK split per contract ────────────────────────────────────────
 
 @router.get("/nk-splits")
@@ -294,6 +344,9 @@ def set_nk_split(contract_id: int, body: NkSplitIn):
 
 @router.put("/overrides/{property_id}/{tax_year}")
 def set_override(property_id: int, tax_year: int, body: OverrideIn):
+    if body.field not in OVERRIDE_FIELDS:
+        raise HTTPException(status_code=422,
+                            detail=f"Unknown override field; allowed: {sorted(OVERRIDE_FIELDS)}")
     if not fetch("SELECT id FROM properties WHERE id=?", (property_id,)):
         raise HTTPException(status_code=404, detail="Property not found")
     execute("DELETE FROM tax_year_overrides WHERE property_id=? AND tax_year=? AND field=?",
@@ -384,14 +437,27 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
         # Kaltmiete/Umlagen split (separate Anlage V lines; the sum is
         # unchanged). Umlagen come from the contractual monthly NK
         # prepayments; only trustworthy when every active contract has one.
-        kaltmiete = round(income_final - umlagen_total, 2) if nk_known else None
+        # A manual income_kaltmiete override wins over the derivation.
+        ov_kalt = overrides.get((pid, "income_kaltmiete"))
+        if ov_kalt is not None:
+            kaltmiete = ov_kalt[0]
+            umlagen_total = round(income_final - kaltmiete, 2)
+            nk_known, split_source = True, "override"
+        elif nk_known:
+            kaltmiete = round(income_final - umlagen_total, 2)
+            split_source = "contracts"
+        else:
+            kaltmiete, split_source = None, None
 
-        # AfA
+        # AfA — manual override wins over the profile computation.
         p = profiles.get(pid)
-        afa = {"afa": 0.0, "complete": False}
+        afa = {"afa": 0.0, "complete": False, "source": "incomplete"}
         if p and all(v is not None for v in (p[1], p[2], p[3], p[4])) and _clean(p[1]):
             afa = {**tax_logic.afa_for_year(float(p[2]), float(p[3]), float(p[4]), p[1], year),
-                   "complete": True}
+                   "complete": True, "source": "computed"}
+        ov_afa = overrides.get((pid, "afa"))
+        if ov_afa is not None:
+            afa = {**afa, "computed_afa": afa["afa"], "afa": ov_afa[0], "source": "override"}
 
         # Schuldzinsen — manual expense rows win over the annuity computation.
         zins_rows = [e for e in expenses.get(pid, []) if e["category"] == "Schuldzinsen"]
@@ -401,7 +467,10 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
                 m["principal"], m["interest_rate_pct"], m["tilgung_rate_pct"],
                 m["start_date"], year)
             computed_rows.append({"label": m["label"] or f"Loan #{m['id']}", **b})
-        if zins_rows:
+        ov_zins = overrides.get((pid, "schuldzinsen"))
+        if ov_zins is not None:
+            zins_final, zins_source = ov_zins[0], "override"
+        elif zins_rows:
             zins_final = round(sum(tax_logic.expense_share_for_year(
                 e["expense_date"], e["amount"], e["distribute_years"], year)
                 for e in zins_rows), 2)
@@ -423,6 +492,12 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
             if deductible:
                 recurring_total += total
         recurring_total = round(recurring_total, 2)
+        ov_rec = overrides.get((pid, "recurring_total"))
+        recurring_computed = recurring_total
+        if ov_rec is not None:
+            recurring_total, recurring_source = ov_rec[0], "override"
+        else:
+            recurring_source = "computed"
 
         # One-off expenses (Schuldzinsen rows live in the Schuldzinsen block)
         one_off, one_off_total = [], 0.0
@@ -446,12 +521,15 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
                 "nk_known": nk_known,
                 "umlagen": umlagen_total if nk_known else None,
                 "kaltmiete": kaltmiete,
+                "split_source": split_source,
             },
             "werbungskosten": {
                 "afa": afa,
                 "schuldzinsen": {"final": zins_final, "source": zins_source,
                                  "computed": computed_rows},
                 "recurring": recurring, "recurring_total": recurring_total,
+                "recurring_computed": recurring_computed,
+                "recurring_source": recurring_source,
                 "one_off": one_off, "one_off_total": one_off_total,
                 "total": wk_total,
             },

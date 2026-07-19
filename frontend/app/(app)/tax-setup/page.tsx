@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import { ConfirmButton } from "@/components/confirm-button";
 import { toast } from "sonner";
-import { Plus, Save, Trash2 } from "lucide-react";
+import { Plus, Save, Trash2, FileDown } from "lucide-react";
 
 const eur = (v: number) =>
   v.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
@@ -286,9 +286,29 @@ const EMPTY_EXPENSE = {
   vendor: "", note: "", distribute_years: "1",
 };
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
   const qc = useQueryClient();
   const [f, setF] = useState(EMPTY_EXPENSE);
+  const [invYear, setInvYear] = useState(String(new Date().getFullYear() - 1));
+
+  async function downloadInventory() {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API}/api/tax/expenses/inventory/pdf?year=${invYear}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      toast.error(res.status === 404 ? `No expenses recorded for ${invYear}` : "PDF failed");
+      return;
+    }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `Belegliste_${invYear}.pdf`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
 
   const { data: categories = [] } = useQuery<string[]>({
     queryKey: ["tax-expense-categories"],
@@ -327,10 +347,21 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
-        <p className="font-medium">One-off expenses</p>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="font-medium">One-off expenses</p>
+          <div className="flex items-center gap-1.5">
+            <Input type="number" className="h-8 w-20 font-mono" value={invYear}
+              onChange={(e) => setInvYear(e.target.value)} />
+            <Button size="sm" variant="outline" onClick={downloadInventory}>
+              <FileDown className="size-4 mr-1" /> Belegliste PDF
+            </Button>
+          </div>
+        </div>
         <p className="text-xs text-muted-foreground">
           Repairs, insurance, yearly mortgage interest (category Schuldzinsen), etc.
           Large repairs can be spread over 2–5 years (§82b EStDV) via &quot;Spread years&quot;.
+          The Belegliste PDF lists every bill of a year per property with subtotals and a
+          grand total across all flats.
         </p>
         {expenses.length > 0 && (
           <Table>

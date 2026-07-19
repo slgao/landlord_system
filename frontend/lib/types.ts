@@ -272,16 +272,19 @@ export interface TaxReportProperty {
     nk_known: boolean;
     umlagen: number | null;
     kaltmiete: number | null;
+    split_source: "contracts" | "override" | null;
   };
   werbungskosten: {
-    afa: { afa: number; complete: boolean; base?: number; annual?: number; months?: number };
+    afa: { afa: number; complete: boolean; source: "computed" | "override" | "incomplete"; computed_afa?: number; base?: number; annual?: number; months?: number };
     schuldzinsen: {
       final: number;
-      source: "manual" | "computed" | "none";
+      source: "manual" | "computed" | "none" | "override";
       computed: { label: string; interest: number; tilgung: number; balance_end: number; monthly_payment: number }[];
     };
     recurring: { cost_type: string; monthly: number; months: number; total: number; deductible: boolean }[];
     recurring_total: number;
+    recurring_computed: number;
+    recurring_source: "computed" | "override";
     one_off: (TaxExpense & { share_this_year: number })[];
     one_off_total: number;
     total: number;

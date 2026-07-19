@@ -169,6 +169,18 @@ export default function TaxReportPage() {
                             </TableBody>
                           </Table>
                         )}
+                        {b.income.nk_known && b.income.kaltmiete !== null ? (
+                          <div className="text-xs space-y-0.5">
+                            <div className="flex justify-between"><span className="text-muted-foreground">Mieteinnahmen (Kaltmiete)</span><span className="font-mono">{eur(b.income.kaltmiete)}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Umlagen (NK-Vorauszahlungen)</span><span className="font-mono">{eur(b.income.umlagen!)}</span></div>
+                            <div className="flex justify-between font-medium"><span>Einnahmen gesamt</span><span className="font-mono">{eur(b.income.final)}</span></div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-amber-500">
+                            Kaltmiete/Umlagen split unavailable — set the NK-Vorauszahlung for
+                            every contract of this property in Tax Setup.
+                          </p>
+                        )}
                         {b.income.source === "payments" ? (
                           <p className="text-xs text-muted-foreground">
                             {b.income.payments_count} recorded payments · {eur(b.income.payments_total)}
@@ -228,7 +240,7 @@ export default function TaxReportPage() {
                         {wk.one_off.map((e) => (
                           <div key={e.id} className="flex justify-between py-1">
                             <span className="text-muted-foreground">
-                              {e.category}{e.vendor ? ` — ${e.vendor}` : ""} <span className="text-xs">({e.expense_date}{e.distribute_years > 1 ? ` · §82b /${e.distribute_years}y` : ""})</span>
+                              {e.category}{e.vendor ? ` — ${e.vendor}` : ""} <span className="text-xs">({e.expense_date}{e.distribute_years > 1 ? ` · §82b /${e.distribute_years}y` : ""}{e.source_file ? ` · ${e.source_file.split("/").pop()}` : ""})</span>
                             </span>
                             <span className="font-mono">{eur(e.share_this_year)}</span>
                           </div>

@@ -242,6 +242,20 @@ export interface TaxExpense {
   note: string | null;
   deductible: number;
   distribute_years: number;
+  source_file: string | null;
+}
+
+export interface NkSplit {
+  contract_id: number;
+  tenant_name: string;
+  apartment_name: string;
+  property_id: number;
+  property_name: string;
+  rent: number;
+  nebenkosten_vorauszahlung: number | null;
+  kaltmiete: number | null;
+  start_date: string;
+  end_date: string | null;
 }
 
 export interface TaxReportProperty {
@@ -255,6 +269,9 @@ export interface TaxReportProperty {
     estimate_total: number;
     estimate_rows: { tenant: string; months: number; rent: number; total: number }[];
     override_note: string | null;
+    nk_known: boolean;
+    umlagen: number | null;
+    kaltmiete: number | null;
   };
   werbungskosten: {
     afa: { afa: number; complete: boolean; base?: number; annual?: number; months?: number };

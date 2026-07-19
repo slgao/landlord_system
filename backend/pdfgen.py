@@ -1469,9 +1469,20 @@ def generate_tax_report(year, blocks):
         story.append(Spacer(1, 6))
 
         rows = [[Paragraph("Position", hdr), Paragraph("Hinweis", hdr), Paragraph(f"Betrag {year}", hdr_r)]]
-        rows.append([_cell("Einnahmen (Miete inkl. Umlagen)", bold=True),
-                     _cell(SOURCE_LABEL.get(b["income"]["source"], ""), size=8),
-                     _eur(b["income"]["final"], bold=True)])
+        inc = b["income"]
+        if inc.get("nk_known") and inc.get("kaltmiete") is not None:
+            rows.append([_cell("Mieteinnahmen (Kaltmiete)", bold=True),
+                         _cell(SOURCE_LABEL.get(inc["source"], ""), size=8),
+                         _eur(inc["kaltmiete"], bold=True)])
+            rows.append([_cell("Umlagen (NK-Vorauszahlungen)", bold=True),
+                         _cell("aus Verträgen", size=8),
+                         _eur(inc["umlagen"], bold=True)])
+            rows.append([_cell("Einnahmen gesamt"), _cell(""), _eur(inc["final"])])
+        else:
+            rows.append([_cell("Einnahmen (Miete inkl. Umlagen)", bold=True),
+                         _cell(SOURCE_LABEL.get(inc["source"], "") +
+                               " · NK-Anteil je Vertrag nicht gepflegt", size=8),
+                         _eur(inc["final"], bold=True)])
         rows.append([_cell("AfA (Gebäude-Abschreibung)"),
                      _cell("" if wk["afa"].get("complete") else "Kaufdaten unvollständig", size=8),
                      _eur(wk["afa"]["afa"])])
@@ -1487,6 +1498,8 @@ def generate_tax_report(year, blocks):
             note = e["expense_date"]
             if e["distribute_years"] > 1:
                 note += f" · §82b über {e['distribute_years']} J."
+            if e.get("source_file"):
+                note += f" · Beleg: {Path(e['source_file']).name}"
             rows.append([_cell(f"{e['category']}" + (f" — {e['vendor']}" if e["vendor"] else "")),
                          _cell(note, size=8), _eur(e["share_this_year"])])
         rows.append([_cell("Summe Werbungskosten", bold=True), _cell(""),

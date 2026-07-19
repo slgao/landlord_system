@@ -112,6 +112,13 @@ def test_expense_spread_three_years():
         assert expense_share_for_year("2025-06-01", 6_000, 3, y) == expected
 
 
+def test_expense_spread_remainder_lands_in_final_year():
+    # 1000/3: 333.33 + 333.33 + 333.34 — shares must sum to the invoice amount.
+    shares = [expense_share_for_year("2025-06-01", 1_000, 3, y) for y in (2025, 2026, 2027)]
+    assert shares == [333.33, 333.33, 333.34]
+    assert sum(shares) == 1_000.0
+
+
 # ── Contract months (gap-year estimate) ──────────────────────────────────────
 
 def test_contract_months():

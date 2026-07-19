@@ -144,7 +144,7 @@ export default function TaxReportPage() {
 
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="flex items-center gap-1">
-          {[currentYear - 2, currentYear - 1, currentYear].map((y) => (
+          {[currentYear - 3, currentYear - 2, currentYear - 1, currentYear].map((y) => (
             <Button key={y} size="sm" variant={y === year ? "default" : "outline"}
               onClick={() => { setYear(y); setExpanded(null); }}>
               {y}

@@ -13,7 +13,7 @@ from auth import (
 from api.routers import (
     properties, apartments, tenants, contracts, payments,
     dashboard, flat_costs, meters, config, reports,
-    co_tenants, kaution, billing_profiles,
+    co_tenants, kaution, billing_profiles, rag, tax,
 )
 
 
@@ -59,6 +59,8 @@ app.include_router(co_tenants.router,       prefix="/api", dependencies=_auth)
 app.include_router(kaution.router,          prefix="/api", dependencies=_auth)
 app.include_router(kaution.payments_router, prefix="/api", dependencies=_auth)
 app.include_router(billing_profiles.router, prefix="/api", dependencies=_auth)
+app.include_router(rag.router,              prefix="/api", dependencies=_auth)
+app.include_router(tax.router,              prefix="/api", dependencies=_auth)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────

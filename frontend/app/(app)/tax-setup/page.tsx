@@ -26,6 +26,19 @@ const eur = (v: number) =>
 
 function ProfileRow({ p }: { p: TaxProfile }) {
   const qc = useQueryClient();
+  const toggleRelevance = useMutation({
+    mutationFn: () => api.put(`/api/tax/properties/${p.property_id}/relevance`, {
+      tax_relevant: !p.tax_relevant,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tax-profiles"] });
+      qc.invalidateQueries({ queryKey: ["tax-report"] });
+      toast.success(p.tax_relevant
+        ? `${p.property_name} excluded from tax report`
+        : `${p.property_name} included in tax report`);
+    },
+    onError: () => toast.error("Failed to update"),
+  });
   const [f, setF] = useState({
     purchase_date: p.purchase_date ?? "",
     purchase_price: p.purchase_price != null ? String(p.purchase_price) : "",
@@ -55,7 +68,21 @@ function ProfileRow({ p }: { p: TaxProfile }) {
       : null;
 
   return (
-    <TableRow>
+    <TableRow className={p.tax_relevant ? "" : "opacity-45"}>
+      <TableCell>
+        <Button
+          size="sm"
+          variant={p.tax_relevant ? "default" : "outline"}
+          className="h-7 px-2 text-xs"
+          disabled={toggleRelevance.isPending}
+          onClick={() => toggleRelevance.mutate()}
+          title={p.tax_relevant
+            ? "Included in the tax report — click to exclude (e.g. not your property)"
+            : "Excluded from the tax report — click to include"}
+        >
+          {p.tax_relevant ? "Declared" : "Excluded"}
+        </Button>
+      </TableCell>
       <TableCell className="font-medium">{p.property_name}</TableCell>
       <TableCell><Input type="date" className="h-8 w-36" value={f.purchase_date}
         onChange={(e) => setF({ ...f, purchase_date: e.target.value })} /></TableCell>
@@ -315,9 +342,12 @@ export default function TaxSetupPage() {
                 AfA base = purchase price × building share (land is not depreciable).
                 Rate: 2&nbsp;% (built 1925–2022) · 2.5&nbsp;% (pre-1925) · 3&nbsp;% (2023+).
                 Inherited/gifted properties continue the predecessor&apos;s AfA — note it in the report.
+                Use <span className="font-medium">Tax scope</span> to exclude properties you
+                don&apos;t own (managed for others) from the tax report entirely.
               </p>
               <Table>
                 <TableHeader><TableRow>
+                  <TableHead>Tax scope</TableHead>
                   <TableHead>Property</TableHead><TableHead>Purchase date</TableHead>
                   <TableHead>Price</TableHead><TableHead>Building %</TableHead>
                   <TableHead>AfA %</TableHead>

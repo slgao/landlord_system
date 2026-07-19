@@ -66,6 +66,10 @@ class OverrideIn(BaseModel):
     note: Optional[str] = None
 
 
+class RelevanceIn(BaseModel):
+    tax_relevant: bool
+
+
 def _clean(v):
     return None if v is None or v == "None" else v
 
@@ -82,7 +86,7 @@ def _mortgage_row(r) -> dict:
 
 @router.get("/profiles")
 def list_profiles():
-    props = fetch("SELECT id, name FROM properties ORDER BY name")
+    props = fetch("SELECT id, name, COALESCE(tax_relevant,1) FROM properties ORDER BY name")
     profiles = {r[0]: r for r in fetch(
         "SELECT property_id, purchase_date, purchase_price, building_share_pct,"
         "       afa_rate_pct, notes FROM property_tax_profiles")}
@@ -92,10 +96,11 @@ def list_profiles():
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
 
     out = []
-    for pid, name in props:
+    for pid, name, relevant in props:
         p = profiles.get(pid)
         entry = {
             "property_id": pid, "property_name": name,
+            "tax_relevant": bool(relevant),
             "purchase_date": _clean(p[1]) if p else None,
             "purchase_price": float(p[2]) if p and p[2] is not None else None,
             "building_share_pct": float(p[3]) if p and p[3] is not None else None,
@@ -129,6 +134,18 @@ def upsert_profile(property_id: int, body: TaxProfileIn):
     else:
         insert("property_tax_profiles", (property_id, *vals))
     return {"property_id": property_id, **body.model_dump()}
+
+
+@router.put("/properties/{property_id}/relevance")
+def set_tax_relevance(property_id: int, body: RelevanceIn):
+    """Include/exclude a property from the tax report (e.g. managed for
+    someone else). Separate from the profile upsert so a toggle can never
+    clobber purchase data."""
+    if not fetch("SELECT id FROM properties WHERE id=?", (property_id,)):
+        raise HTTPException(status_code=404, detail="Property not found")
+    execute("UPDATE properties SET tax_relevant=? WHERE id=?",
+            (1 if body.tax_relevant else 0, property_id))
+    return {"property_id": property_id, "tax_relevant": body.tax_relevant}
 
 
 @router.post("/mortgages", status_code=201)
@@ -245,8 +262,12 @@ def set_override(property_id: int, tax_year: int, body: OverrideIn):
 
 # ── The report ───────────────────────────────────────────────────────────────
 
-def build_report(year: int) -> list[dict]:
-    props = fetch("SELECT id, name FROM properties ORDER BY name")
+def build_report(year: int) -> tuple[list[dict], list[str]]:
+    """Returns (per-property blocks for tax-relevant properties,
+    names of excluded properties)."""
+    all_props = fetch("SELECT id, name, COALESCE(tax_relevant,1) FROM properties ORDER BY name")
+    props = [(pid, name) for pid, name, rel in all_props if rel]
+    excluded = [name for _, name, rel in all_props if not rel]
     profiles = {r[0]: r for r in fetch(
         "SELECT property_id, purchase_date, purchase_price, building_share_pct,"
         "       afa_rate_pct FROM property_tax_profiles")}
@@ -377,15 +398,16 @@ def build_report(year: int) -> list[dict]:
             },
             "result": round(income_final - wk_total, 2),
         })
-    return report
+    return report, excluded
 
 
 @router.get("/report")
 def tax_report(year: int):
-    blocks = build_report(year)
+    blocks, excluded = build_report(year)
     return {
         "year": year,
         "properties": blocks,
+        "excluded_properties": excluded,
         "totals": {
             "income": round(sum(b["income"]["final"] for b in blocks), 2),
             "werbungskosten": round(sum(b["werbungskosten"]["total"] for b in blocks), 2),
@@ -397,7 +419,7 @@ def tax_report(year: int):
 @router.get("/report/pdf")
 def tax_report_pdf(year: int, property_id: int | None = None):
     from pdfgen import generate_tax_report
-    blocks = build_report(year)
+    blocks, _ = build_report(year)
     if property_id is not None:
         blocks = [b for b in blocks if b["property_id"] == property_id]
         if not blocks:

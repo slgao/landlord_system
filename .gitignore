@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# RAG assistant: local vector index (rebuild with `python -m rag.build_index`)
+backend/rag/.chroma/
+
 # C extensions
 *.so
 

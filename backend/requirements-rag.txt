@@ -1,0 +1,12 @@
+# Extra deps for the RAG assistant (backend/rag/). Kept separate from
+# requirements.txt so the core app doesn't need ~2GB of ML deps to run.
+#
+#   pip install -r requirements.txt -r requirements-rag.txt
+
+sentence-transformers>=3.3
+chromadb>=0.5
+rank-bm25>=0.2
+groq>=0.13
+boto3>=1.35
+tiktoken>=0.8
+PyYAML>=6.0

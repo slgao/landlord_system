@@ -297,7 +297,8 @@ def expense_inventory_pdf(year: int, property_id: int | None = None):
         g["subtotal"] = round(g["subtotal"] + amount, 2)
         grand_total = round(grand_total + amount, 2)
     if not groups:
-        raise HTTPException(status_code=404, detail=f"No expenses recorded for {year}")
+        scope = f"property {property_id} in {year}" if property_id is not None else str(year)
+        raise HTTPException(status_code=404, detail=f"No expenses recorded for {scope}")
     pdf_bytes = generate_expense_inventory(year, list(groups.values()), grand_total)
     return Response(content=pdf_bytes, media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="Belegliste_{year}.pdf"',
@@ -415,16 +416,22 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
         auto_total, pay_count = pay.get(pid, (0.0, 0))
         est_rows = []
         umlagen_total = 0.0
-        nk_known = bool(contracts.get(pid))
+        # Trust the Kaltmiete/Umlagen derivation only when at least one
+        # contract was active in the year AND every active one has its NK
+        # portion set — otherwise a data gap would masquerade as "Umlagen 0".
+        active_contracts = 0
+        nk_missing = 0
         for _, tenant, rent, cs, ce, nk in contracts.get(pid, []):
             months = tax_logic.contract_months_in_year(cs, _clean(ce), year)
             if months > 0 and rent:
+                active_contracts += 1
                 est_rows.append({"tenant": tenant, "months": months,
                                  "rent": float(rent), "total": round(float(rent) * months, 2)})
                 if nk is None:
-                    nk_known = False
+                    nk_missing += 1
                 else:
                     umlagen_total += float(nk) * months
+        nk_known = active_contracts > 0 and nk_missing == 0
         umlagen_total = round(umlagen_total, 2)
         estimate_total = round(sum(r["total"] for r in est_rows), 2)
         ov = overrides.get((pid, "income_total"))

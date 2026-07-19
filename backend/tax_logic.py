@@ -123,12 +123,17 @@ def expense_share_for_year(
 ) -> float:
     """Deductible share of a one-off expense in `year`.
     distribute_years=1 → all in the payment year (Abflussprinzip);
-    n>1 → amount/n in the payment year and each of the n-1 following years."""
+    n>1 → amount/n in the payment year and each of the n-1 following years.
+    The final year takes the rounding remainder so the shares sum exactly to
+    the invoice amount (1000/3 → 333.33, 333.33, 333.34)."""
     d = _parse(expense_date)
     n = max(int(distribute_years or 1), 1)
-    if d.year <= year <= d.year + n - 1:
-        return round(float(amount) / n, 2)
-    return 0.0
+    if not (d.year <= year <= d.year + n - 1):
+        return 0.0
+    share = round(float(amount) / n, 2)
+    if year == d.year + n - 1:
+        return round(float(amount) - share * (n - 1), 2)
+    return share
 
 
 # ── Gap-year income estimate ─────────────────────────────────────────────────

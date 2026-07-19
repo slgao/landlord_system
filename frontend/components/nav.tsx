@@ -9,7 +9,8 @@ import { Logo } from "@/components/logo";
 import {
   LayoutDashboard, Building2, Home, Users, FileText,
   CreditCard, DollarSign, Gauge, BarChart3, Bell,
-  FileWarning, Zap, Settings, LogOut, ChevronRight, Menu, X,
+  FileWarning, Zap, Settings, LogOut, ChevronRight, Menu, X, Sparkles,
+  Landmark, Calculator,
 } from "lucide-react";
 
 const NAV = [
@@ -49,6 +50,19 @@ const NAV = [
       { href: "/payment-reminders", label: "Payment Reminders", icon: Bell },
       { href: "/nebenkostenabrechnung", label: "Nebenkostenabrechnung", icon: Zap },
       { href: "/mahnung", label: "Mahnung Generator", icon: FileWarning },
+    ],
+  },
+  {
+    group: "Taxes",
+    items: [
+      { href: "/tax", label: "Tax Report", icon: Landmark },
+      { href: "/tax-setup", label: "Tax Setup", icon: Calculator },
+    ],
+  },
+  {
+    group: "Assistant",
+    items: [
+      { href: "/ask", label: "Ask Vermio", icon: Sparkles },
     ],
   },
   {

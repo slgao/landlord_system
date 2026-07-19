@@ -1414,3 +1414,114 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
     )
     doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
     return buf.getvalue()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Anlage V Ausfüllhilfe (tax module — docs/PRD-tax-module.md)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_tax_report(year, blocks):
+    """Per-property Anlage-V helper: income, Werbungskosten by category, result.
+    `blocks` is the output of api.routers.tax.build_report. Returns PDF bytes."""
+    import io as _io
+
+    buf = _io.BytesIO()
+    s = _styles()
+    today_str = date.today().strftime("%d.%m.%Y")
+    story = []
+
+    def _cell(text, right=False, bold=False, color=None, size=9):
+        return Paragraph(str(text), ParagraphStyle(
+            "_tc", fontName="Helvetica-Bold" if bold else "Helvetica",
+            fontSize=size, leading=int(size * 1.4),
+            textColor=colors.HexColor(color) if isinstance(color, str) else (color or C_TEXT),
+            alignment=TA_RIGHT if right else TA_LEFT))
+
+    def _eur(v, bold=False, color=None):
+        return _cell(f"{v:,.2f} €", right=True, bold=bold, color=color)
+
+    story.append(_header_banner(
+        f"ANLAGE V AUSFÜLLHILFE {year}",
+        f"Einkünfte aus Vermietung und Verpachtung  ·  Erstellt am {today_str}",
+        "Vermio", today_str,
+    ))
+    story.append(_accent_line(C_BLUE))
+    story.append(Spacer(1, 18))
+    story.append(Paragraph(
+        "Ausfüllhilfe — keine Steuerberatung. Beträge vor Übernahme in ELSTER gegen "
+        "Kontoauszüge/Belege prüfen. Eine Anlage V je Objekt.", s["small"]))
+    story.append(Spacer(1, 14))
+
+    hdr = ParagraphStyle("_th", fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=C_WHITE)
+    hdr_r = ParagraphStyle("_thr", fontName="Helvetica-Bold", fontSize=9, leading=12,
+                           textColor=C_WHITE, alignment=TA_RIGHT)
+
+    SOURCE_LABEL = {
+        "payments": "aus erfassten Zahlungen", "estimate": "GESCHÄTZT aus Verträgen — prüfen!",
+        "override": "manuell erfasst", "manual": "manuell erfasst (Bankauszug)",
+        "computed": "berechnet (Annuität) — gegen Jahreskontoauszug prüfen",
+        "none": "—",
+    }
+
+    for b in blocks:
+        wk = b["werbungskosten"]
+        story.append(Paragraph(b["property_name"], s["section"]))
+        story.append(Spacer(1, 6))
+
+        rows = [[Paragraph("Position", hdr), Paragraph("Hinweis", hdr), Paragraph(f"Betrag {year}", hdr_r)]]
+        rows.append([_cell("Einnahmen (Miete inkl. Umlagen)", bold=True),
+                     _cell(SOURCE_LABEL.get(b["income"]["source"], ""), size=8),
+                     _eur(b["income"]["final"], bold=True)])
+        rows.append([_cell("AfA (Gebäude-Abschreibung)"),
+                     _cell("" if wk["afa"].get("complete") else "Kaufdaten unvollständig", size=8),
+                     _eur(wk["afa"]["afa"])])
+        rows.append([_cell("Schuldzinsen"),
+                     _cell(SOURCE_LABEL.get(wk["schuldzinsen"]["source"], ""), size=8),
+                     _eur(wk["schuldzinsen"]["final"])])
+        for rc in wk["recurring"]:
+            if rc["deductible"]:
+                rows.append([_cell(f"{rc['cost_type']} (laufend)"),
+                             _cell(f"{rc['months']} × {rc['monthly']:,.2f} €", size=8),
+                             _eur(rc["total"])])
+        for e in wk["one_off"]:
+            note = e["expense_date"]
+            if e["distribute_years"] > 1:
+                note += f" · §82b über {e['distribute_years']} J."
+            rows.append([_cell(f"{e['category']}" + (f" — {e['vendor']}" if e["vendor"] else "")),
+                         _cell(note, size=8), _eur(e["share_this_year"])])
+        rows.append([_cell("Summe Werbungskosten", bold=True), _cell(""),
+                     _eur(wk["total"], bold=True)])
+        res_color = "#27ae60" if b["result"] >= 0 else "#e74c3c"
+        rows.append([_cell("Überschuss / Verlust", bold=True), _cell(""),
+                     _eur(b["result"], bold=True, color=res_color)])
+
+        t = Table(rows, colWidths=[78 * mm, 52 * mm, 35 * mm], repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), C_NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -3), [C_WHITE, C_LGRAY]),
+            ("BACKGROUND", (0, -2), (-1, -1), C_SECBG),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.5, C_MGRAY),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 16))
+
+    def _tax_footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColorRGB(0.514, 0.584, 0.655)
+        canvas.drawString(25 * mm, 10 * mm,
+                          f"Anlage V Ausfüllhilfe {year}  ·  keine Steuerberatung")
+        canvas.drawRightString(A4[0] - 20 * mm, 10 * mm, f"Seite {doc.page}")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        title=f"Anlage_V_Ausfuellhilfe_{year}",
+        leftMargin=25 * mm, rightMargin=20 * mm,
+        topMargin=20 * mm, bottomMargin=20 * mm,
+    )
+    doc.build(story, onFirstPage=_tax_footer, onLaterPages=_tax_footer)
+    return buf.getvalue()

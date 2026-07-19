@@ -96,6 +96,12 @@ export default function TaxReportPage() {
         </p>
       </div>
 
+      {report && report.excluded_properties.length > 0 && (
+        <p className="text-xs text-muted-foreground mb-3">
+          Not in this report (excluded in Tax Setup): {report.excluded_properties.join(", ")}
+        </p>
+      )}
+
       {report && (
         <div className="grid grid-cols-3 gap-2 mb-4">
           <Card><CardContent className="p-3"><p className="text-[10px] uppercase tracking-wide text-muted-foreground">Income</p><p className="font-semibold">{eur(report.totals.income)}</p></CardContent></Card>

@@ -220,6 +220,7 @@ export interface Mortgage {
 export interface TaxProfile {
   property_id: number;
   property_name: string;
+  tax_relevant: boolean;
   purchase_date: string | null;
   purchase_price: number | null;
   building_share_pct: number | null;
@@ -274,5 +275,6 @@ export interface TaxReportProperty {
 export interface TaxReport {
   year: number;
   properties: TaxReportProperty[];
+  excluded_properties: string[];
   totals: { income: number; werbungskosten: number; result: number };
 }

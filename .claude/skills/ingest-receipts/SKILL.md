@@ -40,5 +40,16 @@ audit trail.
    unreadable/scanned upside down, or the amount/date is ambiguous.
 7. **Report** a table: file → property, date, amount, category, created/skipped,
    plus the per-property totals now visible in `GET /api/tax/report?year=<year>`.
+8. **Generate the Belegliste PDF.** After all files are processed, download
+   the billing inventory — every bill of the year listed per property
+   (date, category, vendor, flat, Beleg file, amount) with per-property
+   subtotals and a grand total across all flats — and save it next to the
+   receipts:
+
+       curl -H "Authorization: Bearer $TOKEN" \
+         "localhost:8000/api/tax/expenses/inventory/pdf?year=<year>" \
+         -o "documents/<year>/Belegliste_<year>_$(date +%F).pdf"
+
+   Tell the user the path. The date suffix keeps earlier runs as history.
 
 Never modify or move the PDFs. Never push `documents/` (gitignored).

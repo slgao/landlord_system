@@ -1460,7 +1460,7 @@ def generate_tax_report(year, blocks):
         "payments": "aus erfassten Zahlungen", "estimate": "GESCHÄTZT aus Verträgen — prüfen!",
         "override": "manuell erfasst", "manual": "manuell erfasst (Bankauszug)",
         "computed": "berechnet (Annuität) — gegen Jahreskontoauszug prüfen",
-        "none": "—",
+        "none": "—", "contracts": "aus Verträgen", "incomplete": "Kaufdaten unvollständig",
     }
 
     for b in blocks:
@@ -1475,7 +1475,7 @@ def generate_tax_report(year, blocks):
                          _cell(SOURCE_LABEL.get(inc["source"], ""), size=8),
                          _eur(inc["kaltmiete"], bold=True)])
             rows.append([_cell("Umlagen (NK-Vorauszahlungen)", bold=True),
-                         _cell("aus Verträgen", size=8),
+                         _cell(SOURCE_LABEL.get(inc.get("split_source") or "contracts", ""), size=8),
                          _eur(inc["umlagen"], bold=True)])
             rows.append([_cell("Einnahmen gesamt"), _cell(""), _eur(inc["final"])])
         else:
@@ -1483,17 +1483,23 @@ def generate_tax_report(year, blocks):
                          _cell(SOURCE_LABEL.get(inc["source"], "") +
                                " · NK-Anteil je Vertrag nicht gepflegt", size=8),
                          _eur(inc["final"], bold=True)])
+        afa_src = wk["afa"].get("source") or ("computed" if wk["afa"].get("complete") else "incomplete")
         rows.append([_cell("AfA (Gebäude-Abschreibung)"),
-                     _cell("" if wk["afa"].get("complete") else "Kaufdaten unvollständig", size=8),
+                     _cell("" if afa_src == "computed" else SOURCE_LABEL.get(afa_src, ""), size=8),
                      _eur(wk["afa"]["afa"])])
         rows.append([_cell("Schuldzinsen"),
                      _cell(SOURCE_LABEL.get(wk["schuldzinsen"]["source"], ""), size=8),
                      _eur(wk["schuldzinsen"]["final"])])
-        for rc in wk["recurring"]:
-            if rc["deductible"]:
-                rows.append([_cell(f"{rc['cost_type']} (laufend)"),
-                             _cell(f"{rc['months']} × {rc['monthly']:,.2f} €", size=8),
-                             _eur(rc["total"])])
+        if wk.get("recurring_source") == "override":
+            rows.append([_cell("Laufende Kosten (Summe)"),
+                         _cell(f"manuell erfasst (berechnet: {wk.get('recurring_computed', 0):,.2f} €)", size=8),
+                         _eur(wk["recurring_total"])])
+        else:
+            for rc in wk["recurring"]:
+                if rc["deductible"]:
+                    rows.append([_cell(f"{rc['cost_type']} (laufend)"),
+                                 _cell(f"{rc['months']} × {rc['monthly']:,.2f} €", size=8),
+                                 _eur(rc["total"])])
         for e in wk["one_off"]:
             note = e["expense_date"]
             if e["distribute_years"] > 1:
@@ -1537,4 +1543,99 @@ def generate_tax_report(year, blocks):
         topMargin=20 * mm, bottomMargin=20 * mm,
     )
     doc.build(story, onFirstPage=_tax_footer, onLaterPages=_tax_footer)
+    return buf.getvalue()
+
+
+def generate_expense_inventory(year, groups, grand_total):
+    """Belegliste: all bills of a tax year, grouped per property, with
+    per-property subtotals and a grand total. `groups` is
+    [{property_name, rows: [{expense_date, category, vendor, apartment_name,
+    source_file, amount, share_this_year, distribute_years}], subtotal}]."""
+    import io as _io
+
+    buf = _io.BytesIO()
+    s = _styles()
+    today_str = date.today().strftime("%d.%m.%Y")
+    story = []
+
+    def _cell(text, right=False, bold=False, color=None, size=9):
+        return Paragraph(str(text), ParagraphStyle(
+            "_ic", fontName="Helvetica-Bold" if bold else "Helvetica",
+            fontSize=size, leading=int(size * 1.4),
+            textColor=color or C_TEXT, alignment=TA_RIGHT if right else TA_LEFT))
+
+    def _eur(v, bold=False):
+        return _cell(f"{v:,.2f} €", right=True, bold=bold)
+
+    story.append(_header_banner(
+        f"BELEGLISTE {year}",
+        f"Rechnungen und Belege je Objekt  ·  Erstellt am {today_str}",
+        "Vermio", today_str,
+    ))
+    story.append(_accent_line(C_BLUE))
+    story.append(Spacer(1, 16))
+
+    hdr = ParagraphStyle("_ih", fontName="Helvetica-Bold", fontSize=8.5, leading=11, textColor=C_WHITE)
+    hdr_r = ParagraphStyle("_ihr", fontName="Helvetica-Bold", fontSize=8.5, leading=11,
+                           textColor=C_WHITE, alignment=TA_RIGHT)
+
+    for g in groups:
+        story.append(Paragraph(g["property_name"], s["section"]))
+        story.append(Spacer(1, 5))
+        rows = [[Paragraph("Datum", hdr), Paragraph("Kategorie", hdr), Paragraph("Firma", hdr),
+                 Paragraph("Wohnung / Beleg", hdr), Paragraph("Betrag", hdr_r)]]
+        for e in g["rows"]:
+            wo = e.get("apartment_name") or ""
+            beleg = Path(e["source_file"]).name if e.get("source_file") else ""
+            sub = " · ".join(x for x in (wo, beleg) if x)
+            note = ""
+            if e.get("distribute_years", 1) > 1:
+                note = f" (§82b: {e['share_this_year']:,.2f} €/J. über {e['distribute_years']} J.)"
+            rows.append([_cell(e["expense_date"], size=8),
+                        _cell(e["category"] + note, size=8),
+                        _cell(e.get("vendor") or "—", size=8),
+                        _cell(sub or "—", size=8),
+                        _eur(e["amount"])])
+        rows.append([_cell(""), _cell(""), _cell(""),
+                     _cell(f"Zwischensumme ({len(g['rows'])} Belege)", bold=True),
+                     _eur(g["subtotal"], bold=True)])
+        t = Table(rows, colWidths=[20 * mm, 38 * mm, 32 * mm, 47 * mm, 28 * mm], repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), C_NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [C_WHITE, C_LGRAY]),
+            ("BACKGROUND", (0, -1), (-1, -1), C_SECBG),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.5, C_MGRAY),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 14))
+
+    n_total = sum(len(g["rows"]) for g in groups)
+    tot = Table([[_cell(f"Gesamt alle Objekte ({n_total} Belege)", bold=True, color=C_WHITE),
+                  _cell(f"{grand_total:,.2f} €", right=True, bold=True, color=C_WHITE)]],
+                colWidths=[137 * mm, 28 * mm])
+    tot.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), C_NAVY),
+        ("TEXTCOLOR", (0, 0), (-1, -1), C_WHITE),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(tot)
+
+    def _inv_footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColorRGB(0.514, 0.584, 0.655)
+        canvas.drawString(25 * mm, 10 * mm, f"Belegliste {year}  ·  Vermio")
+        canvas.drawRightString(A4[0] - 20 * mm, 10 * mm, f"Seite {doc.page}")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4, title=f"Belegliste_{year}",
+        leftMargin=25 * mm, rightMargin=20 * mm,
+        topMargin=20 * mm, bottomMargin=20 * mm,
+    )
+    doc.build(story, onFirstPage=_inv_footer, onLaterPages=_inv_footer)
     return buf.getvalue()

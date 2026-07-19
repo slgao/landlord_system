@@ -13,7 +13,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, FileDown, Check } from "lucide-react";
+import { ChevronDown, ChevronRight, FileDown, Check, X, Pencil } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -32,6 +32,69 @@ const SOURCE_BADGE: Record<string, { label: string; variant: "default" | "second
 function SourceBadge({ source }: { source: string }) {
   const b = SOURCE_BADGE[source] ?? { label: source, variant: "secondary" as const };
   return <Badge variant={b.variant} className="text-[10px]">{b.label}</Badge>;
+}
+
+/** Inline-editable derived value: click the pencil, type, Apply — stored as a
+ * (property, year, field) override. Reset returns to the computed value. */
+function OverrideField({ propertyId, year, field, value, overridden, computedHint }: {
+  propertyId: number; year: number; field: string; value: number;
+  overridden: boolean; computedHint?: number;
+}) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const save = useMutation({
+    mutationFn: (v: number | null) =>
+      api.put(`/api/tax/overrides/${propertyId}/${year}`, { field, value: v }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tax-report", year] });
+      setEditing(false);
+      toast.success("Saved");
+    },
+    onError: () => toast.error("Failed to save"),
+  });
+
+  if (editing) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <Input type="number" step="0.01" autoFocus className="h-7 w-28 font-mono text-right"
+          value={draft} onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft !== "") save.mutate(parseFloat(draft));
+            if (e.key === "Escape") setEditing(false);
+          }} />
+        <Button size="sm" variant="outline" className="h-7 px-2"
+          disabled={draft === "" || save.isPending}
+          onClick={() => save.mutate(parseFloat(draft))}>
+          <Check className="size-3.5" />
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setEditing(false)}>
+          <X className="size-3.5" />
+        </Button>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {overridden && computedHint !== undefined && (
+        <span className="text-[10px] text-muted-foreground line-through">{eur(computedHint)}</span>
+      )}
+      <span className="font-mono">{eur(value)}</span>
+      <button className="text-muted-foreground hover:text-foreground"
+        title="Edit manually"
+        onClick={(e) => { e.stopPropagation(); setDraft(String(value)); setEditing(true); }}>
+        <Pencil className="size-3.5" />
+      </button>
+      {overridden && (
+        <button className="text-[10px] text-muted-foreground hover:text-foreground underline"
+          title="Remove manual value, back to computed"
+          onClick={(e) => { e.stopPropagation(); save.mutate(null); }}>
+          reset
+        </button>
+      )}
+    </span>
+  );
 }
 
 export default function TaxReportPage() {
@@ -171,20 +234,34 @@ export default function TaxReportPage() {
                         )}
                         {b.income.nk_known && b.income.kaltmiete !== null ? (
                           <div className="text-xs space-y-0.5">
-                            <div className="flex justify-between"><span className="text-muted-foreground">Mieteinnahmen (Kaltmiete)</span><span className="font-mono">{eur(b.income.kaltmiete)}</span></div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-muted-foreground flex items-center gap-2">
+                                Mieteinnahmen (Kaltmiete)
+                                {b.income.split_source === "override" && <SourceBadge source="override" />}
+                              </span>
+                              <OverrideField propertyId={b.property_id} year={year}
+                                field="income_kaltmiete" value={b.income.kaltmiete}
+                                overridden={b.income.split_source === "override"} />
+                            </div>
                             <div className="flex justify-between"><span className="text-muted-foreground">Umlagen (NK-Vorauszahlungen)</span><span className="font-mono">{eur(b.income.umlagen!)}</span></div>
                             <div className="flex justify-between font-medium"><span>Einnahmen gesamt</span><span className="font-mono">{eur(b.income.final)}</span></div>
                           </div>
                         ) : (
-                          <p className="text-xs text-amber-500">
-                            Kaltmiete/Umlagen split unavailable — set the NK-Vorauszahlung for
-                            every contract of this property in Tax Setup.
-                          </p>
+                          <div className="text-xs text-amber-500 flex items-center justify-between gap-2">
+                            <span>
+                              Kaltmiete/Umlagen split unavailable — set the NK-Vorauszahlung per
+                              contract in Tax Setup, or enter the Kaltmiete manually:
+                            </span>
+                            <OverrideField propertyId={b.property_id} year={year}
+                              field="income_kaltmiete" value={b.income.final} overridden={false} />
+                          </div>
                         )}
                         {b.income.source === "payments" ? (
-                          <p className="text-xs text-muted-foreground">
-                            {b.income.payments_count} recorded payments · {eur(b.income.payments_total)}
-                          </p>
+                          <div className="text-xs text-muted-foreground flex items-center justify-between">
+                            <span>{b.income.payments_count} recorded payments · {eur(b.income.payments_total)} — total editable:</span>
+                            <OverrideField propertyId={b.property_id} year={year} field="income_total"
+                              value={b.income.final} overridden={false} />
+                          </div>
                         ) : (
                           <div className="flex items-end gap-2">
                             <div>
@@ -203,7 +280,7 @@ export default function TaxReportPage() {
                             {b.income.source === "override" && (
                               <Button size="sm" variant="ghost" className="text-muted-foreground"
                                 onClick={() => { setIncomeDraft((s) => ({ ...s, [b.property_id]: "" })); setOverride.mutate({ property_id: b.property_id, value: null }); }}>
-                                Reset to estimate
+                                Reset to computed
                               </Button>
                             )}
                           </div>
@@ -213,30 +290,45 @@ export default function TaxReportPage() {
                       {/* Werbungskosten */}
                       <div className="border-t border-border p-4 space-y-1">
                         <p className="font-medium mb-2">Werbungskosten</p>
-                        <div className="flex justify-between py-1">
+                        <div className="flex justify-between items-center py-1">
                           <span className="text-muted-foreground">
                             AfA (building depreciation)
-                            {!wk.afa.complete && <span className="text-amber-500 ml-2 text-xs">purchase data missing — set up in Tax Setup</span>}
+                            {wk.afa.source === "override" && <Badge variant="default" className="text-[10px] ml-2">manual</Badge>}
+                            {wk.afa.source === "incomplete" && <span className="text-amber-500 ml-2 text-xs">purchase data missing — set up in Tax Setup or enter manually</span>}
                           </span>
-                          <span className="font-mono">{eur(wk.afa.afa)}</span>
+                          <OverrideField propertyId={b.property_id} year={year} field="afa"
+                            value={wk.afa.afa} overridden={wk.afa.source === "override"}
+                            computedHint={wk.afa.computed_afa} />
                         </div>
-                        <div className="flex justify-between py-1">
+                        <div className="flex justify-between items-center py-1">
                           <span className="text-muted-foreground flex items-center gap-2">
                             Schuldzinsen <SourceBadge source={wk.schuldzinsen.source} />
                           </span>
-                          <span className="font-mono">{eur(wk.schuldzinsen.final)}</span>
+                          <OverrideField propertyId={b.property_id} year={year} field="schuldzinsen"
+                            value={wk.schuldzinsen.final}
+                            overridden={wk.schuldzinsen.source === "override"} />
                         </div>
                         {wk.schuldzinsen.computed.map((c, i) => (
                           <p key={i} className="text-xs text-muted-foreground pl-4">
                             {c.label}: interest {eur(c.interest)} · Tilgung {eur(c.tilgung)} · balance end {eur(c.balance_end)}
                           </p>
                         ))}
-                        {wk.recurring.filter((r) => r.deductible).map((r, i) => (
+                        {wk.recurring_source !== "override" && wk.recurring.filter((r) => r.deductible).map((r, i) => (
                           <div key={i} className="flex justify-between py-1">
                             <span className="text-muted-foreground">{r.cost_type} <span className="text-xs">({r.months} × {eur(r.monthly)})</span></span>
                             <span className="font-mono">{eur(r.total)}</span>
                           </div>
                         ))}
+                        <div className="flex justify-between items-center py-1">
+                          <span className="text-muted-foreground flex items-center gap-2">
+                            Recurring costs subtotal
+                            {wk.recurring_source === "override" && <Badge variant="default" className="text-[10px]">manual</Badge>}
+                          </span>
+                          <OverrideField propertyId={b.property_id} year={year} field="recurring_total"
+                            value={wk.recurring_total}
+                            overridden={wk.recurring_source === "override"}
+                            computedHint={wk.recurring_source === "override" ? wk.recurring_computed : undefined} />
+                        </div>
                         {wk.one_off.map((e) => (
                           <div key={e.id} className="flex justify-between py-1">
                             <span className="text-muted-foreground">

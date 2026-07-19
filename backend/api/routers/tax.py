@@ -22,7 +22,8 @@ router = APIRouter(prefix="/tax", tags=["Tax"])
 NON_DEDUCTIBLE_COST_TYPES = {"Miete", "Mortgage"}
 
 EXPENSE_CATEGORIES = [
-    "Erhaltungsaufwand", "Schuldzinsen", "Geldbeschaffungskosten",
+    "Erhaltungsaufwand", "Renovierung", "Instandhaltung",
+    "Schuldzinsen", "Geldbeschaffungskosten",
     "Grundsteuer", "Versicherung", "Verwaltung", "Hausgeld",
     "Fahrtkosten", "Sonstige",
 ]
@@ -58,6 +59,11 @@ class ExpenseIn(BaseModel):
     note: Optional[str] = None
     deductible: int = 1
     distribute_years: int = 1
+    source_file: Optional[str] = None  # scanned receipt this row came from
+
+
+class NkSplitIn(BaseModel):
+    nebenkosten_vorauszahlung: Optional[float] = None  # None clears
 
 
 class OverrideIn(BaseModel):
@@ -184,7 +190,7 @@ def delete_mortgage(mortgage_id: int):
 
 _EXPENSE_SELECT = """
     SELECT e.id, e.property_id, p.name, e.apartment_id, e.expense_date, e.amount,
-           e.category, e.vendor, e.note, e.deductible, e.distribute_years
+           e.category, e.vendor, e.note, e.deductible, e.distribute_years, e.source_file
     FROM expenses e JOIN properties p ON p.id = e.property_id
 """
 
@@ -195,6 +201,7 @@ def _expense_row(r) -> dict:
         "apartment_id": r[3], "expense_date": r[4], "amount": float(r[5]),
         "category": r[6], "vendor": _clean(r[7]), "note": _clean(r[8]),
         "deductible": int(r[9] or 0), "distribute_years": int(r[10] or 1),
+        "source_file": _clean(r[11]),
     }
 
 
@@ -216,7 +223,7 @@ def create_expense(body: ExpenseIn):
         raise HTTPException(status_code=404, detail="Property not found")
     insert("expenses", (body.property_id, body.apartment_id, body.expense_date,
                         body.amount, body.category, body.vendor, body.note,
-                        body.deductible, body.distribute_years))
+                        body.deductible, body.distribute_years, body.source_file))
     r = fetch(f"{_EXPENSE_SELECT} ORDER BY e.id DESC LIMIT 1")[0]
     return _expense_row(r)
 
@@ -226,10 +233,11 @@ def update_expense(expense_id: int, body: ExpenseIn):
     if not fetch("SELECT id FROM expenses WHERE id=?", (expense_id,)):
         raise HTTPException(status_code=404, detail="Expense not found")
     execute("""UPDATE expenses SET property_id=?, apartment_id=?, expense_date=?, amount=?,
-               category=?, vendor=?, note=?, deductible=?, distribute_years=? WHERE id=?""",
+               category=?, vendor=?, note=?, deductible=?, distribute_years=?, source_file=?
+               WHERE id=?""",
             (body.property_id, body.apartment_id, body.expense_date, body.amount,
              body.category, body.vendor, body.note, body.deductible,
-             body.distribute_years, expense_id))
+             body.distribute_years, body.source_file, expense_id))
     r = fetch(f"{_EXPENSE_SELECT} WHERE e.id=?", (expense_id,))[0]
     return _expense_row(r)
 
@@ -244,6 +252,42 @@ def delete_expense(expense_id: int):
 @router.get("/expense-categories")
 def expense_categories():
     return EXPENSE_CATEGORIES
+
+
+# ── Kaltmiete / NK split per contract ────────────────────────────────────────
+
+@router.get("/nk-splits")
+def list_nk_splits():
+    """Contracts with their monthly NK-Vorauszahlung portion, for the
+    Kaltmiete/Umlagen income split. Ended contracts still matter for past
+    tax years, so all contracts are returned."""
+    rows = fetch("""
+        SELECT c.id, t.name, a.name, a.property_id, p.name, c.rent,
+               c.nebenkosten_vorauszahlung, c.start_date, c.end_date
+        FROM contracts c
+        JOIN tenants t ON t.id = c.tenant_id
+        JOIN apartments a ON a.id = c.apartment_id
+        JOIN properties p ON p.id = a.property_id
+        ORDER BY p.name, t.name
+    """)
+    return [{
+        "contract_id": r[0], "tenant_name": r[1], "apartment_name": r[2],
+        "property_id": r[3], "property_name": r[4],
+        "rent": float(r[5] or 0),
+        "nebenkosten_vorauszahlung": float(r[6]) if r[6] is not None else None,
+        "kaltmiete": round(float(r[5] or 0) - float(r[6]), 2) if r[6] is not None else None,
+        "start_date": r[7], "end_date": _clean(r[8]),
+    } for r in rows]
+
+
+@router.put("/nk-splits/{contract_id}")
+def set_nk_split(contract_id: int, body: NkSplitIn):
+    if not fetch("SELECT id FROM contracts WHERE id=?", (contract_id,)):
+        raise HTTPException(status_code=404, detail="Contract not found")
+    execute("UPDATE contracts SET nebenkosten_vorauszahlung=? WHERE id=?",
+            (body.nebenkosten_vorauszahlung, contract_id))
+    return {"contract_id": contract_id,
+            "nebenkosten_vorauszahlung": body.nebenkosten_vorauszahlung}
 
 
 # ── Overrides ────────────────────────────────────────────────────────────────
@@ -287,7 +331,8 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
 
     contracts: dict[int, list] = {}
     for r in fetch("""
-        SELECT a.property_id, t.name, c.rent, c.start_date, c.end_date
+        SELECT a.property_id, t.name, c.rent, c.start_date, c.end_date,
+               c.nebenkosten_vorauszahlung
         FROM contracts c
         JOIN apartments a ON a.id = c.apartment_id
         JOIN tenants t ON t.id = c.tenant_id
@@ -316,11 +361,18 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
         # Income — payments if any exist for this property+year, else estimate.
         auto_total, pay_count = pay.get(pid, (0.0, 0))
         est_rows = []
-        for _, tenant, rent, cs, ce in contracts.get(pid, []):
+        umlagen_total = 0.0
+        nk_known = bool(contracts.get(pid))
+        for _, tenant, rent, cs, ce, nk in contracts.get(pid, []):
             months = tax_logic.contract_months_in_year(cs, _clean(ce), year)
             if months > 0 and rent:
                 est_rows.append({"tenant": tenant, "months": months,
                                  "rent": float(rent), "total": round(float(rent) * months, 2)})
+                if nk is None:
+                    nk_known = False
+                else:
+                    umlagen_total += float(nk) * months
+        umlagen_total = round(umlagen_total, 2)
         estimate_total = round(sum(r["total"] for r in est_rows), 2)
         ov = overrides.get((pid, "income_total"))
         if ov is not None:
@@ -329,6 +381,10 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
             income_final, income_source = round(auto_total, 2), "payments"
         else:
             income_final, income_source = estimate_total, "estimate"
+        # Kaltmiete/Umlagen split (separate Anlage V lines; the sum is
+        # unchanged). Umlagen come from the contractual monthly NK
+        # prepayments; only trustworthy when every active contract has one.
+        kaltmiete = round(income_final - umlagen_total, 2) if nk_known else None
 
         # AfA
         p = profiles.get(pid)
@@ -387,6 +443,9 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
                 "payments_total": round(auto_total, 2), "payments_count": pay_count,
                 "estimate_total": estimate_total, "estimate_rows": est_rows,
                 "override_note": ov[1] if ov else None,
+                "nk_known": nk_known,
+                "umlagen": umlagen_total if nk_known else None,
+                "kaltmiete": kaltmiete,
             },
             "werbungskosten": {
                 "afa": afa,

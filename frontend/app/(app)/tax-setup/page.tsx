@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { TaxProfile, TaxExpense } from "@/lib/types";
+import { TaxProfile, TaxExpense, NkSplit } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -204,6 +204,81 @@ function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
   );
 }
 
+// ── Kaltmiete / NK split per contract ────────────────────────────────────────
+
+function NkRow({ c }: { c: NkSplit }) {
+  const qc = useQueryClient();
+  const [nk, setNk] = useState(
+    c.nebenkosten_vorauszahlung != null ? String(c.nebenkosten_vorauszahlung) : "");
+
+  const save = useMutation({
+    mutationFn: () => api.put(`/api/tax/nk-splits/${c.contract_id}`, {
+      nebenkosten_vorauszahlung: nk === "" ? null : parseFloat(nk),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tax-nk-splits"] });
+      qc.invalidateQueries({ queryKey: ["tax-report"] });
+      toast.success(`${c.tenant_name} saved`);
+    },
+    onError: () => toast.error("Failed to save"),
+  });
+
+  const kalt = nk !== "" ? c.rent - parseFloat(nk || "0") : null;
+  return (
+    <TableRow className={c.end_date ? "opacity-50" : ""}>
+      <TableCell className="text-muted-foreground">{c.property_name}</TableCell>
+      <TableCell className="font-medium">{c.tenant_name}</TableCell>
+      <TableCell className="text-muted-foreground">{c.apartment_name}{c.end_date ? ` (ended ${c.end_date})` : ""}</TableCell>
+      <TableCell className="text-right font-mono">{eur(c.rent)}</TableCell>
+      <TableCell>
+        <Input type="number" step="1" placeholder="NK €/mo" className="h-8 w-24 font-mono"
+          value={nk} onChange={(e) => setNk(e.target.value)} />
+      </TableCell>
+      <TableCell className="text-right font-mono text-muted-foreground">
+        {kalt != null && !isNaN(kalt) ? eur(kalt) : "—"}
+      </TableCell>
+      <TableCell>
+        <Button size="sm" variant="outline" disabled={save.isPending} onClick={() => save.mutate()}>
+          <Save className="size-4" />
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function NkSection() {
+  const { data: splits = [] } = useQuery<NkSplit[]>({
+    queryKey: ["tax-nk-splits"],
+    queryFn: () => api.get("/api/tax/nk-splits").then((r) => r.data),
+  });
+  const missing = splits.filter((s) => !s.end_date && s.nebenkosten_vorauszahlung == null).length;
+
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <p className="font-medium">Kaltmiete / Umlagen split (per contract)</p>
+        <p className="text-xs text-muted-foreground">
+          Anlage V reports Kaltmiete and Umlagen (NK-Vorauszahlungen) on separate lines.
+          Enter the monthly NK portion of each contract&apos;s rent — Kaltmiete is derived.
+          {missing > 0 && <span className="text-amber-500"> {missing} active contract{missing !== 1 ? "s" : ""} still missing the NK portion.</span>}
+        </p>
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>Property</TableHead><TableHead>Tenant</TableHead>
+            <TableHead>Apartment</TableHead>
+            <TableHead className="text-right">Rent (warm)</TableHead>
+            <TableHead>NK / month</TableHead>
+            <TableHead className="text-right">Kaltmiete</TableHead><TableHead />
+          </TableRow></TableHeader>
+          <TableBody>
+            {splits.map((c) => <NkRow key={c.contract_id} c={c} />)}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── One-off expenses ─────────────────────────────────────────────────────────
 
 const EMPTY_EXPENSE = {
@@ -262,6 +337,7 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
             <TableHeader><TableRow>
               <TableHead>Date</TableHead><TableHead>Property</TableHead>
               <TableHead>Category</TableHead><TableHead>Vendor</TableHead>
+              <TableHead>Beleg</TableHead>
               <TableHead className="text-right">Amount</TableHead>
               <TableHead className="text-right">Spread</TableHead><TableHead />
             </TableRow></TableHeader>
@@ -272,6 +348,9 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
                   <TableCell>{e.property_name}</TableCell>
                   <TableCell>{e.category}</TableCell>
                   <TableCell className="text-muted-foreground">{e.vendor || "—"}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs" title={e.source_file ?? undefined}>
+                    {e.source_file ? e.source_file.split("/").pop() : "—"}
+                  </TableCell>
                   <TableCell className="text-right font-mono">{eur(e.amount)}</TableCell>
                   <TableCell className="text-right font-mono">{e.distribute_years > 1 ? `${e.distribute_years}y` : "—"}</TableCell>
                   <TableCell>
@@ -359,6 +438,7 @@ export default function TaxSetupPage() {
               </Table>
             </CardContent>
           </Card>
+          <NkSection />
           <MortgageSection profiles={profiles} />
           <ExpenseSection profiles={profiles} />
         </>

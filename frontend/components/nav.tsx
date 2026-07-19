@@ -55,8 +55,8 @@ const NAV = [
   {
     group: "Taxes",
     items: [
-      { href: "/tax", label: "Tax Report", icon: Landmark },
       { href: "/tax-setup", label: "Tax Setup", icon: Calculator },
+      { href: "/tax", label: "Tax Report", icon: Landmark },
     ],
   },
   {

@@ -224,3 +224,7 @@ local_backup.sql
 
 # Local-only legal notes / evidence (never push to remote)
 legal/
+
+# Scanned receipts/bills for the tax module (sensitive — never push).
+# Convention: documents/<year>/<property-name>/<file>.pdf
+documents/

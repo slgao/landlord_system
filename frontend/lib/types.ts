@@ -204,6 +204,16 @@ export interface RagAnswer {
   refused: boolean;
 }
 
+// Agentic assistant (POST /api/assistant/ask). Unlike RagAnswer this answers
+// over the landlord's own portfolio AND the legal corpus; `tools_consulted`
+// lists which tools the agent called (R7 transparency), and `thread_id` ties
+// follow-up questions to the same conversation (R4 multi-turn).
+export interface AssistantAnswer {
+  answer: string;
+  tools_consulted: string[];
+  thread_id: number;
+}
+
 // ── Tax module (Anlage V helper) ──────────────────────────────────────────
 
 export interface Mortgage {

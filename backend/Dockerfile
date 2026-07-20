@@ -26,14 +26,19 @@ RUN pip install --no-cache-dir --timeout 300 --retries 5 \
 
 COPY . .
 
-# Where Hugging Face caches the embedding + reranker weights. The legal tool
-# downloads them (~1.5 GB) lazily on the FIRST legal question, then reuses this
-# cache. Data tools (overdue rent, contracts, tax, …) need none of this and work
-# immediately. To pre-bake the models + index at build time instead (bigger
-# image, but no first-request download and works offline), add:
-#     RUN python -m rag.build_index --reset \
-#         && python -c "from rag.retriever import Reranker; Reranker()"
-ENV HF_HOME=/app/.hf_cache
+# Pre-download the embedding + reranker models and build the legal index at
+# build time, baking them into the image (HF_HOME). The assistant then answers
+# legal questions instantly and offline — no ~1.5 GB download on the first
+# request. This makes the image large (~3.5 GB) and needs network during
+# `docker build`; HF_HUB_DOWNLOAD_TIMEOUT gives the large weight files headroom
+# on a slow link. build_index needs no DB/API keys (corpus + embedder only).
+#
+# NOTE: because the weights live at /app/.hf_cache inside the image, do NOT
+# mount a named volume there in docker-compose — an empty volume would shadow
+# the baked models and force a runtime re-download.
+ENV HF_HOME=/app/.hf_cache HF_HUB_DOWNLOAD_TIMEOUT=120
+RUN python -m rag.build_index --reset \
+    && python -c "from rag.retriever import Reranker; Reranker()"
 
 RUN mkdir -p pdf
 

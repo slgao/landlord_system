@@ -28,6 +28,11 @@ services:
       - "8000:8000"
     volumes:
       - pdf_data:/app/pdf
+      # Persist the lazily-downloaded embedding/reranker weights and the built
+      # legal index across container recreations, so the ~1.5 GB model download
+      # for the first legal question happens once ever — not after every deploy.
+      - hf_cache:/app/.hf_cache
+      - rag_index:/app/rag/.chroma
 
   frontend:
     build:
@@ -44,3 +49,5 @@ services:
 volumes:
   pgdata:
   pdf_data:
+  hf_cache:
+  rag_index:

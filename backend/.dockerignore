@@ -6,3 +6,7 @@ __pycache__/
 pdf/
 local_backup.sql
 backups/
+# Built fresh inside the image (see Dockerfile) — don't copy local copies in,
+# so the baked index/model cache is deterministic and not stale.
+rag/.chroma/
+.hf_cache/

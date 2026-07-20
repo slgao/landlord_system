@@ -2,6 +2,15 @@ import axios from "axios";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Where the Ask Vermio conversation is cached in the browser (see /ask). Exposed
+// here so every session-end path can wipe it — the cache holds the landlord's
+// own portfolio answers and must not survive a logout or a switch of user.
+export const ASSISTANT_CACHE_KEY = "vermio_assistant_chat_v1";
+
+export function clearAssistantCache() {
+  if (typeof window !== "undefined") localStorage.removeItem(ASSISTANT_CACHE_KEY);
+}
+
 export const api = axios.create({ baseURL: BASE });
 
 api.interceptors.request.use((config) => {
@@ -17,6 +26,7 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401 && typeof window !== "undefined") {
       localStorage.removeItem("token");
+      clearAssistantCache();
       window.location.href = "/login";
     }
     return Promise.reject(err);
@@ -32,6 +42,7 @@ export async function login(username: string, password: string) {
 
 export function logout() {
   localStorage.removeItem("token");
+  clearAssistantCache();
   window.location.href = "/login";
 }
 
@@ -73,9 +84,10 @@ export async function streamAssistant(
   });
 
   if (res.status === 401) {
-    // Mirror the axios interceptor: drop the token and bounce to login.
+    // Mirror the axios interceptor: drop the token + cached chat, bounce to login.
     if (typeof window !== "undefined") {
       localStorage.removeItem("token");
+      clearAssistantCache();
       window.location.href = "/login";
     }
     return;

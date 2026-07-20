@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { streamAssistant } from "@/lib/api";
+import { streamAssistant, ASSISTANT_CACHE_KEY } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Sparkles, Send, User, AlertTriangle, Check, Loader2, Plus } from "lucide-react";
@@ -23,10 +23,11 @@ interface ChatMessage {
   streaming?: boolean;
 }
 
-// Where the conversation is cached in the browser so it survives leaving the
-// tab and coming back (the backend also persists it per-thread; this restores
-// the exact on-screen view incl. the tool traces without a round-trip).
-const STORAGE_KEY = "vermio_assistant_chat_v1";
+// The conversation is cached in the browser so it survives leaving the tab and
+// coming back (the backend also persists it per-thread; this restores the exact
+// on-screen view incl. the tool traces without a round-trip). Key + logout-clear
+// live in lib/api.ts so every session-end path wipes it.
+const STORAGE_KEY = ASSISTANT_CACHE_KEY;
 
 // Landlord-facing prompts: each mixes portfolio data with the law, which is the
 // whole reason the agent exists (PRD J1–J7).

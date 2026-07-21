@@ -4,7 +4,7 @@
 
 <h1 align="center">Vermio</h1>
 
-<p align="center">Property management for German landlords — rent tracking, utility billing, and PDF generation.</p>
+<p align="center">Property management for German landlords — rent tracking, utility billing, Anlage&nbsp;V tax prep, PDF generation, and a data-aware AI assistant.</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python" />
@@ -12,6 +12,7 @@
   <img src="https://img.shields.io/badge/FastAPI-0.136-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL" />
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/Assistant-Groq%20Llama%203.3-F55036" alt="Groq" />
   <img src="https://img.shields.io/badge/License-BSL%201.1-orange" alt="License" />
 </p>
 
@@ -19,12 +20,14 @@
 
 ## What it does
 
-Built to manage a handful of properties without commercial landlord software. Covers the full rental lifecycle — contracts, rent tracking, and legally-formatted PDFs at year end.
+Built to manage a handful of properties without commercial landlord software. Covers the full rental lifecycle — contracts, rent tracking, legally-formatted PDFs, year-end **Anlage V** tax prep, and a plain-language assistant that answers questions about your own data.
 
 - **Nebenkostenabrechnung** — Strom, Gas, Wasser, Heizung, Betriebskosten with day-based, per-person proration. Each cost type takes meter readings *or* a direct total-cost figure, and can hold several billing periods (e.g. one provider bill per year) that are shown separately and summed into one statement. Person counts are WG-aware (co-tenant household vs. one contract per room); each Betriebskosten bill has its own editable *living period* from the contract; the outstanding amount can be offset against a still-held deposit. Generated PDFs carry the tenant's full address (street + postcode + city), the contract period, and a gender-aware salutation (Herr/Frau). Settings are saved as reusable billing profiles you can update in place.
 - **Mahnung Generator** — formal payment reminder PDFs with gender-aware salutation, full property address, and signature
 - **Kaution tracking** — log deductions, track open balance, mark returned, and offset against a Nebenkostenabrechnung
 - **Balance Sheet** — monthly/annual P&L per property with per-flat breakdown, a current-month expected-net headline, and income-vs-target / net-trend charts
+- **Anlage V (tax) helper** — per-property, per-year rental income and Werbungskosten totals in the categories the German Anlage V asks for, on a strict cash basis (§11 EStG). One-time AfA (building depreciation) setup, an annuity-mortgage split (only Schuldzinsen is deductible, not Tilgung), one-off expense entry with §82b multi-year distribution, and per-(property, year, field) manual overrides that win over computed values. Every figure is traceable to its source rows and exports as a fill-in PDF next to ELSTER. Auto-fills from live payment data for 2026+; 2025 has a manual-entry fallback.
+- **Ask Vermio** — a read-only AI assistant you talk to in plain language. It answers by querying your own data through read-only tools (overdue rent, contracts, payments, tax report) *and* searching a German tenancy-law corpus, then composes a grounded answer that cites both (`[payments]`, `[BGB §551]`). Answers stream token-by-token with a live tool trace (which tool ran, with which arguments) and saved conversation threads.
 
 Also: multi-currency (EUR/CNY/USD/GBP), co-tenants (Mitmieter), fixed-term and open-ended leases, meter readings, flat costs (Hausgeld, mortgage, Grundsteuer).
 
@@ -39,6 +42,8 @@ Also: multi-currency (EUR/CNY/USD/GBP), co-tenants (Mitmieter), fixed-term and o
 | Database | PostgreSQL 16 (Docker locally, Neon in cloud) |
 | Migrations | Alembic |
 | PDFs | ReportLab |
+| Assistant | **Groq** (Llama 3.3 70B) — agentic tool-calling loop, SSE token streaming |
+| Legal search | Hybrid RAG — sentence-transformers (e5) + Chroma + BM25, reranked, with citations |
 | Container | Docker Compose |
 
 The Next.js UI covers everything: dashboard with monthly charts, full CRUD for
@@ -46,7 +51,8 @@ properties/apartments/tenants/contracts, the multi-section Nebenkostenabrechnung
 wizard (live calculation preview, per-period meter/total-cost billings, and
 reusable, in-place-updatable billing profiles), Mahnung generation, balance-sheet
 charts, per-meter reading history, co-tenant and Kaution management, payment
-reminders, and SMTP/landlord settings.
+reminders, the **Anlage V** tax helper (per-property setup + yearly report with
+PDF export), the **Ask Vermio** assistant, and SMTP/landlord settings.
 
 ---
 
@@ -69,6 +75,24 @@ make up                # build and start all containers
 | API docs | http://localhost:8000/docs |
 
 The database schema is created automatically on first start (Alembic runs at API startup).
+
+---
+
+## Ask Vermio (AI assistant)
+
+The `/ask` page is a read-only assistant that answers questions about your own
+portfolio **and** German tenancy law, citing its sources. It runs an agentic
+tool-calling loop (Groq — Llama 3.3 70B) over read-only data tools plus a hybrid
+legal-RAG corpus.
+
+- Set `GROQ_API_KEY` in `.env` — a free key from [console.groq.com](https://console.groq.com).
+- The embedding + reranker models are **baked into the Docker image**, so nothing
+  downloads at runtime; `make up` is all you need.
+- For non-Docker dev, install the ML deps once: `pip install -r backend/requirements-rag.txt`.
+- Without the key or those deps, the `/api/assistant/*` and `/api/rag/ask`
+  endpoints return `503` — the rest of the app runs normally.
+
+It is read-only in this phase: it reports and explains, and never mutates data.
 
 ---
 
@@ -104,8 +128,10 @@ pip install -r backend/requirements-dev.txt
 make test            # or: cd backend && pytest
 ```
 
-Covers the Nebenkostenabrechnung proration (`logic.py`), currency formatting,
-the SQLite→PostgreSQL query translation (`db._adapt`), and the auth startup guard.
+Covers the Nebenkostenabrechnung proration (`logic.py`), the Anlage V tax math
+(`tax_logic.py` — annuity interest/Tilgung split, AfA, §82b distribution),
+currency formatting, the SQLite→PostgreSQL query translation (`db._adapt`), and
+the auth startup guard.
 
 ---
 
@@ -158,23 +184,30 @@ landlord_system/
 ├── backend/                    # all Python (FastAPI + shared core)
 │   ├── Dockerfile              # Python image (api)
 │   ├── api/                    # FastAPI routers + Pydantic schemas
-│   │   ├── routers/            # properties, tenants, contracts, payments,
-│   │   │                       # dashboard, flat-costs, meters, config, reports
+│   │   ├── routers/            # properties, tenants, contracts, payments, dashboard,
+│   │   │                       # flat-costs, meters, kaution, billing-profiles,
+│   │   │                       # co-tenants, reports, tax, assistant, rag, config
 │   │   └── schemas/
+│   ├── assistant/              # "Ask Vermio" agent: tool-calling loop, guardrails,
+│   │                           #   tools, thread persistence, streaming
+│   ├── rag/                    # Legal hybrid-RAG pipeline + corpus + index builder
 │   ├── balance_compute.py      # balance-sheet computations (used by reports)
 │   ├── db.py                   # DB connection + CRUD helpers
-│   ├── logic.py                # Billing calculations
+│   ├── logic.py                # Nebenkosten billing calculations
+│   ├── tax_logic.py            # Anlage V tax math (annuity split, AfA, proration)
 │   ├── pdfgen.py               # ReportLab PDF generation
 │   ├── currencies.py           # EUR/CNY/USD/GBP symbol map
 │   ├── auth.py                 # JWT + HTTP Basic auth + prod-config guard
 │   ├── alembic/                # Schema migrations
-│   ├── tests/                  # pytest suite (calculation logic, auth)
+│   ├── tests/                  # pytest suite (billing + tax logic, auth)
 │   ├── requirements.txt
+│   ├── requirements-rag.txt    # assistant/RAG ML deps (groq, sentence-transformers, chroma)
 │   └── requirements-dev.txt    # test-only deps (pytest)
 ├── frontend/                   # Next.js app
 │   ├── Dockerfile
 │   ├── app/                    # App Router pages
 │   └── components/             # Shared UI components
+├── docs/                       # Landing page (GitHub Pages) + PRDs / TRDs
 └── scripts/                    # Backup, sync, Neon migration
 ```
 

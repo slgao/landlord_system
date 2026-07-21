@@ -228,3 +228,8 @@ legal/
 # Scanned receipts/bills for the tax module (sensitive — never push).
 # Convention: documents/<year>/<property-name>/<file>.pdf
 documents/
+
+# Locally installed agent skills (via `npx skills add`) — machine-local.
+.agents/
+.claude/skills/
+skills-lock.json

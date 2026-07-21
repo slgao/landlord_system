@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo-mark.svg" width="76" alt="Vermio" />
+  <img src="docs/favicon.svg" width="76" alt="Vermio" />
 </p>
 
 <h1 align="center">Vermio</h1>

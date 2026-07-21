@@ -1,10 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="t" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#818cf8"/>
-      <stop offset="100%" stop-color="#4f46e5"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="15" fill="url(#t)"/>
-  <path d="M32 14 L52 50 L42 50 L32 31 L22 50 L12 50 Z" fill="#ffffff"/>
+  <!-- Ledger identity: ink Λ mark standing on a pine ruled line, on paper. -->
+  <rect width="64" height="64" rx="14" fill="#EFF1EB"/>
+  <path d="M32 13 L52 49 L42 49 L32 30 L22 49 L12 49 Z" fill="#171C18"/>
+  <rect x="12" y="52" width="40" height="3" rx="1.5" fill="#1F5D3F"/>
 </svg>

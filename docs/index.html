@@ -1,334 +1,585 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Vermio — Hausverwaltung für Privatvermieter</title>
-  <meta name="description" content="Vermio — self-hosted Hausverwaltung: Mieten tracken, Nebenkosten korrekt abrechnen, Mahnungen generieren. Läuft lokal, kostenlos, open source." />
+  <title>Vermio — Hausverwaltung als Kontobuch</title>
+  <meta name="description" content="Vermio ist selbst-gehostete Hausverwaltung für Privatvermieter: Nebenkosten tagesgenau abrechnen, Mieten führen, Mahnungen schreiben. Läuft lokal, ohne Cloud, ohne Abo. Open Source." />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: { mono: ['JetBrains Mono', 'Fira Code', 'ui-monospace', 'monospace'] },
-          colors: { accent: '#f97316' }
-        }
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ─────────────────────────────────────────────────────────────
+       Vermio — "Das Kontobuch"
+       A landing page composed like a well-kept ledger. Ink on
+       analysis paper; every figure set in monospace, tabular.
+       ───────────────────────────────────────────────────────────── */
+
+    :root {
+      --paper:      #EFF1EB;   /* pale green-grey analysis paper   */
+      --paper-2:    #E7E9E1;   /* panels, ruled blocks             */
+      --paper-3:    #DDE0D5;   /* deeper insets                    */
+      --rule:       #CDD3C6;   /* hairline ruling                  */
+      --rule-soft:  #DBE0D3;
+      --ink:        #171C18;   /* green-black ink                  */
+      --ink-soft:   #576057;   /* secondary text                  */
+      --ink-faint:  #7C8479;
+      --seal:       #1F5D3F;   /* pine — primary accent, "in black"*/
+      --seal-bright:#2A7A52;
+      --debit:      #A83A2C;   /* accounting red — semantic only   */
+
+      --band:       #10140F;   /* dark bands within a light page   */
+      --band-ink:   #E8ECE0;
+      --band-rule:  #2A3126;
+      --band-faint: #8B9384;
+
+      --maxw: 1120px;
+      --step:-0.5px;
+
+      --font-display: 'Archivo', system-ui, sans-serif;
+      --font-body:    'Newsreader', Georgia, serif;
+      --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper:     #12160F;
+        --paper-2:   #1A1E15;
+        --paper-3:   #222719;
+        --rule:      #2E3529;
+        --rule-soft: #262C20;
+        --ink:       #E8ECE0;
+        --ink-soft:  #A2AA98;
+        --ink-faint: #79826F;
+        --seal:      #6DB88A;
+        --seal-bright:#8FD3A9;
+        --debit:     #E07A6C;
+        --band:      #0C0F09;
+        --band-ink:  #E8ECE0;
+        --band-rule: #23291D;
+        --band-faint:#79826F;
       }
     }
-  </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <style>
-    html { scroll-behavior: smooth; }
-    .img-frame { box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 20px 50px rgba(0,0,0,.12); }
-    .bar { width: 12px; height: 12px; border-radius: 50%; }
-    pre, code { font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace; }
-    @keyframes fadein { from { opacity:0; transform: translateY(12px); } to { opacity:1; transform: none; } }
-    .hero-text > * { animation: fadein .5s ease both; }
-    .hero-text > *:nth-child(2) { animation-delay: .08s; }
-    .hero-text > *:nth-child(3) { animation-delay: .16s; }
-    .hero-text > *:nth-child(4) { animation-delay: .24s; }
+    /* Explicit toggle wins over the OS media query, both directions. */
+    :root[data-theme="light"] {
+      --paper:#EFF1EB; --paper-2:#E7E9E1; --paper-3:#DDE0D5; --rule:#CDD3C6; --rule-soft:#DBE0D3;
+      --ink:#171C18; --ink-soft:#576057; --ink-faint:#7C8479;
+      --seal:#1F5D3F; --seal-bright:#2A7A52; --debit:#A83A2C;
+      --band:#10140F; --band-ink:#E8ECE0; --band-rule:#2A3126; --band-faint:#8B9384;
+    }
+    :root[data-theme="dark"] {
+      --paper:#12160F; --paper-2:#1A1E15; --paper-3:#222719; --rule:#2E3529; --rule-soft:#262C20;
+      --ink:#E8ECE0; --ink-soft:#A2AA98; --ink-faint:#79826F;
+      --seal:#6DB88A; --seal-bright:#8FD3A9; --debit:#E07A6C;
+      --band:#0C0F09; --band-ink:#E8ECE0; --band-rule:#23291D; --band-faint:#79826F;
+    }
+
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--font-body);
+      font-size: 17px;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    ::selection { background: var(--seal); color: var(--paper); }
+
+    a { color: inherit; }
+    img { max-width: 100%; display: block; }
+    h1, h2, h3 { font-family: var(--font-display); font-weight: 800; margin: 0; text-wrap: balance; letter-spacing: -0.015em; }
+
+    .wrap { max-width: var(--maxw); margin: 0 auto; padding-inline: clamp(1.25rem, 4vw, 2.5rem); }
+
+    /* mono utility label — the ledger's hand */
+    .label {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--seal);
+    }
+    .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+    /* ── Nav ─────────────────────────────────────────────────────── */
+    .nav {
+      position: sticky; top: 0; z-index: 50;
+      background: color-mix(in oklab, var(--paper) 88%, transparent);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--rule);
+    }
+    .nav-in { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+    .brand { display: flex; align-items: center; gap: 0.6rem; text-decoration: none; color: var(--ink); }
+    .brand svg { width: 22px; height: 22px; display: block; }
+    .brand b { font-family: var(--font-display); font-weight: 800; font-size: 1.05rem; letter-spacing: -0.02em; }
+    .nav-links { display: flex; align-items: center; gap: 1.6rem; }
+    .nav-links a { font-family: var(--font-mono); font-size: 0.76rem; letter-spacing: 0.04em; color: var(--ink-soft); text-decoration: none; }
+    .nav-links a:hover { color: var(--ink); }
+    .nav-hide { display: none; }
+    @media (min-width: 720px) { .nav-hide { display: inline; } }
+
+    .ghost {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      font-family: var(--font-mono); font-size: 0.76rem;
+      border: 1px solid var(--ink); color: var(--ink);
+      padding: 0.42rem 0.8rem; text-decoration: none;
+      transition: background .15s, color .15s;
+    }
+    .ghost:hover { background: var(--ink); color: var(--paper); }
+    .ghost svg { width: 15px; height: 15px; }
+
+    .themebtn {
+      font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.08em;
+      background: none; border: 1px solid var(--rule); color: var(--ink-soft);
+      padding: 0.36rem 0.55rem; cursor: pointer; text-transform: uppercase;
+    }
+    .themebtn:hover { border-color: var(--ink-soft); color: var(--ink); }
+
+    /* focus visibility everywhere */
+    a:focus-visible, button:focus-visible {
+      outline: 2px solid var(--seal); outline-offset: 3px; border-radius: 1px;
+    }
+
+    /* ── Hero ────────────────────────────────────────────────────── */
+    .hero { padding-block: clamp(3rem, 8vw, 6rem) clamp(3.5rem, 8vw, 6rem); }
+    .hero-grid { display: grid; grid-template-columns: 1fr; gap: clamp(2.5rem, 5vw, 4rem); align-items: center; }
+    @media (min-width: 940px) { .hero-grid { grid-template-columns: 0.92fr 1.08fr; } }
+
+    .kicker { display: inline-block; margin-bottom: 1.4rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--rule); }
+    .hero h1 { font-size: clamp(2.3rem, 5.2vw, 3.6rem); line-height: 1.0; }
+    .hero h1 .soft { color: var(--ink-soft); font-weight: 700; }
+    .lede { margin: 1.5rem 0 0; max-width: 46ch; color: var(--ink-soft); font-size: 1.12rem; }
+    .lede em { color: var(--ink); font-style: italic; }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 2rem; }
+
+    .btn-solid {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      background: var(--seal); color: var(--paper);
+      font-family: var(--font-mono); font-size: 0.82rem; font-weight: 500;
+      padding: 0.7rem 1.15rem; text-decoration: none;
+      transition: background .15s, transform .15s;
+    }
+    :root[data-theme="dark"] .btn-solid { color: var(--band); }
+    @media (prefers-color-scheme: dark) { .btn-solid { color: var(--band); } }
+    .btn-solid:hover { background: var(--seal-bright); }
+    .btn-line {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      color: var(--ink); border: 1px solid var(--rule);
+      font-family: var(--font-mono); font-size: 0.82rem;
+      padding: 0.7rem 1.15rem; text-decoration: none;
+      transition: border-color .15s;
+    }
+    .btn-line:hover { border-color: var(--ink); }
+
+    /* ── The ledger entry — the signature ────────────────────────── */
+    .ledger {
+      background: var(--paper-2);
+      border: 1px solid var(--rule);
+      border-left: 3px solid var(--seal);
+      box-shadow: 0 1px 0 var(--rule), 18px 18px 0 -1px var(--paper-3);
+    }
+    .ledger-head {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+      padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--rule);
+    }
+    .ledger-head .t { font-family: var(--font-mono); font-size: 0.74rem; letter-spacing: 0.06em; color: var(--ink); }
+    .ledger-head .m { font-family: var(--font-mono); font-size: 0.68rem; color: var(--ink-faint); }
+    .ledger-body { padding: 0.4rem 1.25rem 1.25rem; }
+
+    .row {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+      padding: 0.72rem 0; border-bottom: 1px solid var(--rule-soft);
+    }
+    .row .k { color: var(--ink-soft); font-size: 0.98rem; }
+    .row .k .sub { display: block; font-family: var(--font-mono); font-size: 0.68rem; color: var(--ink-faint); letter-spacing: 0.02em; margin-top: 0.15rem; }
+    .row .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.98rem; color: var(--ink); white-space: nowrap; }
+    .row .v .u { color: var(--ink-faint); }
+
+    .row.tally { border-bottom: none; border-top: 2px solid var(--ink); margin-top: 0.3rem; padding-top: 0.95rem; align-items: baseline; }
+    .row.tally .k { font-family: var(--font-display); font-weight: 700; color: var(--ink); font-size: 1.02rem; }
+    .row.tally .v { font-size: 1.85rem; font-weight: 500; color: var(--seal); letter-spacing: -0.01em; }
+
+    .foot {
+      margin-top: 0.9rem; display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+      font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-faint);
+    }
+    .foot .strike { color: var(--debit); }
+    .foot .strike s { text-decoration-thickness: 1px; }
+
+    /* one orchestrated reveal on load */
+    @keyframes settle { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @keyframes draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    .reveal .row { opacity: 0; animation: settle .5s ease forwards; }
+    .reveal .row:nth-child(1) { animation-delay: .05s; }
+    .reveal .row:nth-child(2) { animation-delay: .16s; }
+    .reveal .row.tally { animation-delay: .34s; }
+    .reveal .row.tally { transform-origin: left; }
+    .reveal .foot { opacity: 0; animation: settle .5s ease .5s forwards; }
+    .reveal .row.tally { border-top-color: var(--ink); }
+    @media (prefers-reduced-motion: reduce) {
+      .reveal .row, .reveal .foot { opacity: 1; animation: none; }
+      html { scroll-behavior: auto; }
+    }
+
+    /* ── Sheets (sections) ───────────────────────────────────────── */
+    .sheet { padding-block: clamp(3.5rem, 7vw, 6rem); border-top: 1px solid var(--rule); }
+    .sheet-mark { display: flex; align-items: baseline; gap: 0.9rem; margin-bottom: 2.6rem; }
+    .sheet-mark .no { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-faint); letter-spacing: 0.1em; }
+    .sheet-mark h2 { font-size: clamp(1.6rem, 3.2vw, 2.25rem); line-height: 1.05; }
+
+    /* three-entry register */
+    .register { display: grid; grid-template-columns: 1fr; gap: 0; border-top: 1px solid var(--rule); }
+    @media (min-width: 760px) { .register { grid-template-columns: repeat(3, 1fr); } }
+    .entry { padding: 1.6rem 0; border-bottom: 1px solid var(--rule); }
+    @media (min-width: 760px) {
+      .entry { padding: 0 1.75rem; border-bottom: none; border-left: 1px solid var(--rule); }
+      .entry:first-child { padding-left: 0; border-left: none; }
+      .entry:last-child { padding-right: 0; }
+    }
+    .entry .en { font-family: var(--font-mono); font-size: 0.68rem; color: var(--seal); letter-spacing: 0.14em; }
+    .entry h3 { font-size: 1.18rem; margin: 0.6rem 0 0.5rem; }
+    .entry p { margin: 0; color: var(--ink-soft); font-size: 1.0rem; }
+
+    /* NK deep-dive: two columns */
+    .dive { display: grid; grid-template-columns: 1fr; gap: clamp(2rem, 4vw, 3.5rem); align-items: start; }
+    @media (min-width: 940px) { .dive { grid-template-columns: 1fr 1.05fr; } }
+    .dive p.body { color: var(--ink-soft); max-width: 52ch; margin: 0 0 1.6rem; }
+    .terms { list-style: none; margin: 0; padding: 0; }
+    .terms li { display: grid; grid-template-columns: auto 1fr; gap: 0.8rem; padding: 0.72rem 0; border-bottom: 1px solid var(--rule-soft); font-size: 0.98rem; }
+    .terms li:first-child { border-top: 1px solid var(--rule); }
+    .terms .mk { font-family: var(--font-mono); color: var(--seal); font-size: 0.8rem; line-height: 1.7; }
+
+    /* framed screenshot */
+    .frame { border: 1px solid var(--rule); background: var(--paper-2); }
+    .frame-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.85rem; border-bottom: 1px solid var(--rule); }
+    .frame-bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rule); }
+    .frame-bar .fn { margin-left: 0.4rem; font-family: var(--font-mono); font-size: 0.68rem; color: var(--ink-faint); }
+    .frame img { width: 100%; }
+    /* Gallery plates share a height and anchor to the top so rows line up
+       and each screen leads with its headers/figures, not its table tail. */
+    .plates .frame img { height: clamp(220px, 26vw, 320px); object-fit: cover; object-position: top; }
+
+    /* gallery of real screens as ledger pages */
+    .plates { display: grid; grid-template-columns: 1fr; gap: 1.4rem; }
+    @media (min-width: 680px) { .plates { grid-template-columns: repeat(6, 1fr); } }
+    .plate { grid-column: span 1; }
+    @media (min-width: 680px) {
+      .plate { grid-column: span 3; }
+      .plate.wide { grid-column: span 4; }
+      .plate.narrow { grid-column: span 2; }
+    }
+    .plate .cap { display: flex; align-items: baseline; gap: 0.6rem; margin-top: 0.7rem; }
+    .plate .cap b { font-family: var(--font-display); font-weight: 700; font-size: 0.92rem; }
+    .plate .cap span { color: var(--ink-soft); font-size: 0.9rem; }
+
+    /* ── Dark band: setup ────────────────────────────────────────── */
+    .band { background: var(--band); color: var(--band-ink); }
+    .band .sheet { border-top: none; }
+    .band .label, .band .en { color: var(--seal-bright); }
+    .band .sheet-mark .no { color: var(--band-faint); }
+    .band p { color: var(--band-faint); }
+    .band a.inline { color: var(--seal-bright); text-decoration: underline; text-underline-offset: 2px; }
+
+    .term {
+      border: 1px solid var(--band-rule); background: rgba(255,255,255,0.02);
+      overflow: hidden;
+    }
+    .term-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--band-rule); }
+    .term-bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--band-rule); }
+    .term-bar .fn { margin-left: 0.4rem; font-family: var(--font-mono); font-size: 0.68rem; color: var(--band-faint); }
+    .term pre { margin: 0; padding: 1.3rem 1.4rem; overflow-x: auto; font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.85; color: var(--band-ink); }
+    .term .c { color: var(--band-faint); }
+    .term .step { color: var(--seal-bright); }
+    .runs { margin-top: 1.6rem; display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--band-faint); }
+    .runs b { color: var(--band-ink); font-weight: 500; }
+
+    .subnote { margin-top: 2.6rem; padding-top: 2.2rem; border-top: 1px solid var(--band-rule); }
+    .subnote h3 { font-size: 1.1rem; margin-bottom: 0.7rem; }
+
+    code.inl { font-family: var(--font-mono); font-size: 0.86em; color: var(--band-ink); background: rgba(255,255,255,0.05); padding: 0.05em 0.35em; }
+
+    /* ── Footer ──────────────────────────────────────────────────── */
+    .foot-site { border-top: 1px solid var(--rule); padding-block: 2.4rem; }
+    .foot-in { display: flex; flex-direction: column; gap: 1.2rem; align-items: flex-start; justify-content: space-between; }
+    @media (min-width: 640px) { .foot-in { flex-direction: row; align-items: center; } }
+    .foot-in .lic { font-family: var(--font-mono); font-size: 0.74rem; color: var(--ink-faint); }
+    .foot-in nav { display: flex; gap: 1.6rem; }
+    .foot-in nav a { font-family: var(--font-mono); font-size: 0.76rem; color: var(--ink-soft); text-decoration: none; }
+    .foot-in nav a:hover { color: var(--ink); }
   </style>
 </head>
-<body class="bg-white text-gray-900 antialiased">
+<body>
 
-<!-- ── Nav ──────────────────────────────────────────────────────── -->
-<nav class="fixed inset-x-0 top-0 z-50 border-b border-gray-100 bg-white/95 backdrop-blur-sm">
-  <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-5">
-    <a href="#" class="flex items-center gap-2">
-      <img src="logo-mark.svg" class="h-6 w-6" alt="" />
-      <span class="text-base font-semibold tracking-tight">Vermio</span>
-    </a>
-    <div class="flex items-center gap-5 text-sm text-gray-500">
-      <a href="#features"    class="hidden hover:text-gray-900 sm:block transition-colors">Features</a>
-      <a href="#abrechnung"  class="hidden hover:text-gray-900 sm:block transition-colors">NK-Abrechnung</a>
-      <a href="#setup"       class="hidden hover:text-gray-900 sm:block transition-colors">Einrichtung</a>
-      <a href="https://github.com/slgao/landlord_system" target="_blank" rel="noopener"
-         class="flex items-center gap-2 rounded-lg border border-gray-200 px-3.5 py-1.5 font-medium text-gray-700 hover:border-gray-400 transition-colors">
-        <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
-        </svg>
-        GitHub
+  <!-- ── Nav ─────────────────────────────────────────────────────── -->
+  <header class="nav">
+    <div class="wrap nav-in">
+      <a class="brand" href="#top" aria-label="Vermio">
+        <!-- the Λ mark, rendered in ink so it reads in either theme -->
+        <svg viewBox="0 0 150 150" aria-hidden="true"><path d="M75 18 L146 132 L116 132 L75 66 L34 132 L4 132 Z" fill="currentColor"/></svg>
+        <b>Vermio</b>
       </a>
+      <div class="nav-links">
+        <a class="nav-hide" href="#abrechnung">Abrechnung</a>
+        <a class="nav-hide" href="#ansichten">Ansichten</a>
+        <a class="nav-hide" href="#einrichten">Einrichten</a>
+        <button class="themebtn" id="theme" type="button" aria-label="Farbschema wechseln">Dunkel</button>
+        <a class="ghost" href="https://github.com/slgao/landlord_system" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
     </div>
-  </div>
-</nav>
+  </header>
 
-<!-- ── Hero ─────────────────────────────────────────────────────── -->
-<section class="bg-[#0d1117] pt-14 text-white">
-  <div class="mx-auto max-w-6xl px-5 py-20 lg:py-28">
-    <div class="grid grid-cols-1 gap-16 lg:grid-cols-2 lg:items-center">
+  <!-- ── Hero ─────────────────────────────────────────────────────── -->
+  <main id="top">
+  <section class="hero">
+    <div class="wrap hero-grid">
 
-      <div class="hero-text">
-        <p class="mb-5 font-mono text-sm text-orange-400">// self-hosted · source-available · BSL 1.1</p>
-
-        <h1 class="mb-5 text-4xl font-bold leading-tight sm:text-5xl">
-          Vermio<br/>
-          <span class="text-gray-400">Hausverwaltung ohne Abo und ohne Cloud</span>
-        </h1>
-
-        <p class="mb-8 max-w-md text-base leading-relaxed text-gray-400">
-          Gebaut weil gute Hausverwaltungssoftware entweder zu teuer ist
-          oder Mieterdaten in fremde Server lädt. Läuft lokal,
-          braucht kein Internet, kostet nichts.
+      <div>
+        <span class="kicker label">Self-hosted · Open Source · BSL 1.1</span>
+        <h1>Ihre Miethäuser,<br/><span class="soft">geführt wie ein Kontobuch.</span></h1>
+        <p class="lede">
+          Ich habe Vermio gebaut, weil brauchbare Hausverwaltung entweder ein
+          Abo kostet oder Mieterdaten in fremde Clouds lädt. Es läuft auf dem
+          eigenen Rechner und rechnet Nebenkosten <em>auf den Tag genau</em> —
+          nicht geschätzt.
         </p>
-
-        <div class="flex flex-wrap gap-3">
-          <a href="https://github.com/slgao/landlord_system" target="_blank" rel="noopener"
-             class="rounded-lg bg-white px-6 py-2.5 text-sm font-semibold text-gray-900 hover:bg-gray-100 transition-colors">
-            Auf GitHub →
-          </a>
-          <a href="#setup"
-             class="rounded-lg border border-white/20 px-6 py-2.5 text-sm font-medium text-gray-300 hover:border-white/40 hover:text-white transition-colors">
-            Einrichten
-          </a>
+        <div class="cta-row">
+          <a class="btn-solid" href="https://github.com/slgao/landlord_system" target="_blank" rel="noopener">Auf GitHub ansehen →</a>
+          <a class="btn-line" href="#einrichten">Selbst einrichten</a>
         </div>
       </div>
 
-      <!-- Dashboard screenshot in browser frame -->
-      <div class="hidden lg:block">
-        <div class="overflow-hidden rounded-xl img-frame">
-          <div class="flex items-center gap-2 bg-[#1c2128] px-4 py-2.5">
-            <div class="bar bg-red-400/70"></div>
-            <div class="bar bg-yellow-400/70"></div>
-            <div class="bar bg-green-400/70"></div>
-            <span class="ml-2 font-mono text-xs text-gray-500">localhost:3000</span>
+      <!-- Signature: a real day-accurate settlement, drawn as a ledger entry -->
+      <div>
+        <figure class="ledger reveal" role="img"
+          aria-label="Beispielrechnung: Stromkosten 1.284 Euro, Mietzeit 231 von 365 Tagen, Mieteranteil 812,61 Euro.">
+          <div class="ledger-head">
+            <span class="t">Nebenkostenabrechnung — Strom</span>
+            <span class="m">Abrechnungsjahr 2023</span>
           </div>
-          <img src="screenshots/dashboard.png" alt="Dashboard" class="block w-full" />
+          <div class="ledger-body">
+            <div class="row">
+              <span class="k">Stromkosten gesamt<span class="sub">Anbieter · 01.01.–31.12.2023</span></span>
+              <span class="v">1.284,00&nbsp;<span class="u">€</span></span>
+            </div>
+            <div class="row">
+              <span class="k">Effektive Mietzeit<span class="sub">Einzug 15.05.2023 · tagesgenau</span></span>
+              <span class="v">231&nbsp;<span class="u">/ 365 Tg.</span></span>
+            </div>
+            <div class="row tally">
+              <span class="k">Mieteranteil</span>
+              <span class="v">812,61&nbsp;<span class="u" style="font-size:1.1rem;color:var(--ink-faint)">€</span></span>
+            </div>
+            <div class="foot">
+              <span class="strike">Excel, pauschal 8&#8202;/&#8202;12&nbsp;Monate: <s>856,00&nbsp;€</s></span>
+              <span>Δ&nbsp;43,39&nbsp;€</span>
+            </div>
+          </div>
+        </figure>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── Register: the three things it keeps ──────────────────────── -->
+  <section class="sheet" id="features">
+    <div class="wrap">
+      <div class="sheet-mark">
+        <span class="no">Blatt 01</span>
+        <h2>Was Vermio führt</h2>
+      </div>
+      <div class="register">
+        <div class="entry">
+          <span class="en">Nebenkosten</span>
+          <h3>Tagesgenau abrechnen</h3>
+          <p>Strom, Gas, Wasser, Heizung, Betriebskosten. Jede Kostenart wird auf die effektive Nutzungszeit umgelegt und als fertiges A4-PDF ausgegeben.</p>
+        </div>
+        <div class="entry">
+          <span class="en">Mieten</span>
+          <h3>Im Blick behalten</h3>
+          <p>Wer hat gezahlt, wer nicht — pro Monat und Objekt. Rückstände erkennt Vermio selbst, die Jahresbilanz rechnet Rendite je Wohnung.</p>
+        </div>
+        <div class="entry">
+          <span class="en">Mahnungen</span>
+          <h3>Sauber schreiben</h3>
+          <p>Zahlungsaufforderung als PDF — mit korrekter Anrede, allen Mitmietern im Adressfeld und eingebetteter Unterschrift.</p>
         </div>
       </div>
-
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- ── Three pillars ─────────────────────────────────────────────── -->
-<section id="features" class="border-b border-gray-100 bg-white py-16">
-  <div class="mx-auto max-w-5xl px-5">
-    <div class="grid grid-cols-1 gap-10 sm:grid-cols-3">
-
+  <!-- ── NK deep dive ─────────────────────────────────────────────── -->
+  <section class="sheet" id="abrechnung">
+    <div class="wrap dive">
       <div>
-        <div class="mb-3 text-2xl">🧾</div>
-        <h3 class="mb-1.5 font-semibold text-gray-900">NK-Abrechnung generieren</h3>
-        <p class="text-sm leading-relaxed text-gray-500">
-          Strom, Gas, Wasser, Heizung und Betriebskosten — jede Kostenart
-          tagesgenau auf den Mieter umgelegt. Fertiges A4-PDF in Sekunden.
+        <div class="sheet-mark" style="margin-bottom:1.8rem">
+          <span class="no">Blatt 02</span>
+          <h2>Umlegen, nicht schätzen</h2>
+        </div>
+        <p class="body">
+          In Excel entstehen die Fehler beim Einzug mitten im Jahr oder beim
+          Mieterwechsel im Abrechnungszeitraum. Vermio nimmt die Vertragsdaten
+          und rechnet die Nutzungszeit exakt auf den Tag — für jede Kostenart
+          mit ihrem eigenen Zeitraum.
         </p>
-      </div>
-
-      <div>
-        <div class="mb-3 text-2xl">📊</div>
-        <h3 class="mb-1.5 font-semibold text-gray-900">Mieten und Rendite verfolgen</h3>
-        <p class="text-sm leading-relaxed text-gray-500">
-          Wer hat gezahlt, wer nicht. Monatlicher Überblick über alle Objekte,
-          Jahresbilanz pro Wohnung, automatische Rückstands-Erkennung.
-        </p>
-      </div>
-
-      <div>
-        <div class="mb-3 text-2xl">📬</div>
-        <h3 class="mb-1.5 font-semibold text-gray-900">Mahnungen auf Knopfdruck</h3>
-        <p class="text-sm leading-relaxed text-gray-500">
-          Formelle Zahlungsaufforderung als PDF — geschlechtergerechte Anrede,
-          Anschrift aller Mitmieter, eingebettete Unterschrift.
-        </p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- ── Feature: NK-Abrechnung deep dive ─────────────────────────── -->
-<section id="abrechnung" class="bg-gray-50 py-24">
-  <div class="mx-auto max-w-6xl px-5">
-    <div class="grid grid-cols-1 items-center gap-16 lg:grid-cols-2">
-
-      <div>
-        <p class="mb-3 font-mono text-xs font-medium uppercase tracking-widest text-orange-500">Kernfunktion</p>
-        <h2 class="mb-5 text-3xl font-bold leading-snug text-gray-900 sm:text-4xl">
-          Nebenkosten korrekt<br/>abrechnen — nicht schätzen
-        </h2>
-        <p class="mb-8 leading-relaxed text-gray-500">
-          Mit Excel passieren Fehler beim Einzug mitten im Jahr oder bei
-          Mieterwechsel innerhalb des Abrechnungszeitraums.
-          Hier wird die effektive Nutzungszeit exakt auf den Tag genau berechnet.
-        </p>
-        <ul class="space-y-2.5 text-sm text-gray-700">
-          <li class="flex items-start gap-2.5"><span class="mt-px shrink-0 text-orange-500">→</span> Eigener Abrechnungszeitraum pro Kostenart (Anbieter ≠ Mietjahr)</li>
-          <li class="flex items-start gap-2.5"><span class="mt-px shrink-0 text-orange-500">→</span> Effektiver Mietzeitraum automatisch aus Vertragsdaten ermittelt</li>
-          <li class="flex items-start gap-2.5"><span class="mt-px shrink-0 text-orange-500">→</span> Zählernummern direkt aus der Meterverwaltung übernommen</li>
-          <li class="flex items-start gap-2.5"><span class="mt-px shrink-0 text-orange-500">→</span> Warmwasser separat (Frischwasser + Abwasser + Heizenergie)</li>
-          <li class="flex items-start gap-2.5"><span class="mt-px shrink-0 text-orange-500">→</span> Heizkostenverteiler (ISTA) mit Einheiten → kWh Umrechnung</li>
-          <li class="flex items-start gap-2.5"><span class="mt-px shrink-0 text-orange-500">→</span> Abrechnungsprofile: Werte einmal eingeben, nächstes Jahr laden</li>
-          <li class="flex items-start gap-2.5"><span class="mt-px shrink-0 text-orange-500">→</span> WG-Support: geteilte Zähler, anteilige Kosten, Personenanzahl auto</li>
+        <ul class="terms">
+          <li><span class="mk">01</span><span>Eigener Abrechnungszeitraum pro Kostenart (Anbieter ≠ Mietjahr)</span></li>
+          <li><span class="mk">02</span><span>Effektiver Mietzeitraum automatisch aus den Vertragsdaten</span></li>
+          <li><span class="mk">03</span><span>Zählernummern direkt aus der Zählerverwaltung übernommen</span></li>
+          <li><span class="mk">04</span><span>Warmwasser separat: Frischwasser + Abwasser + Heizenergie</span></li>
+          <li><span class="mk">05</span><span>Heizkostenverteiler (ISTA): Einheiten → kWh umgerechnet</span></li>
+          <li><span class="mk">06</span><span>Abrechnungsprofile: Werte einmal eingeben, nächstes Jahr laden</span></li>
+          <li><span class="mk">07</span><span>WG-Support: geteilte Zähler, anteilige Kosten, Personenzahl automatisch</span></li>
         </ul>
       </div>
-
-      <div class="overflow-hidden rounded-xl img-frame">
-        <div class="flex items-center gap-2 bg-gray-200 px-4 py-2.5">
-          <div class="bar bg-red-400/80"></div>
-          <div class="bar bg-yellow-400/80"></div>
-          <div class="bar bg-green-400/80"></div>
-          <span class="ml-2 font-mono text-xs text-gray-500">Nebenkostenabrechnung</span>
-        </div>
-        <img src="screenshots/nebenkostenabrechnung.png" alt="Nebenkostenabrechnung" class="block w-full" />
+      <div class="frame">
+        <div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">Nebenkostenabrechnung</span></div>
+        <img src="screenshots/nebenkostenabrechnung.png" alt="Formular der Nebenkostenabrechnung in Vermio mit Kostenarten und Zählerständen" loading="lazy" />
       </div>
-
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- ── Screenshots grid ──────────────────────────────────────────── -->
-<section class="bg-white py-24">
-  <div class="mx-auto max-w-6xl px-5">
-    <h2 class="mb-3 text-center text-3xl font-bold text-gray-900 sm:text-4xl">Alle Seiten auf einen Blick</h2>
-    <p class="mb-14 text-center text-gray-400">Keine extra Einarbeitung — die Oberfläche folgt dem, was man als Vermieter eh schon macht.</p>
+  <!-- ── Ansichten (real screenshots) ─────────────────────────────── -->
+  <section class="sheet" id="ansichten">
+    <div class="wrap">
+      <div class="sheet-mark">
+        <span class="no">Blatt 03</span>
+        <h2>Jede Seite bildet ab, was ohnehin anfällt</h2>
+      </div>
+      <div class="plates">
 
-    <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-
-      <!-- Balance Sheet — spans 2 cols on lg -->
-      <div class="group lg:col-span-2">
-        <div class="overflow-hidden rounded-xl img-frame transition-shadow duration-300 group-hover:shadow-2xl">
-          <div class="flex items-center gap-2 bg-gray-100 px-4 py-2 border-b border-gray-200">
-            <div class="bar bg-red-400/70"></div><div class="bar bg-yellow-400/70"></div><div class="bar bg-green-400/70"></div>
-            <span class="ml-2 font-mono text-xs text-gray-400">Balance Sheet</span>
+        <figure class="plate wide" style="margin:0">
+          <div class="frame">
+            <div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">Balance Sheet</span></div>
+            <img src="screenshots/balance_sheet.png" alt="Jahresbilanz mit Einnahmen, Kosten und Rendite je Wohnung" loading="lazy" />
           </div>
-          <img src="screenshots/balance_sheet.png" alt="Jahresbilanz" class="block w-full" />
-        </div>
-        <div class="mt-3 px-0.5">
-          <span class="text-sm font-semibold text-gray-800">Jahresbilanz</span>
-          <span class="ml-2 text-sm text-gray-400">— Einnahmen, Kosten, Rendite pro Wohnung und Objekt. Farbkodiert nach Soll/Ist.</span>
-        </div>
-      </div>
+          <figcaption class="cap"><b>Jahresbilanz</b><span>— Einnahmen, Kosten, Rendite pro Wohnung und Objekt.</span></figcaption>
+        </figure>
 
-      <!-- Rent Tracking -->
-      <div class="group">
-        <div class="overflow-hidden rounded-xl img-frame transition-shadow duration-300 group-hover:shadow-2xl">
-          <div class="flex items-center gap-2 bg-gray-100 px-4 py-2 border-b border-gray-200">
-            <div class="bar bg-red-400/70"></div><div class="bar bg-yellow-400/70"></div><div class="bar bg-green-400/70"></div>
-            <span class="ml-2 font-mono text-xs text-gray-400">Rent Tracking</span>
+        <figure class="plate narrow" style="margin:0">
+          <div class="frame">
+            <div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">Rent Tracking</span></div>
+            <img src="screenshots/rent_tracking.png" alt="Mietzahlungen mit sofort sichtbaren Rückständen" loading="lazy" />
           </div>
-          <img src="screenshots/rent_tracking.png" alt="Mietzahlungen" class="block w-full" />
-        </div>
-        <div class="mt-3 px-0.5">
-          <span class="text-sm font-semibold text-gray-800">Mietzahlungen</span>
-          <span class="ml-2 text-sm text-gray-400">— Rückstände sofort sichtbar.</span>
-        </div>
-      </div>
+          <figcaption class="cap"><b>Mietzahlungen</b><span>— Rückstände sofort sichtbar.</span></figcaption>
+        </figure>
 
-      <!-- Contracts -->
-      <div class="group">
-        <div class="overflow-hidden rounded-xl img-frame transition-shadow duration-300 group-hover:shadow-2xl">
-          <div class="flex items-center gap-2 bg-gray-100 px-4 py-2 border-b border-gray-200">
-            <div class="bar bg-red-400/70"></div><div class="bar bg-yellow-400/70"></div><div class="bar bg-green-400/70"></div>
-            <span class="ml-2 font-mono text-xs text-gray-400">Contracts</span>
+        <figure class="plate" style="margin:0">
+          <div class="frame">
+            <div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">Contracts</span></div>
+            <img src="screenshots/contracts.png" alt="Mietverträge mit Kaution, Laufzeit, Status und Mitmietern" loading="lazy" />
           </div>
-          <img src="screenshots/contracts.png" alt="Mietverträge" class="block w-full" />
-        </div>
-        <div class="mt-3 px-0.5">
-          <span class="text-sm font-semibold text-gray-800">Verträge</span>
-          <span class="ml-2 text-sm text-gray-400">— Kaution, Laufzeit, Status, Mitmieter.</span>
-        </div>
-      </div>
+          <figcaption class="cap"><b>Verträge</b><span>— Kaution, Laufzeit, Status.</span></figcaption>
+        </figure>
 
-      <!-- Meter Readings -->
-      <div class="group">
-        <div class="overflow-hidden rounded-xl img-frame transition-shadow duration-300 group-hover:shadow-2xl">
-          <div class="flex items-center gap-2 bg-gray-100 px-4 py-2 border-b border-gray-200">
-            <div class="bar bg-red-400/70"></div><div class="bar bg-yellow-400/70"></div><div class="bar bg-green-400/70"></div>
-            <span class="ml-2 font-mono text-xs text-gray-400">Meter Readings</span>
+        <figure class="plate" style="margin:0">
+          <div class="frame">
+            <div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">Meter Readings</span></div>
+            <img src="screenshots/meter_readings.png" alt="Zählerstände mit Verlauf, Tagesverbrauch und Grafik" loading="lazy" />
           </div>
-          <img src="screenshots/meter_readings.png" alt="Zählerstände" class="block w-full" />
-        </div>
-        <div class="mt-3 px-0.5">
-          <span class="text-sm font-semibold text-gray-800">Zählerstände</span>
-          <span class="ml-2 text-sm text-gray-400">— Verlauf, Tagesverbrauch, Grafik.</span>
-        </div>
-      </div>
+          <figcaption class="cap"><b>Zählerstände</b><span>— Verlauf und Tagesverbrauch.</span></figcaption>
+        </figure>
 
-      <!-- Mahnung -->
-      <div class="group">
-        <div class="overflow-hidden rounded-xl img-frame transition-shadow duration-300 group-hover:shadow-2xl">
-          <div class="flex items-center gap-2 bg-gray-100 px-4 py-2 border-b border-gray-200">
-            <div class="bar bg-red-400/70"></div><div class="bar bg-yellow-400/70"></div><div class="bar bg-green-400/70"></div>
-            <span class="ml-2 font-mono text-xs text-gray-400">Mahnung Generator</span>
+        <figure class="plate" style="margin:0">
+          <div class="frame">
+            <div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">Mahnung Generator</span></div>
+            <img src="screenshots/mahnung_generator.png" alt="Mahnung als formelles PDF mit Unterschrift" loading="lazy" />
           </div>
-          <img src="screenshots/mahnung_generator.png" alt="Mahnung" class="block w-full" />
-        </div>
-        <div class="mt-3 px-0.5">
-          <span class="text-sm font-semibold text-gray-800">Mahnung</span>
-          <span class="ml-2 text-sm text-gray-400">— Formelles PDF mit Unterschrift.</span>
-        </div>
+          <figcaption class="cap"><b>Mahnung</b><span>— formelles PDF mit Unterschrift.</span></figcaption>
+        </figure>
+
+      </div>
+    </div>
+  </section>
+  </main>
+
+  <!-- ── Einrichten (dark band) ───────────────────────────────────── -->
+  <section class="band" id="einrichten">
+    <div class="wrap sheet">
+      <div class="sheet-mark">
+        <span class="no">Blatt 04</span>
+        <h2 style="color:var(--band-ink)">Einrichten</h2>
+      </div>
+      <p style="margin:-1.6rem 0 2rem">Braucht nur <a class="inline" href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noopener">Docker Desktop</a>. Drei Schritte, dann laufen Datenbank, API und UI im Container.</p>
+
+      <div class="term">
+        <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">Terminal</span></div>
+<pre><span class="c"># 1 · Holen</span>
+<span class="step">git</span> clone https://github.com/slgao/landlord_system.git
+<span class="step">cd</span> landlord_system
+
+<span class="c"># 2 · Konfigurieren</span>
+<span class="step">cp</span> .env.example .env      <span class="c"># POSTGRES_PASSWORD setzen</span>
+
+<span class="c"># 3 · Starten — baut und startet alle Container</span>
+<span class="step">make</span> up</pre>
       </div>
 
-    </div>
-  </div>
-</section>
-
-<!-- ── Setup ─────────────────────────────────────────────────────── -->
-<section id="setup" class="border-t border-gray-100 bg-[#0d1117] py-24 text-white">
-  <div class="mx-auto max-w-3xl px-5">
-    <h2 class="mb-3 text-3xl font-bold sm:text-4xl">Einrichten</h2>
-    <p class="mb-10 text-gray-400">Braucht Python 3.10+ und <a href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noopener" class="text-orange-400 hover:underline">Docker Desktop</a>.</p>
-
-    <div class="overflow-hidden rounded-xl border border-white/10">
-      <!-- Terminal header -->
-      <div class="flex items-center gap-2 border-b border-white/10 bg-white/5 px-4 py-3">
-        <div class="bar bg-red-400/60"></div>
-        <div class="bar bg-yellow-400/60"></div>
-        <div class="bar bg-green-400/60"></div>
-        <span class="ml-3 font-mono text-xs text-gray-500">Terminal</span>
+      <div class="runs">
+        <span>Next.js UI → <b>localhost:3000</b></span>
+        <span>FastAPI → <b>localhost:8000</b> <span style="opacity:.7">· docs /docs</span></span>
+        <span>Schema legt Alembic beim Start selbst an</span>
       </div>
-      <pre class="overflow-x-auto p-6 text-sm leading-7 text-gray-300"><code><span class="text-gray-500"># 1. Holen</span>
-git clone https://github.com/slgao/landlord_system.git
-cd landlord_system
 
-<span class="text-gray-500"># 2. Einrichten (venv + Docker + Schema)</span>
-cp .env.example .env      <span class="text-gray-500"># POSTGRES_PASSWORD setzen</span>
-./setup.sh
+      <div class="subnote">
+        <h3 style="color:var(--band-ink)">Auf mehreren Rechnern</h3>
+        <p style="margin-bottom:1.3rem;max-width:60ch">
+          Einmal zu <a class="inline" href="https://neon.tech" target="_blank" rel="noopener">Neon</a> migrieren
+          (das kostenlose Tier reicht), dann läuft dieselbe Datenbank auf Mac und Linux gleichzeitig.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">Terminal</span></div>
+<pre><span class="c"># Einmalig: lokalen Docker zu Neon migrieren</span>
+<span class="step">./scripts/migrate_to_neon.sh</span> "postgresql://...neon..."
 
-<span class="text-gray-500"># 3. Starten</span>
-source venv/bin/activate
-honcho start</code></pre>
+<span class="c"># Lokale Kopie vom Stand der Neon-DB aktualisieren</span>
+<span class="step">./scripts/sync_local_from_neon.sh</span></pre>
+        </div>
+      </div>
     </div>
+  </section>
 
-    <div class="mt-8 flex flex-col gap-2 font-mono text-sm sm:flex-row sm:gap-8">
-      <span class="text-gray-500">Next.js UI → <span class="text-white">localhost:3000</span></span>
-      <span class="text-gray-500">FastAPI   → <span class="text-white">localhost:8000</span></span>
+  <!-- ── Footer ───────────────────────────────────────────────────── -->
+  <footer class="foot-site">
+    <div class="wrap foot-in">
+      <span class="lic">Vermio — Business Source License 1.1</span>
+      <nav>
+        <a href="https://github.com/slgao/landlord_system" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/slgao/landlord_system/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/slgao/landlord_system/blob/main/README.md" target="_blank" rel="noopener">Docs</a>
+      </nav>
     </div>
+  </footer>
 
-    <p class="mt-8 text-sm text-gray-500">
-      Die Datenbank läuft in Docker mit <code class="text-gray-300">--restart unless-stopped</code> —
-      startet automatisch wenn Docker läuft. Danach reicht täglich <code class="text-gray-300">honcho start</code>.
-    </p>
-
-    <div class="mt-12 border-t border-white/10 pt-10">
-      <h3 class="mb-4 text-lg font-semibold">Auf mehreren Rechnern nutzen</h3>
-      <p class="mb-5 text-sm text-gray-400">
-        Einmal zu <a href="https://neon.tech" target="_blank" rel="noopener" class="text-orange-400 hover:underline">Neon</a> migrieren
-        (kostenloses Tier reicht), dann läuft dieselbe Datenbank auf Mac und Linux gleichzeitig.
-      </p>
-      <pre class="overflow-x-auto rounded-xl border border-white/10 bg-white/5 p-5 text-sm leading-7 text-gray-300"><code><span class="text-gray-500"># Einmalig: lokalen Docker zu Neon migrieren</span>
-./scripts/migrate_to_neon.sh "postgresql://...neon..."
-
-<span class="text-gray-500"># Lokale Kopie vom Stand der Neon-DB aktualisieren</span>
-./scripts/sync_local_from_neon.sh</code></pre>
-    </div>
-  </div>
-</section>
-
-<!-- ── Footer ────────────────────────────────────────────────────── -->
-<footer class="border-t border-gray-100 bg-white py-10">
-  <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-5 sm:flex-row">
-    <span class="font-mono text-sm text-gray-400">Vermio — Business Source License 1.1</span>
-    <div class="flex gap-6 text-sm text-gray-400">
-      <a href="https://github.com/slgao/landlord_system" target="_blank" rel="noopener" class="hover:text-gray-900 transition-colors">GitHub</a>
-      <a href="https://github.com/slgao/landlord_system/issues" target="_blank" rel="noopener" class="hover:text-gray-900 transition-colors">Issues</a>
-      <a href="https://github.com/slgao/landlord_system/blob/main/README.md" target="_blank" rel="noopener" class="hover:text-gray-900 transition-colors">Docs</a>
-    </div>
-  </div>
-</footer>
+  <script>
+    // Theme: start from stored choice or OS preference; toggle stamps data-theme.
+    (function () {
+      var root = document.documentElement;
+      var btn = document.getElementById('theme');
+      var stored = null;
+      try { stored = localStorage.getItem('vermio_theme'); } catch (e) {}
+      var mql = window.matchMedia('(prefers-color-scheme: dark)');
+      function apply(mode) {
+        root.setAttribute('data-theme', mode);
+        btn.textContent = mode === 'dark' ? 'Hell' : 'Dunkel';
+      }
+      apply(stored || (mql.matches ? 'dark' : 'light'));
+      btn.addEventListener('click', function () {
+        var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        apply(next);
+        try { localStorage.setItem('vermio_theme', next); } catch (e) {}
+      });
+    })();
+  </script>
 
 </body>
 </html>

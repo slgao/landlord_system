@@ -102,15 +102,18 @@ def migrate_to_head() -> None:
 
 
 def get_config(key, default=None):
-    rows = fetch("SELECT value FROM config WHERE key=?", (key,))
+    """Per-user config read, scoped to the current request's owner."""
+    rows = fetch("SELECT value FROM config WHERE key=? AND owner_id=?",
+                 (key, current_owner()))
     return rows[0][0] if rows else default
 
 
 def set_config(key, value):
+    owner = require_owner()
     execute(
-        "INSERT INTO config (key, value) VALUES (?, ?) "
-        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-        (key, value)
+        "INSERT INTO config (key, value, owner_id) VALUES (?, ?, ?) "
+        "ON CONFLICT (owner_id, key) DO UPDATE SET value = EXCLUDED.value",
+        (key, value, owner)
     )
 
 

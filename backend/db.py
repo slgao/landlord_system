@@ -248,19 +248,21 @@ def execute_returning(query, params=()):
 
 
 def get_tenant_address(tenant_name):
-    """Return property address for a tenant via their active contract, or None."""
+    """Return property address for a tenant via their active contract, or None.
+    Scoped to the current request's owner."""
     rows = fetch("""
         SELECT p.address
         FROM contracts c
         JOIN tenants t ON t.id = c.tenant_id
         JOIN apartments a ON a.id = c.apartment_id
         JOIN properties p ON p.id = a.property_id
-        WHERE t.name = ?
+        WHERE t.name = ? AND t.owner_id = ?
         LIMIT 1
-    """, (tenant_name,))
+    """, (tenant_name, current_owner()))
     return rows[0][0] if rows else None
 
 
 def get_tenant_gender(tenant_name):
-    rows = fetch("SELECT gender FROM tenants WHERE name = ? LIMIT 1", (tenant_name,))
+    rows = fetch("SELECT gender FROM tenants WHERE name = ? AND owner_id = ? LIMIT 1",
+                 (tenant_name, current_owner()))
     return rows[0][0] if rows else "diverse"

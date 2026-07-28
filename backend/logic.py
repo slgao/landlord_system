@@ -290,7 +290,7 @@ def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end, limit_per_
     return cost_per_tenant, period_cost, limit_period, nachzahlung
 
 
-def detect_overdue(default_months_back=12):
+def detect_overdue(default_months_back=12, owner=None):
     """
     For every active (non-terminated) contract, compare the total rent due over
     a look-back window against the total recorded payments in that window, using
@@ -325,9 +325,9 @@ def detect_overdue(default_months_back=12):
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
         JOIN properties p ON a.property_id = p.id
-        WHERE COALESCE(c.terminated, 0) = 0
+        WHERE COALESCE(c.terminated, 0) = 0 AND c.owner_id = ?
         ORDER BY t.name
-    """)
+    """, (owner,))
     if not contracts:
         return []
 

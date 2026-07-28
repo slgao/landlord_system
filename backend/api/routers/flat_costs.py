@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from db import fetch, execute, insert
+from auth import require_auth
 
 router = APIRouter(prefix="/flat-costs", tags=["Flat Costs"])
 
@@ -48,49 +49,52 @@ _SELECT = """
 
 
 @router.get("/", response_model=list[FlatCostOut])
-def list_flat_costs(apartment_id: int | None = None):
+def list_flat_costs(apartment_id: int | None = None, owner: int = Depends(require_auth)):
     if apartment_id:
-        rows = fetch(f"{_SELECT} WHERE fc.apartment_id=? ORDER BY fc.cost_type", (apartment_id,))
+        rows = fetch(f"{_SELECT} WHERE fc.apartment_id=? AND fc.owner_id=? ORDER BY fc.cost_type",
+                     (apartment_id, owner))
     else:
-        rows = fetch(f"{_SELECT} ORDER BY p.name, a.name, fc.cost_type")
+        rows = fetch(f"{_SELECT} WHERE fc.owner_id=? ORDER BY p.name, a.name, fc.cost_type",
+                     (owner,))
     return [_row(r) for r in rows]
 
 
 @router.get("/{cost_id}", response_model=FlatCostOut)
-def get_flat_cost(cost_id: int):
-    rows = fetch(f"{_SELECT} WHERE fc.id=?", (cost_id,))
+def get_flat_cost(cost_id: int, owner: int = Depends(require_auth)):
+    rows = fetch(f"{_SELECT} WHERE fc.id=? AND fc.owner_id=?", (cost_id, owner))
     if not rows:
         raise HTTPException(status_code=404, detail="Flat cost not found")
     return _row(rows[0])
 
 
 @router.post("/", response_model=FlatCostOut, status_code=201)
-def create_flat_cost(body: FlatCostIn):
-    insert("flat_costs", (body.apartment_id, body.cost_type, body.amount,
-                          body.frequency, body.valid_from, body.valid_to))
-    rows = fetch(f"{_SELECT} WHERE fc.apartment_id=? ORDER BY fc.id DESC LIMIT 1",
-                 (body.apartment_id,))
+def create_flat_cost(body: FlatCostIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM apartments WHERE id=? AND owner_id=?", (body.apartment_id, owner)):
+        raise HTTPException(status_code=404, detail="Apartment not found")
+    new_id = insert("flat_costs", (body.apartment_id, body.cost_type, body.amount,
+                                   body.frequency, body.valid_from, body.valid_to))
+    rows = fetch(f"{_SELECT} WHERE fc.id=?", (new_id,))
     return _row(rows[0])
 
 
 @router.put("/{cost_id}", response_model=FlatCostOut)
-def update_flat_cost(cost_id: int, body: FlatCostIn):
-    rows = fetch("SELECT id FROM flat_costs WHERE id=?", (cost_id,))
-    if not rows:
+def update_flat_cost(cost_id: int, body: FlatCostIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM flat_costs WHERE id=? AND owner_id=?", (cost_id, owner)):
         raise HTTPException(status_code=404, detail="Flat cost not found")
+    if not fetch("SELECT id FROM apartments WHERE id=? AND owner_id=?", (body.apartment_id, owner)):
+        raise HTTPException(status_code=404, detail="Apartment not found")
     execute("""
         UPDATE flat_costs SET apartment_id=?, cost_type=?, amount=?,
                frequency=?, valid_from=?, valid_to=?
-        WHERE id=?
+        WHERE id=? AND owner_id=?
     """, (body.apartment_id, body.cost_type, body.amount,
-          body.frequency, body.valid_from, body.valid_to, cost_id))
+          body.frequency, body.valid_from, body.valid_to, cost_id, owner))
     rows = fetch(f"{_SELECT} WHERE fc.id=?", (cost_id,))
     return _row(rows[0])
 
 
 @router.delete("/{cost_id}", status_code=204)
-def delete_flat_cost(cost_id: int):
-    rows = fetch("SELECT id FROM flat_costs WHERE id=?", (cost_id,))
-    if not rows:
+def delete_flat_cost(cost_id: int, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM flat_costs WHERE id=? AND owner_id=?", (cost_id, owner)):
         raise HTTPException(status_code=404, detail="Flat cost not found")
-    execute("DELETE FROM flat_costs WHERE id=?", (cost_id,))
+    execute("DELETE FROM flat_costs WHERE id=? AND owner_id=?", (cost_id, owner))

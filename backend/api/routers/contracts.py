@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
-from db import fetch, execute, insert
+from fastapi import APIRouter, Depends, HTTPException
+from db import fetch, execute, execute_returning
+from auth import require_auth
 from api.schemas.contract import ContractIn, ContractOut
 
 router = APIRouter(prefix="/contracts", tags=["Contracts"])
@@ -36,41 +37,50 @@ _SELECT = """
 """
 
 
+def _get(contract_id: int, owner: int):
+    rows = fetch(f"{_SELECT} WHERE c.id=? AND c.owner_id=?", (contract_id, owner))
+    if not rows:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    return rows[0]
+
+
+def _assert_own(contract_id: int, owner: int):
+    if not fetch("SELECT id FROM contracts WHERE id=? AND owner_id=?", (contract_id, owner)):
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+
 @router.get("/", response_model=list[ContractOut])
-def list_contracts(active_only: bool = False):
-    where = "WHERE COALESCE(c.terminated, 0) = 0" if active_only else ""
-    rows = fetch(f"{_SELECT} {where} ORDER BY c.start_date DESC")
+def list_contracts(active_only: bool = False, owner: int = Depends(require_auth)):
+    where = "AND COALESCE(c.terminated, 0) = 0" if active_only else ""
+    rows = fetch(f"{_SELECT} WHERE c.owner_id=? {where} ORDER BY c.start_date DESC", (owner,))
     return [_row(r) for r in rows]
 
 
 # Specific paths must come before /{contract_id} to avoid being captured by it
 @router.get("/tenant/{tenant_id}", response_model=list[ContractOut])
-def contracts_for_tenant(tenant_id: int):
-    rows = fetch(f"{_SELECT} WHERE c.tenant_id=? ORDER BY c.start_date DESC", (tenant_id,))
+def contracts_for_tenant(tenant_id: int, owner: int = Depends(require_auth)):
+    rows = fetch(f"{_SELECT} WHERE c.tenant_id=? AND c.owner_id=? ORDER BY c.start_date DESC",
+                 (tenant_id, owner))
     return [_row(r) for r in rows]
 
 
 @router.get("/kaution-overview", response_model=list)
-def kaution_overview_top():
-    return kaution_overview()
+def kaution_overview_top(owner: int = Depends(require_auth)):
+    return kaution_overview(owner)
 
 
 @router.get("/{contract_id}/occupancy")
-def contract_occupancy(contract_id: int):
-    """Auto-detect how many persons the flat's utility costs are divided by:
-      • co-tenants named on the contract → 1. Mitmieter share ONE contract as a
-        single household renting the whole flat, so the main tenant is billed for
-        the entire flat; co-tenants do NOT increase the divisor (they still appear
-        named on the PDF).
-      • otherwise (e.g. a WG where each room is its own contract) → number of
-        distinct active tenants sharing the same flat in the same property.
-    """
-    row = fetch("SELECT apartment_id FROM contracts WHERE id=?", (contract_id,))
+def contract_occupancy(contract_id: int, owner: int = Depends(require_auth)):
+    """Auto-detect how many persons the flat's utility costs are divided by.
+    See the WG vs. single-household rule below."""
+    row = fetch("SELECT apartment_id FROM contracts WHERE id=? AND owner_id=?",
+                (contract_id, owner))
     if not row:
         raise HTTPException(status_code=404, detail="Contract not found")
     apartment_id = row[0][0]
 
-    co = fetch("SELECT COUNT(*) FROM co_tenants WHERE contract_id=?", (contract_id,))
+    co = fetch("SELECT COUNT(*) FROM co_tenants WHERE contract_id=? AND owner_id=?",
+               (contract_id, owner))
     co_count = int(co[0][0]) if co and co[0][0] else 0
 
     if co_count > 0:
@@ -81,113 +91,98 @@ def contract_occupancy(contract_id: int):
             SELECT COUNT(DISTINCT c.tenant_id)
             FROM contracts c
             JOIN apartments a ON c.apartment_id = a.id
-            WHERE COALESCE(c.terminated, 0) = 0
+            WHERE c.owner_id = ?
+              AND COALESCE(c.terminated, 0) = 0
               AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= date('now')::text)
               AND a.flat IS NOT NULL AND a.flat != ''
               AND a.property_id = (SELECT property_id FROM apartments WHERE id=?)
               AND a.flat = (SELECT flat FROM apartments WHERE id=?)
-        """, (apartment_id, apartment_id))
+        """, (owner, apartment_id, apartment_id))
         auto_count = int(pf[0][0]) if pf and pf[0][0] else 1
 
     return {"auto_count": max(1, auto_count), "co_tenant_count": co_count}
 
 
 @router.get("/{contract_id}", response_model=ContractOut)
-def get_contract(contract_id: int):
-    rows = fetch(f"{_SELECT} WHERE c.id=?", (contract_id,))
-    if not rows:
-        raise HTTPException(status_code=404, detail="Contract not found")
-    return _row(rows[0])
+def get_contract(contract_id: int, owner: int = Depends(require_auth)):
+    return _row(_get(contract_id, owner))
 
 
 @router.post("/", response_model=ContractOut, status_code=201)
-def create_contract(body: ContractIn):
-    from db import get_conn, put_conn
-    conn = get_conn()
-    try:
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO contracts
-              (tenant_id, apartment_id, rent, currency, start_date, end_date,
-               kaution_amount, kaution_currency, kaution_paid_date,
-               kaution_returned_date, kaution_returned_amount, terminated)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            RETURNING id
-        """, (body.tenant_id, body.apartment_id, body.rent, body.currency,
-              body.start_date, body.end_date or None,
-              body.kaution_amount, body.kaution_currency,
-              body.kaution_paid_date or None,
-              body.kaution_returned_date or None,
-              body.kaution_returned_amount,
-              int(body.terminated)))
-        new_id = c.fetchone()[0]
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        put_conn(conn)
-    rows = fetch(f"{_SELECT} WHERE c.id=?", (new_id,))
-    return _row(rows[0])
-
-
-@router.put("/{contract_id}", response_model=ContractOut)
-def update_contract(contract_id: int, body: ContractIn):
-    rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))
-    if not rows:
-        raise HTTPException(status_code=404, detail="Contract not found")
-    execute("""
-        UPDATE contracts SET
-          tenant_id=?, apartment_id=?, rent=?, currency=?,
-          start_date=?, end_date=?,
-          kaution_amount=?, kaution_currency=?, kaution_paid_date=?,
-          kaution_returned_date=?, kaution_returned_amount=?, terminated=?
-        WHERE id=?
+def create_contract(body: ContractIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM tenants WHERE id=? AND owner_id=?", (body.tenant_id, owner)):
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if not fetch("SELECT id FROM apartments WHERE id=? AND owner_id=?", (body.apartment_id, owner)):
+        raise HTTPException(status_code=404, detail="Apartment not found")
+    new_id = execute_returning("""
+        INSERT INTO contracts
+          (tenant_id, apartment_id, rent, currency, start_date, end_date,
+           kaution_amount, kaution_currency, kaution_paid_date,
+           kaution_returned_date, kaution_returned_amount, terminated, owner_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        RETURNING id
     """, (body.tenant_id, body.apartment_id, body.rent, body.currency,
           body.start_date, body.end_date or None,
           body.kaution_amount, body.kaution_currency,
           body.kaution_paid_date or None,
           body.kaution_returned_date or None,
           body.kaution_returned_amount,
-          int(body.terminated), contract_id))
-    rows = fetch(f"{_SELECT} WHERE c.id=?", (contract_id,))
-    return _row(rows[0])
+          int(body.terminated), owner))[0][0]
+    return _row(_get(new_id, owner))
+
+
+@router.put("/{contract_id}", response_model=ContractOut)
+def update_contract(contract_id: int, body: ContractIn, owner: int = Depends(require_auth)):
+    _assert_own(contract_id, owner)
+    if not fetch("SELECT id FROM tenants WHERE id=? AND owner_id=?", (body.tenant_id, owner)):
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if not fetch("SELECT id FROM apartments WHERE id=? AND owner_id=?", (body.apartment_id, owner)):
+        raise HTTPException(status_code=404, detail="Apartment not found")
+    execute("""
+        UPDATE contracts SET
+          tenant_id=?, apartment_id=?, rent=?, currency=?,
+          start_date=?, end_date=?,
+          kaution_amount=?, kaution_currency=?, kaution_paid_date=?,
+          kaution_returned_date=?, kaution_returned_amount=?, terminated=?
+        WHERE id=? AND owner_id=?
+    """, (body.tenant_id, body.apartment_id, body.rent, body.currency,
+          body.start_date, body.end_date or None,
+          body.kaution_amount, body.kaution_currency,
+          body.kaution_paid_date or None,
+          body.kaution_returned_date or None,
+          body.kaution_returned_amount,
+          int(body.terminated), contract_id, owner))
+    return _row(_get(contract_id, owner))
 
 
 @router.post("/{contract_id}/terminate", response_model=ContractOut)
-def terminate_contract(contract_id: int, end_date: str | None = None):
-    rows = fetch("SELECT end_date FROM contracts WHERE id=?", (contract_id,))
+def terminate_contract(contract_id: int, end_date: str | None = None,
+                       owner: int = Depends(require_auth)):
+    rows = fetch("SELECT end_date FROM contracts WHERE id=? AND owner_id=?", (contract_id, owner))
     if not rows:
         raise HTTPException(status_code=404, detail="Contract not found")
     from datetime import date as _date
     existing = rows[0][0]
     existing = existing if (existing and str(existing) != "None") else None
-    # Resolve the end date without ever silently clobbering a real one:
-    #   • explicit end_date          → use it
-    #   • no end_date, contract has   → keep the contracted end date
-    #   • no end_date, open-ended     → today (early termination)
     if end_date:
         ed = end_date
     elif existing:
         ed = existing
     else:
         ed = str(_date.today())
-    execute("UPDATE contracts SET terminated=1, end_date=? WHERE id=?", (ed, contract_id))
-    rows = fetch(f"{_SELECT} WHERE c.id=?", (contract_id,))
-    return _row(rows[0])
+    execute("UPDATE contracts SET terminated=1, end_date=? WHERE id=? AND owner_id=?",
+            (ed, contract_id, owner))
+    return _row(_get(contract_id, owner))
 
 
 @router.post("/{contract_id}/reopen", response_model=ContractOut)
-def reopen_contract(contract_id: int):
-    rows = fetch("SELECT end_date FROM contracts WHERE id=?", (contract_id,))
+def reopen_contract(contract_id: int, owner: int = Depends(require_auth)):
+    rows = fetch("SELECT end_date FROM contracts WHERE id=? AND owner_id=?", (contract_id, owner))
     if not rows:
         raise HTTPException(status_code=404, detail="Contract not found")
     from datetime import date as _date
     existing = rows[0][0]
     existing = existing if (existing and str(existing) != "None") else None
-    # Preserve a genuine fixed-term end date that is still in the future; only
-    # clear an end date that termination set to today/the past (which restores
-    # the open-ended contract it used to be).
     keep_end = False
     if existing:
         try:
@@ -195,11 +190,11 @@ def reopen_contract(contract_id: int):
         except ValueError:
             keep_end = False
     if keep_end:
-        execute("UPDATE contracts SET terminated=0 WHERE id=?", (contract_id,))
+        execute("UPDATE contracts SET terminated=0 WHERE id=? AND owner_id=?", (contract_id, owner))
     else:
-        execute("UPDATE contracts SET terminated=0, end_date=NULL WHERE id=?", (contract_id,))
-    rows = fetch(f"{_SELECT} WHERE c.id=?", (contract_id,))
-    return _row(rows[0])
+        execute("UPDATE contracts SET terminated=0, end_date=NULL WHERE id=? AND owner_id=?",
+                (contract_id, owner))
+    return _row(_get(contract_id, owner))
 
 
 from pydantic import BaseModel as _BM
@@ -215,42 +210,34 @@ class RentSettleIn(_BM):
 
 
 @router.post("/{contract_id}/settle-rent")
-def settle_rent(contract_id: int, body: RentSettleIn):
-    """Mark a contract's rent as settled through a date (or clear it with null).
-    Used from Payment Reminders to dismiss false positives from unrecorded old
-    payments; the reminder calc then only evaluates months after this date."""
-    rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))
-    if not rows:
-        raise HTTPException(status_code=404, detail="Contract not found")
+def settle_rent(contract_id: int, body: RentSettleIn, owner: int = Depends(require_auth)):
+    _assert_own(contract_id, owner)
     settled = (body.settled_until or "").strip() or None
-    execute("UPDATE contracts SET rent_settled_until=? WHERE id=?", (settled, contract_id))
+    execute("UPDATE contracts SET rent_settled_until=? WHERE id=? AND owner_id=?",
+            (settled, contract_id, owner))
     return {"contract_id": contract_id, "rent_settled_until": settled}
 
 
 @router.post("/{contract_id}/kaution-return", response_model=ContractOut)
-def mark_kaution_returned(contract_id: int, body: KautionReturnIn):
-    rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))
-    if not rows:
-        raise HTTPException(status_code=404, detail="Contract not found")
-    execute("UPDATE contracts SET kaution_returned_date=?, kaution_returned_amount=? WHERE id=?",
-            (body.returned_date, body.returned_amount, contract_id))
-    rows = fetch(f"{_SELECT} WHERE c.id=?", (contract_id,))
-    return _row(rows[0])
+def mark_kaution_returned(contract_id: int, body: KautionReturnIn,
+                          owner: int = Depends(require_auth)):
+    _assert_own(contract_id, owner)
+    execute("UPDATE contracts SET kaution_returned_date=?, kaution_returned_amount=? "
+            "WHERE id=? AND owner_id=?",
+            (body.returned_date, body.returned_amount, contract_id, owner))
+    return _row(_get(contract_id, owner))
 
 
 @router.post("/{contract_id}/kaution-return/clear", response_model=ContractOut)
-def clear_kaution_return(contract_id: int):
-    rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))
-    if not rows:
-        raise HTTPException(status_code=404, detail="Contract not found")
-    execute("UPDATE contracts SET kaution_returned_date=NULL, kaution_returned_amount=NULL WHERE id=?",
-            (contract_id,))
-    rows = fetch(f"{_SELECT} WHERE c.id=?", (contract_id,))
-    return _row(rows[0])
+def clear_kaution_return(contract_id: int, owner: int = Depends(require_auth)):
+    _assert_own(contract_id, owner)
+    execute("UPDATE contracts SET kaution_returned_date=NULL, kaution_returned_amount=NULL "
+            "WHERE id=? AND owner_id=?", (contract_id, owner))
+    return _row(_get(contract_id, owner))
 
 
 @router.get("/kaution-overview", response_model=list)
-def kaution_overview():
+def kaution_overview(owner: int = Depends(require_auth)):
     rows = fetch("""
         SELECT c.id, t.name, a.name, p.name,
                c.kaution_amount, COALESCE(c.kaution_currency,'EUR'),
@@ -261,18 +248,15 @@ def kaution_overview():
         JOIN tenants t ON t.id=c.tenant_id
         JOIN apartments a ON a.id=c.apartment_id
         JOIN properties p ON p.id=a.property_id
-        WHERE c.kaution_amount IS NOT NULL AND c.kaution_amount > 0
+        WHERE c.owner_id = ?
+          AND c.kaution_amount IS NOT NULL AND c.kaution_amount > 0
         ORDER BY t.name
-    """)
+    """, (owner,))
     result = []
     for r in rows:
         k_amt = float(r[4]) if r[4] else 0.0
         deducted = float(r[9]) if r[9] else 0.0
         installments = float(r[10]) if r[10] else 0.0
-        # Legacy deposits carry no installment rows but a kaution_paid_date,
-        # which means the tenant paid the full amount up front. Treat that as
-        # fully paid so "outstanding" isn't reported as the entire deposit.
-        # Mirrors the `legacyFullyPaid` rule in the contracts detail view.
         paid_date = r[6] and str(r[6]) != "None"
         legacy_fully_paid = installments == 0.0 and bool(paid_date)
         paid = k_amt if legacy_fully_paid else installments
@@ -290,10 +274,7 @@ def kaution_overview():
 
 
 @router.delete("/{contract_id}", status_code=204)
-def delete_contract(contract_id: int):
-    rows = fetch("SELECT id FROM contracts WHERE id=?", (contract_id,))
-    if not rows:
-        raise HTTPException(status_code=404, detail="Contract not found")
-    # Child rows (payments, kaution_deductions, kaution_payments, co_tenants,
-    # reminders) are removed automatically by their ON DELETE CASCADE FKs.
-    execute("DELETE FROM contracts WHERE id=?", (contract_id,))
+def delete_contract(contract_id: int, owner: int = Depends(require_auth)):
+    _assert_own(contract_id, owner)
+    # Child rows (payments, kaution_*, co_tenants, reminders) cascade via FKs.
+    execute("DELETE FROM contracts WHERE id=? AND owner_id=?", (contract_id, owner))

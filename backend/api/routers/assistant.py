@@ -22,15 +22,13 @@ from assistant import threads
 router = APIRouter(prefix="/assistant", tags=["Assistant"])
 
 
-def resolve_landlord_id(user: str) -> int:
+def resolve_landlord_id(user: int) -> int:
     """The single source of `landlord_id` (TRD §6, §11).
 
-    Phase 1 is single-tenant, so every authenticated user maps to the one
-    bootstrap landlord. Phase 2 replaces this with a JWT custom claim
-    (`landlord_id`) read off the verified token — the *only* change needed here,
-    because nothing else in the stack sources the scope from anywhere else.
+    Now multi-tenant: the landlord scope IS the authenticated user's id (the data
+    owner), taken from the verified token — never from the request body.
     """
-    return BOOTSTRAP_LANDLORD_ID
+    return int(user)
 
 
 class AskRequest(BaseModel):

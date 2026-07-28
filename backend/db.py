@@ -12,6 +12,7 @@
 # ================================================================
 
 import os
+import contextvars
 import psycopg2
 from psycopg2 import pool as _pg_pool
 from dotenv import load_dotenv
@@ -19,6 +20,29 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DATABASE_URL = os.environ["DATABASE_URL"]
+
+# Request-scoped current owner (user id). Set by auth.require_auth for every
+# authenticated request; read by insert() to stamp owner_id, and available to
+# routers that scope their reads. None outside a request (e.g. migrations).
+_current_owner: "contextvars.ContextVar[int | None]" = contextvars.ContextVar(
+    "current_owner", default=None)
+
+
+def set_current_owner(owner_id: int | None) -> None:
+    _current_owner.set(owner_id)
+
+
+def current_owner() -> int | None:
+    return _current_owner.get()
+
+
+def require_owner() -> int:
+    """Owner id for the current request, or raise if unset (a programming error:
+    a data query ran outside an authenticated request)."""
+    o = _current_owner.get()
+    if o is None:
+        raise RuntimeError("No current owner set — data access outside an authenticated request")
+    return o
 
 _POOL_MIN = int(os.environ.get("DB_POOL_MIN", "1"))
 _POOL_MAX = int(os.environ.get("DB_POOL_MAX", "10"))
@@ -122,15 +146,23 @@ def set_secret_config(key, value):
 
 
 def insert(table, values):
+    """Positional insert into an owner-scoped table. Stamps owner_id (the last
+    column on every owned table) from the current request's owner and returns
+    the generated id. All callers operate on owner-scoped tables."""
+    owner = require_owner()
     conn = get_conn()
     try:
         c = conn.cursor()
         placeholders = ",".join(["%s"] * len(values))
+        # owner_id is the trailing column on every owned table (see the
+        # add_users_and_owner_id migration).
         c.execute(
-            f"INSERT INTO {table} VALUES (DEFAULT,{placeholders})",
-            values
+            f"INSERT INTO {table} VALUES (DEFAULT,{placeholders},%s) RETURNING id",
+            (*values, owner),
         )
+        new_id = c.fetchone()[0]
         conn.commit()
+        return new_id
     except Exception:
         conn.rollback()
         raise

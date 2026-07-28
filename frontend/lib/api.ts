@@ -33,8 +33,18 @@ api.interceptors.response.use(
   }
 );
 
-export async function login(username: string, password: string) {
-  const res = await axios.post(`${BASE}/api/auth/token`, { username, password });
+export async function login(email: string, password: string) {
+  // The backend reads `username` as the email (kept for API compatibility).
+  const res = await axios.post(`${BASE}/api/auth/token`, { username: email, password });
+  const token: string = res.data.access_token;
+  localStorage.setItem("token", token);
+  return token;
+}
+
+export async function register(email: string, password: string, displayName?: string) {
+  const res = await axios.post(`${BASE}/api/auth/register`, {
+    email, password, display_name: displayName || null,
+  });
   const token: string = res.data.access_token;
   localStorage.setItem("token", token);
   return token;

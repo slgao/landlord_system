@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 from db import get_config, set_config
+from auth import require_auth
 
 router = APIRouter(prefix="/config", tags=["Config"])
 
@@ -44,13 +45,16 @@ class SmtpConfigIn(BaseModel):
     smtp_password: Optional[str] = None
 
 
+# get_config/set_config are owner-scoped via the request's owner context, which
+# require_auth publishes; the owner dependency below guarantees it is set.
+
 @router.get("/", response_model=ConfigOut)
-def get_all_config():
+def get_all_config(owner: int = Depends(require_auth)):
     return ConfigOut(**{k: get_config(k) for k in _KEYS})
 
 
 @router.put("/", response_model=ConfigOut)
-def update_config(body: ConfigIn):
+def update_config(body: ConfigIn, owner: int = Depends(require_auth)):
     for k in _KEYS:
         v = getattr(body, k)
         if v is not None:
@@ -59,14 +63,14 @@ def update_config(body: ConfigIn):
 
 
 @router.get("/smtp", response_model=SmtpConfigOut)
-def get_smtp_config():
+def get_smtp_config(owner: int = Depends(require_auth)):
     from db import get_secret_config
     return SmtpConfigOut(**{k: get_config(k) for k in _SMTP_KEYS},
                          smtp_password=get_secret_config("smtp_password", ""))
 
 
 @router.put("/smtp", response_model=SmtpConfigOut)
-def update_smtp_config(body: SmtpConfigIn):
+def update_smtp_config(body: SmtpConfigIn, owner: int = Depends(require_auth)):
     from db import set_secret_config
     for k in _SMTP_KEYS:
         v = getattr(body, k)

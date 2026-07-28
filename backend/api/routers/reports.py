@@ -3,11 +3,12 @@ import functools
 import traceback
 from datetime import date
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional, Any
-from db import get_config, fetch, execute, get_conn, put_conn
+from db import get_config, fetch, execute, execute_returning
+from auth import require_auth
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -29,11 +30,10 @@ def _surface_errors(fn):
             raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
     return wrapper
 
-_SIG_PATH = "pdf/signature.png"
-
-
-def _sig() -> str | None:
-    return _SIG_PATH if Path(_SIG_PATH).exists() else None
+def _sig(owner: int) -> str | None:
+    """Per-user signature file (matches the /api/signature endpoints)."""
+    p = f"pdf/signature_{owner}.png"
+    return p if Path(p).exists() else None
 
 
 def _landlord_name() -> str:
@@ -43,9 +43,9 @@ def _landlord_name() -> str:
 # ── Balance Sheet ─────────────────────────────────────────────────────────────
 
 @router.get("/balance-sheet/{year}")
-def balance_sheet_data(year: int):
+def balance_sheet_data(year: int, owner: int = Depends(require_auth)):
     from balance_compute import _compute_snapshot
-    snapshot, props = _compute_snapshot(year)
+    snapshot, props = _compute_snapshot(year, owner)
     # serialise Decimal values for JSON
     def _f(v):
         try:
@@ -64,11 +64,11 @@ def balance_sheet_data(year: int):
 
 
 @router.get("/balance-sheet/{year}/pdf")
-def balance_sheet_pdf(year: int):
+def balance_sheet_pdf(year: int, owner: int = Depends(require_auth)):
     from balance_compute import _compute_snapshot
     from pdfgen import balance_sheet_pdf as gen_pdf
-    snapshot, props = _compute_snapshot(year)
-    pdf_bytes = gen_pdf(year, snapshot, props, landlord_name=_landlord_name(), signature_path=_sig())
+    snapshot, props = _compute_snapshot(year, owner)
+    pdf_bytes = gen_pdf(year, snapshot, props, landlord_name=_landlord_name(), signature_path=_sig(owner))
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="Bilanz_{year}.pdf"'})
 
@@ -95,7 +95,7 @@ def _norm_billings(x):
 
 @router.post("/nebenkostenabrechnung/calculate")
 @_surface_errors
-def nk_calculate(body: NKCalcRequest):
+def nk_calculate(body: NKCalcRequest, owner: int = Depends(require_auth)):
     from logic import (strom_calc_detail, gas_calc_detail, water_calc_detail,
                        warmwasser_calc_detail, heizung_calc_detail,
                        betriebskosten_calc, sum_cost_calc)
@@ -180,7 +180,7 @@ class NKRequest(BaseModel):
 
 @router.post("/nebenkostenabrechnung/pdf")
 @_surface_errors
-def nebenkostenabrechnung_pdf(body: NKRequest):
+def nebenkostenabrechnung_pdf(body: NKRequest, owner: int = Depends(require_auth)):
     from pdfgen import invoice_pdf
     from db import get_tenant_gender
     # Resolve the primary tenant's gender for the salutation/honorific (the
@@ -191,16 +191,16 @@ def nebenkostenabrechnung_pdf(body: NKRequest):
     address = (body.address or "").strip()
     contract_period = None
     if body.contract_id:
-        rows = fetch("SELECT name, gender FROM co_tenants WHERE contract_id=? AND in_contract=1 ORDER BY id",
-                     (body.contract_id,))
+        rows = fetch("SELECT name, gender FROM co_tenants WHERE contract_id=? AND in_contract=1 "
+                     "AND owner_id=? ORDER BY id", (body.contract_id, owner))
         co_tenants = [{"name": r[0], "gender": r[1]} for r in rows] or None
         # Resolve the full property address (street + postcode + city) and the
         # tenant's contract period from the contract, mirroring the Mahnung flow.
         meta = fetch(
             "SELECT p.address, c.start_date, c.end_date FROM contracts c "
             "JOIN apartments a ON a.id = c.apartment_id "
-            "JOIN properties p ON p.id = a.property_id WHERE c.id = ?",
-            (body.contract_id,))
+            "JOIN properties p ON p.id = a.property_id WHERE c.id = ? AND c.owner_id = ?",
+            (body.contract_id, owner))
         if meta:
             full_addr, c_start, c_end = meta[0]
             if not address:
@@ -221,7 +221,7 @@ def nebenkostenabrechnung_pdf(body: NKRequest):
     if body.deduct_kaution and body.contract_id and not kaution_info:
         krow = fetch(
             "SELECT kaution_amount, COALESCE(kaution_currency,'EUR'), kaution_returned_date "
-            "FROM contracts WHERE id=?", (body.contract_id,))
+            "FROM contracts WHERE id=? AND owner_id=?", (body.contract_id, owner))
         if krow and krow[0][0] and not (krow[0][2] and str(krow[0][2]) != "None"):
             kaution_info = {"kaution_amount": float(krow[0][0]),
                             "kaution_currency": krow[0][1]}
@@ -229,7 +229,7 @@ def nebenkostenabrechnung_pdf(body: NKRequest):
     path = invoice_pdf(
         tenant=body.tenant, address=address,
         landlord_name=_landlord_name(), gender=gender,
-        signature_path=_sig(), strom=body.strom, gas=body.gas,
+        signature_path=_sig(owner), strom=body.strom, gas=body.gas,
         water=body.water, warmwater=body.warmwater, heizung=body.heizung,
         bk=body.bk, extra=body.extra, kaution_info=kaution_info,
         landlord_info=body.landlord_info, co_tenants=co_tenants,
@@ -251,7 +251,7 @@ class MahnungRequest(BaseModel):
 
 @router.post("/mahnung/pdf")
 @_surface_errors
-def mahnung_pdf(body: MahnungRequest):
+def mahnung_pdf(body: MahnungRequest, owner: int = Depends(require_auth)):
     from pdfgen import generate_mahnung
     from db import get_tenant_gender
     gender = get_tenant_gender(body.tenant_name)
@@ -264,16 +264,16 @@ def mahnung_pdf(body: MahnungRequest):
             addr_row = fetch(
                 "SELECT p.address FROM contracts c "
                 "JOIN apartments a ON a.id = c.apartment_id "
-                "JOIN properties p ON p.id = a.property_id WHERE c.id = ?",
-                (body.contract_id,))
+                "JOIN properties p ON p.id = a.property_id WHERE c.id = ? AND c.owner_id = ?",
+                (body.contract_id, owner))
             address = (addr_row[0][0] if addr_row and addr_row[0][0] else "") or ""
         # Fetch co-tenants (in_contract only) for the salutation / recipients
-        rows = fetch("SELECT name, gender FROM co_tenants WHERE contract_id=? AND in_contract=1 ORDER BY id",
-                     (body.contract_id,))
+        rows = fetch("SELECT name, gender FROM co_tenants WHERE contract_id=? AND in_contract=1 "
+                     "AND owner_id=? ORDER BY id", (body.contract_id, owner))
         co_tenants = [{"name": r[0], "gender": r[1]} for r in rows] or None
     path = generate_mahnung(
         body.tenant_name, body.amount_due, address,
-        gender=gender, signature_path=_sig(), co_tenants=co_tenants,
+        gender=gender, signature_path=_sig(owner), co_tenants=co_tenants,
     )
     pdf_bytes = Path(path).read_bytes()
     return Response(content=pdf_bytes, media_type="application/pdf",
@@ -283,7 +283,7 @@ def mahnung_pdf(body: MahnungRequest):
 # ── Payment Reminders ─────────────────────────────────────────────────────────
 
 @router.get("/payment-reminders")
-def payment_reminders():
+def payment_reminders(owner: int = Depends(require_auth)):
     from logic import detect_overdue
     # detect_overdue returns a cumulative-balance view already enriched with the
     # property name, currency and per-month breakdown — no extra queries here.
@@ -305,7 +305,7 @@ def payment_reminders():
         "first_month":        item.get("first_month"),
         "last_month":         item.get("last_month"),
         "months":             item["months"],
-    } for item in detect_overdue(default_months_back=12)]
+    } for item in detect_overdue(default_months_back=12, owner=owner)]
 
 
 class ReminderIn(BaseModel):
@@ -328,7 +328,7 @@ class ReminderOut(BaseModel):
 
 
 @router.get("/reminders/history")
-def reminder_history():
+def reminder_history(owner: int = Depends(require_auth)):
     rows = fetch("""
         SELECT r.id, t.name, a.name, r.sent_date, r.months_due,
                r.amount_due, r.channel, r.note
@@ -336,48 +336,41 @@ def reminder_history():
         JOIN contracts c ON r.contract_id = c.id
         JOIN tenants t ON c.tenant_id = t.id
         JOIN apartments a ON c.apartment_id = a.id
+        WHERE r.owner_id = ?
         ORDER BY r.sent_date DESC
         LIMIT 200
-    """)
+    """, (owner,))
     return [{"id": r[0], "tenant_name": r[1], "apartment_name": r[2],
              "sent_date": r[3], "months_due": r[4], "amount_due": float(r[5]),
              "channel": r[6], "note": r[7]} for r in rows]
 
 
 @router.get("/reminders")
-def list_reminders(contract_id: int | None = None):
+def list_reminders(contract_id: int | None = None, owner: int = Depends(require_auth)):
     if contract_id:
         rows = fetch("""
             SELECT r.id, r.contract_id, r.sent_date, r.months_due, r.amount_due, r.channel, r.note
-            FROM reminders r WHERE r.contract_id=? ORDER BY r.sent_date DESC
-        """, (contract_id,))
+            FROM reminders r WHERE r.contract_id=? AND r.owner_id=? ORDER BY r.sent_date DESC
+        """, (contract_id, owner))
     else:
         rows = fetch("""
             SELECT r.id, r.contract_id, r.sent_date, r.months_due, r.amount_due, r.channel, r.note
-            FROM reminders r ORDER BY r.sent_date DESC LIMIT 100
-        """)
+            FROM reminders r WHERE r.owner_id=? ORDER BY r.sent_date DESC LIMIT 100
+        """, (owner,))
     return [{"id": r[0], "contract_id": r[1], "sent_date": r[2],
              "months_due": r[3], "amount_due": float(r[4]),
              "channel": r[5], "note": r[6]} for r in rows]
 
 
 @router.post("/reminders", status_code=201)
-def create_reminder(body: ReminderIn):
-    conn = get_conn()
-    try:
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO reminders (contract_id,sent_date,months_due,amount_due,channel,note)
-            VALUES (%s,%s,%s,%s,%s,%s) RETURNING id
-        """, (body.contract_id, body.sent_date, body.months_due,
-              body.amount_due, body.channel, body.note))
-        new_id = c.fetchone()[0]
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        put_conn(conn)
+def create_reminder(body: ReminderIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM contracts WHERE id=? AND owner_id=?", (body.contract_id, owner)):
+        raise HTTPException(status_code=404, detail="Contract not found")
+    new_id = execute_returning("""
+        INSERT INTO reminders (contract_id,sent_date,months_due,amount_due,channel,note,owner_id)
+        VALUES (?,?,?,?,?,?,?) RETURNING id
+    """, (body.contract_id, body.sent_date, body.months_due,
+          body.amount_due, body.channel, body.note, owner))[0][0]
     return {"id": new_id, "contract_id": body.contract_id, "sent_date": body.sent_date,
             "months_due": body.months_due, "amount_due": body.amount_due,
             "channel": body.channel, "note": body.note}

@@ -1,30 +1,29 @@
 """
-Auth module supporting:
-- FastAPI HTTP Basic (backward compat)
-- FastAPI JWT Bearer (Next.js)
+Multi-user auth:
+- JWT Bearer (Next.js) — `sub` is the user id
+- HTTP Basic (email + password) for backward-compatible tooling
 
-APP_PASSWORD_HASH  — bcrypt hash of the app password (open if unset)
-APP_USERNAME       — login username (default: admin)
-JWT_SECRET         — signing key for JWT tokens (random per process if unset)
+Every authenticated request resolves to a user id, which is published to the
+request-scoped owner context (db.set_current_owner) so data access is scoped to
+that user.
 
-Generate a hash:
-    python -c 'import bcrypt, getpass; print(bcrypt.hashpw(getpass.getpass().encode(), bcrypt.gensalt()).decode())'
+JWT_SECRET — signing key for JWT tokens (random per process if unset)
 """
 import logging
 import os
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-import bcrypt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from starlette.concurrency import run_in_threadpool
 from jose import JWTError, jwt
+
+from db import set_current_owner
+import users_db
 
 log = logging.getLogger("uvicorn.error")
 
-_HASH_ENV = "APP_PASSWORD_HASH"
-_USERNAME = os.environ.get("APP_USERNAME", "admin")
 _JWT_ALGO = "HS256"
 _JWT_EXPIRE_HOURS = 24 * 7  # 1 week
 
@@ -36,23 +35,19 @@ _JWT_SECRET_ENV = (os.environ.get("JWT_SECRET") or "").strip()
 # When JWT_SECRET is unset we fall back to a per-process random key. That keeps
 # local dev working but silently invalidates every issued token on restart —
 # verify_startup_config() warns (dev) or refuses to start (production).
-_JWT_SECRET = _JWT_SECRET_ENV or secrets.token_hex(32)
+import secrets as _secrets
+_JWT_SECRET = _JWT_SECRET_ENV or _secrets.token_hex(32)
 
 
 def verify_startup_config() -> None:
     """Validate auth secrets at startup. In production (APP_ENV=production) a
-    missing/weak JWT_SECRET or an unset APP_PASSWORD_HASH is fatal; otherwise
-    we only warn so local dev stays frictionless."""
+    missing/weak JWT_SECRET is fatal; otherwise we only warn."""
     is_prod = os.environ.get("APP_ENV", "development").lower() == "production"
     problems = []
     if _JWT_SECRET_ENV in _WEAK_SECRETS:
         problems.append(
             "JWT_SECRET is unset or the shipped placeholder — set a random 32+ "
             "char value (tokens are otherwise forgeable and reset on restart)."
-        )
-    if _password_hash() is None:
-        problems.append(
-            "APP_PASSWORD_HASH is unset — the API is open to anyone who can reach it."
         )
     if not problems:
         return
@@ -65,39 +60,25 @@ def verify_startup_config() -> None:
         log.warning("auth: %s", p)
 
 
-def _password_hash() -> str | None:
-    h = os.environ.get(_HASH_ENV, "").strip()
-    return h or None
-
-
-def _verify(password: str) -> bool:
-    h = _password_hash()
-    if not h:
-        return True
-    try:
-        return bcrypt.checkpw(password.encode("utf-8"), h.encode("utf-8"))
-    except (ValueError, TypeError):
-        return False
-
-
 # ── JWT ──────────────────────────────────────────────────────────────────────
 
-def create_access_token(username: str) -> str:
+def create_access_token(user_id: int) -> str:
     payload = {
-        "sub": username,
+        "sub": str(user_id),
         "exp": datetime.now(timezone.utc) + timedelta(hours=_JWT_EXPIRE_HOURS),
     }
     return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGO)
 
 
-def verify_access_token(token: str) -> str:
+def verify_access_token(token: str) -> int:
+    """Return the user id encoded in a valid token, else raise 401."""
     try:
         payload = jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGO])
         sub = payload.get("sub")
-        if not sub:
+        if sub is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        return sub
-    except JWTError:
+        return int(sub)
+    except (JWTError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
@@ -105,31 +86,46 @@ def verify_access_token(token: str) -> str:
         )
 
 
-# ── FastAPI ──────────────────────────────────────────────────────────────────
+# ── FastAPI dependency ─────────────────────────────────────────────────────────
 
 _basic = HTTPBasic(auto_error=False)
 
 
-def require_auth(
-    request: Request,
-    basic_creds: Optional[HTTPBasicCredentials] = Depends(_basic),
-) -> str:
-    """Accept JWT Bearer token or HTTP Basic. Open when APP_PASSWORD_HASH is unset."""
-    if _password_hash() is None:
-        return "anonymous"
-
+def _authenticate(request: Request, basic_creds: Optional[HTTPBasicCredentials]) -> int:
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        return verify_access_token(auth_header[7:])
+        uid = verify_access_token(auth_header[7:])
+        user = users_db.get_user_by_id(uid)
+        if not user or not user["is_active"]:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="User not found or inactive")
+        return uid
 
     if basic_creds:
-        user_ok = secrets.compare_digest(basic_creds.username, _USERNAME)
-        pw_ok = _verify(basic_creds.password)
-        if user_ok and pw_ok:
-            return basic_creds.username
+        user = users_db.get_user_by_email(basic_creds.username)
+        if user and user["is_active"] and users_db.verify_password(
+                basic_creds.password, user["password_hash"]):
+            return user["id"]
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required",
-        headers={"WWW-Authenticate": 'Bearer, Basic realm="Hausverwaltung"'},
+        headers={"WWW-Authenticate": 'Bearer, Basic realm="Vermio"'},
     )
+
+
+async def require_auth(
+    request: Request,
+    basic_creds: Optional[HTTPBasicCredentials] = Depends(_basic),
+) -> int:
+    """Resolve the authenticated user id, publish it as the request's data owner,
+    and return it. Used both as a router-level gate and as an injected dependency
+    (`owner: int = Depends(require_auth)`).
+
+    Async on purpose: set_current_owner() must run in the request's event-loop
+    context so run_in_threadpool copies the owner into the (sync) endpoint's
+    thread — a ContextVar set from a *sync* dependency would not propagate.
+    """
+    uid = await run_in_threadpool(_authenticate, request, basic_creds)
+    set_current_owner(uid)
+    return uid

@@ -5,12 +5,15 @@ its source rows ("derivation"), and figures the DB can't know (gap-year income,
 Sondertilgung-affected interest) are overridable per (property, year, field)
 via tax_year_overrides. Manual always wins over computed.
 """
-from fastapi import APIRouter, HTTPException
+import json
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
 
 from db import fetch, execute, insert
+from auth import require_auth
 import tax_logic
 
 router = APIRouter(prefix="/tax", tags=["Tax"])
@@ -102,14 +105,16 @@ def _mortgage_row(r) -> dict:
 
 
 @router.get("/profiles")
-def list_profiles():
-    props = fetch("SELECT id, name, COALESCE(tax_relevant,1) FROM properties ORDER BY name")
+def list_profiles(owner: int = Depends(require_auth)):
+    props = fetch("SELECT id, name, COALESCE(tax_relevant,1) FROM properties "
+                  "WHERE owner_id=? ORDER BY name", (owner,))
     profiles = {r[0]: r for r in fetch(
         "SELECT property_id, purchase_date, purchase_price, building_share_pct,"
-        "       afa_rate_pct, notes FROM property_tax_profiles")}
+        "       afa_rate_pct, notes FROM property_tax_profiles WHERE owner_id=?", (owner,))}
     mortgages: dict[int, list] = {}
     for r in fetch("SELECT id, property_id, label, principal, interest_rate_pct,"
-                   "       tilgung_rate_pct, start_date, note FROM mortgages ORDER BY id"):
+                   "       tilgung_rate_pct, start_date, note FROM mortgages "
+                   "WHERE owner_id=? ORDER BY id", (owner,)):
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
 
     out = []
@@ -139,62 +144,65 @@ def list_profiles():
 
 
 @router.put("/profiles/{property_id}")
-def upsert_profile(property_id: int, body: TaxProfileIn):
-    if not fetch("SELECT id FROM properties WHERE id=?", (property_id,)):
+def upsert_profile(property_id: int, body: TaxProfileIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (property_id, owner)):
         raise HTTPException(status_code=404, detail="Property not found")
     vals = (body.purchase_date, body.purchase_price, body.building_share_pct,
             body.afa_rate_pct, body.notes)
-    if fetch("SELECT id FROM property_tax_profiles WHERE property_id=?", (property_id,)):
+    if fetch("SELECT id FROM property_tax_profiles WHERE property_id=? AND owner_id=?",
+             (property_id, owner)):
         execute("""UPDATE property_tax_profiles SET purchase_date=?, purchase_price=?,
-                   building_share_pct=?, afa_rate_pct=?, notes=? WHERE property_id=?""",
-                (*vals, property_id))
+                   building_share_pct=?, afa_rate_pct=?, notes=? WHERE property_id=? AND owner_id=?""",
+                (*vals, property_id, owner))
     else:
         insert("property_tax_profiles", (property_id, *vals))
     return {"property_id": property_id, **body.model_dump()}
 
 
 @router.put("/properties/{property_id}/relevance")
-def set_tax_relevance(property_id: int, body: RelevanceIn):
+def set_tax_relevance(property_id: int, body: RelevanceIn, owner: int = Depends(require_auth)):
     """Include/exclude a property from the tax report (e.g. managed for
     someone else). Separate from the profile upsert so a toggle can never
     clobber purchase data."""
-    if not fetch("SELECT id FROM properties WHERE id=?", (property_id,)):
+    if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (property_id, owner)):
         raise HTTPException(status_code=404, detail="Property not found")
-    execute("UPDATE properties SET tax_relevant=? WHERE id=?",
-            (1 if body.tax_relevant else 0, property_id))
+    execute("UPDATE properties SET tax_relevant=? WHERE id=? AND owner_id=?",
+            (1 if body.tax_relevant else 0, property_id, owner))
     return {"property_id": property_id, "tax_relevant": body.tax_relevant}
 
 
 @router.post("/mortgages", status_code=201)
-def create_mortgage(body: MortgageIn):
-    if not fetch("SELECT id FROM properties WHERE id=?", (body.property_id,)):
+def create_mortgage(body: MortgageIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (body.property_id, owner)):
         raise HTTPException(status_code=404, detail="Property not found")
-    insert("mortgages", (body.property_id, body.label, body.principal,
-                         body.interest_rate_pct, body.tilgung_rate_pct,
-                         body.start_date, body.note))
+    new_id = insert("mortgages", (body.property_id, body.label, body.principal,
+                                  body.interest_rate_pct, body.tilgung_rate_pct,
+                                  body.start_date, body.note))
     r = fetch("SELECT id, property_id, label, principal, interest_rate_pct, tilgung_rate_pct,"
-              "       start_date, note FROM mortgages ORDER BY id DESC LIMIT 1")[0]
+              "       start_date, note FROM mortgages WHERE id=?", (new_id,))[0]
     return _mortgage_row(r)
 
 
 @router.put("/mortgages/{mortgage_id}")
-def update_mortgage(mortgage_id: int, body: MortgageIn):
-    if not fetch("SELECT id FROM mortgages WHERE id=?", (mortgage_id,)):
+def update_mortgage(mortgage_id: int, body: MortgageIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM mortgages WHERE id=? AND owner_id=?", (mortgage_id, owner)):
         raise HTTPException(status_code=404, detail="Mortgage not found")
+    if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (body.property_id, owner)):
+        raise HTTPException(status_code=404, detail="Property not found")
     execute("""UPDATE mortgages SET property_id=?, label=?, principal=?, interest_rate_pct=?,
-               tilgung_rate_pct=?, start_date=?, note=? WHERE id=?""",
+               tilgung_rate_pct=?, start_date=?, note=? WHERE id=? AND owner_id=?""",
             (body.property_id, body.label, body.principal, body.interest_rate_pct,
-             body.tilgung_rate_pct, body.start_date, body.note, mortgage_id))
+             body.tilgung_rate_pct, body.start_date, body.note, mortgage_id, owner))
     r = fetch("SELECT id, property_id, label, principal, interest_rate_pct, tilgung_rate_pct,"
               "       start_date, note FROM mortgages WHERE id=?", (mortgage_id,))[0]
     return _mortgage_row(r)
 
 
 @router.delete("/mortgages/{mortgage_id}", status_code=204)
-def delete_mortgage(mortgage_id: int):
-    if not fetch("SELECT id FROM mortgages WHERE id=?", (mortgage_id,)):
+def delete_mortgage(mortgage_id: int, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM mortgages WHERE id=? AND owner_id=?", (mortgage_id, owner)):
         raise HTTPException(status_code=404, detail="Mortgage not found")
-    execute("DELETE FROM mortgages WHERE id=?", (mortgage_id,))
+    execute("DELETE FROM mortgages WHERE id=? AND owner_id=?", (mortgage_id, owner))
 
 
 # ── Expenses ─────────────────────────────────────────────────────────────────
@@ -217,8 +225,10 @@ def _expense_row(r) -> dict:
 
 
 @router.get("/expenses")
-def list_expenses(year: int | None = None, property_id: int | None = None):
-    rows = [_expense_row(r) for r in fetch(f"{_EXPENSE_SELECT} ORDER BY e.expense_date DESC")]
+def list_expenses(year: int | None = None, property_id: int | None = None,
+                  owner: int = Depends(require_auth)):
+    rows = [_expense_row(r) for r in fetch(
+        f"{_EXPENSE_SELECT} WHERE e.owner_id=? ORDER BY e.expense_date DESC", (owner,))]
     if property_id:
         rows = [r for r in rows if r["property_id"] == property_id]
     if year:
@@ -229,35 +239,37 @@ def list_expenses(year: int | None = None, property_id: int | None = None):
 
 
 @router.post("/expenses", status_code=201)
-def create_expense(body: ExpenseIn):
-    if not fetch("SELECT id FROM properties WHERE id=?", (body.property_id,)):
+def create_expense(body: ExpenseIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (body.property_id, owner)):
         raise HTTPException(status_code=404, detail="Property not found")
-    insert("expenses", (body.property_id, body.apartment_id, body.expense_date,
-                        body.amount, body.category, body.vendor, body.note,
-                        body.deductible, body.distribute_years, body.source_file))
-    r = fetch(f"{_EXPENSE_SELECT} ORDER BY e.id DESC LIMIT 1")[0]
+    new_id = insert("expenses", (body.property_id, body.apartment_id, body.expense_date,
+                                 body.amount, body.category, body.vendor, body.note,
+                                 body.deductible, body.distribute_years, body.source_file))
+    r = fetch(f"{_EXPENSE_SELECT} WHERE e.id=?", (new_id,))[0]
     return _expense_row(r)
 
 
 @router.put("/expenses/{expense_id}")
-def update_expense(expense_id: int, body: ExpenseIn):
-    if not fetch("SELECT id FROM expenses WHERE id=?", (expense_id,)):
+def update_expense(expense_id: int, body: ExpenseIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM expenses WHERE id=? AND owner_id=?", (expense_id, owner)):
         raise HTTPException(status_code=404, detail="Expense not found")
+    if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (body.property_id, owner)):
+        raise HTTPException(status_code=404, detail="Property not found")
     execute("""UPDATE expenses SET property_id=?, apartment_id=?, expense_date=?, amount=?,
                category=?, vendor=?, note=?, deductible=?, distribute_years=?, source_file=?
-               WHERE id=?""",
+               WHERE id=? AND owner_id=?""",
             (body.property_id, body.apartment_id, body.expense_date, body.amount,
              body.category, body.vendor, body.note, body.deductible,
-             body.distribute_years, body.source_file, expense_id))
+             body.distribute_years, body.source_file, expense_id, owner))
     r = fetch(f"{_EXPENSE_SELECT} WHERE e.id=?", (expense_id,))[0]
     return _expense_row(r)
 
 
 @router.delete("/expenses/{expense_id}", status_code=204)
-def delete_expense(expense_id: int):
-    if not fetch("SELECT id FROM expenses WHERE id=?", (expense_id,)):
+def delete_expense(expense_id: int, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM expenses WHERE id=? AND owner_id=?", (expense_id, owner)):
         raise HTTPException(status_code=404, detail="Expense not found")
-    execute("DELETE FROM expenses WHERE id=?", (expense_id,))
+    execute("DELETE FROM expenses WHERE id=? AND owner_id=?", (expense_id, owner))
 
 
 @router.get("/expense-categories")
@@ -266,7 +278,8 @@ def expense_categories():
 
 
 @router.get("/expenses/inventory/pdf")
-def expense_inventory_pdf(year: int, property_id: int | None = None):
+def expense_inventory_pdf(year: int, property_id: int | None = None,
+                          owner: int = Depends(require_auth)):
     """Belegliste: all bills PAID in `year` (by expense_date, full amounts —
     §82b spreading is noted per row, not applied), grouped per property with
     subtotals and a grand total."""
@@ -277,17 +290,19 @@ def expense_inventory_pdf(year: int, property_id: int | None = None):
         FROM expenses e
         JOIN properties p ON p.id = e.property_id
         LEFT JOIN apartments a ON a.id = e.apartment_id
-        WHERE substr(e.expense_date,1,4) = ?
+        WHERE substr(e.expense_date,1,4) = ? AND e.owner_id = ?
         ORDER BY p.name, e.expense_date
-    """, (str(year),))
-    groups: dict[str, dict] = {}
+    """, (str(year), owner))
+    groups: dict[int, dict] = {}
     grand_total = 0.0
     for pname, aname, edate, amount, cat, vendor, note, dyears, src, pid in rows:
         if property_id is not None and pid != property_id:
             continue
         amount = float(amount)
         dyears = int(dyears or 1)
-        g = groups.setdefault(pname, {"property_name": pname, "rows": [], "subtotal": 0.0})
+        # Group by property id, not name: two distinct properties (e.g. two WEs
+        # at the same address) may share a display name but must never merge.
+        g = groups.setdefault(pid, {"property_name": pname, "rows": [], "subtotal": 0.0})
         g["rows"].append({
             "expense_date": edate, "amount": amount, "category": cat,
             "vendor": _clean(vendor), "apartment_name": _clean(aname),
@@ -308,7 +323,7 @@ def expense_inventory_pdf(year: int, property_id: int | None = None):
 # ── Kaltmiete / NK split per contract ────────────────────────────────────────
 
 @router.get("/nk-splits")
-def list_nk_splits():
+def list_nk_splits(owner: int = Depends(require_auth)):
     """Contracts with their monthly NK-Vorauszahlung portion, for the
     Kaltmiete/Umlagen income split. Ended contracts still matter for past
     tax years, so all contracts are returned."""
@@ -319,8 +334,9 @@ def list_nk_splits():
         JOIN tenants t ON t.id = c.tenant_id
         JOIN apartments a ON a.id = c.apartment_id
         JOIN properties p ON p.id = a.property_id
+        WHERE c.owner_id = ?
         ORDER BY p.name, t.name
-    """)
+    """, (owner,))
     return [{
         "contract_id": r[0], "tenant_name": r[1], "apartment_name": r[2],
         "property_id": r[3], "property_name": r[4],
@@ -332,11 +348,11 @@ def list_nk_splits():
 
 
 @router.put("/nk-splits/{contract_id}")
-def set_nk_split(contract_id: int, body: NkSplitIn):
-    if not fetch("SELECT id FROM contracts WHERE id=?", (contract_id,)):
+def set_nk_split(contract_id: int, body: NkSplitIn, owner: int = Depends(require_auth)):
+    if not fetch("SELECT id FROM contracts WHERE id=? AND owner_id=?", (contract_id, owner)):
         raise HTTPException(status_code=404, detail="Contract not found")
-    execute("UPDATE contracts SET nebenkosten_vorauszahlung=? WHERE id=?",
-            (body.nebenkosten_vorauszahlung, contract_id))
+    execute("UPDATE contracts SET nebenkosten_vorauszahlung=? WHERE id=? AND owner_id=?",
+            (body.nebenkosten_vorauszahlung, contract_id, owner))
     return {"contract_id": contract_id,
             "nebenkosten_vorauszahlung": body.nebenkosten_vorauszahlung}
 
@@ -344,14 +360,15 @@ def set_nk_split(contract_id: int, body: NkSplitIn):
 # ── Overrides ────────────────────────────────────────────────────────────────
 
 @router.put("/overrides/{property_id}/{tax_year}")
-def set_override(property_id: int, tax_year: int, body: OverrideIn):
+def set_override(property_id: int, tax_year: int, body: OverrideIn,
+                 owner: int = Depends(require_auth)):
     if body.field not in OVERRIDE_FIELDS:
         raise HTTPException(status_code=422,
                             detail=f"Unknown override field; allowed: {sorted(OVERRIDE_FIELDS)}")
-    if not fetch("SELECT id FROM properties WHERE id=?", (property_id,)):
+    if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (property_id, owner)):
         raise HTTPException(status_code=404, detail="Property not found")
-    execute("DELETE FROM tax_year_overrides WHERE property_id=? AND tax_year=? AND field=?",
-            (property_id, tax_year, body.field))
+    execute("DELETE FROM tax_year_overrides WHERE property_id=? AND tax_year=? AND field=? AND owner_id=?",
+            (property_id, tax_year, body.field, owner))
     if body.value is not None:
         insert("tax_year_overrides", (property_id, tax_year, body.field, body.value, body.note))
     return {"property_id": property_id, "tax_year": tax_year,
@@ -360,18 +377,46 @@ def set_override(property_id: int, tax_year: int, body: OverrideIn):
 
 # ── The report ───────────────────────────────────────────────────────────────
 
-def build_report(year: int) -> tuple[list[dict], list[str]]:
+def _afa_items(afa: dict, ov) -> list[dict]:
+    """Transparent AfA line items [{label, amount}] — e.g. Gebäude + Einbauküche.
+    An override's note may carry a JSON list; otherwise a single line is returned."""
+    if ov is not None:
+        note = ov[1]
+        if note:
+            try:
+                parsed = json.loads(note)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, list):
+                out = []
+                for it in parsed:
+                    try:
+                        out.append({"label": str(it.get("label", "AfA")),
+                                    "amount": round(float(it["amount"]), 2)})
+                    except Exception:
+                        continue
+                if out:
+                    return out
+        return [{"label": "AfA (manuell)", "amount": afa["afa"]}]
+    if afa.get("source") == "computed":
+        return [{"label": "Gebäude-AfA", "amount": afa["afa"]}]
+    return []
+
+
+def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
     """Returns (per-property blocks for tax-relevant properties,
-    names of excluded properties)."""
-    all_props = fetch("SELECT id, name, COALESCE(tax_relevant,1) FROM properties ORDER BY name")
+    names of excluded properties) for the given owner."""
+    all_props = fetch("SELECT id, name, COALESCE(tax_relevant,1) FROM properties "
+                      "WHERE owner_id=? ORDER BY name", (owner,))
     props = [(pid, name) for pid, name, rel in all_props if rel]
     excluded = [name for _, name, rel in all_props if not rel]
     profiles = {r[0]: r for r in fetch(
         "SELECT property_id, purchase_date, purchase_price, building_share_pct,"
-        "       afa_rate_pct FROM property_tax_profiles")}
+        "       afa_rate_pct FROM property_tax_profiles WHERE owner_id=?", (owner,))}
     mortgages: dict[int, list] = {}
     for r in fetch("SELECT id, property_id, label, principal, interest_rate_pct,"
-                   "       tilgung_rate_pct, start_date, note FROM mortgages ORDER BY id"):
+                   "       tilgung_rate_pct, start_date, note FROM mortgages "
+                   "WHERE owner_id=? ORDER BY id", (owner,)):
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
 
     pay = {r[0]: (float(r[1]), int(r[2])) for r in fetch("""
@@ -379,9 +424,9 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
         FROM payments pm
         JOIN contracts c ON c.id = pm.contract_id
         JOIN apartments a ON a.id = c.apartment_id
-        WHERE substr(pm.payment_date,1,4) = ?
+        WHERE substr(pm.payment_date,1,4) = ? AND pm.owner_id = ?
         GROUP BY a.property_id
-    """, (str(year),))}
+    """, (str(year), owner))}
 
     contracts: dict[int, list] = {}
     for r in fetch("""
@@ -390,24 +435,26 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
         FROM contracts c
         JOIN apartments a ON a.id = c.apartment_id
         JOIN tenants t ON t.id = c.tenant_id
-    """):
+        WHERE c.owner_id = ?
+    """, (owner,)):
         contracts.setdefault(r[0], []).append(r)
 
     flat: dict[int, list] = {}
     for r in fetch("""
         SELECT a.property_id, fc.cost_type, fc.amount, fc.valid_from, fc.valid_to
         FROM flat_costs fc JOIN apartments a ON a.id = fc.apartment_id
-    """):
+        WHERE fc.owner_id = ?
+    """, (owner,)):
         flat.setdefault(r[0], []).append(r)
 
     expenses: dict[int, list] = {}
-    for e in list_expenses(year=year):
+    for e in list_expenses(year=year, owner=owner):
         if e["deductible"]:
             expenses.setdefault(e["property_id"], []).append(e)
 
     overrides: dict[tuple, tuple] = {}
     for r in fetch("SELECT property_id, field, value, note FROM tax_year_overrides"
-                   " WHERE tax_year=?", (year,)):
+                   " WHERE tax_year=? AND owner_id=?", (year, owner)):
         overrides[(r[0], r[1])] = (float(r[2]), _clean(r[3]))
 
     report = []
@@ -465,6 +512,7 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
         ov_afa = overrides.get((pid, "afa"))
         if ov_afa is not None:
             afa = {**afa, "computed_afa": afa["afa"], "afa": ov_afa[0], "source": "override"}
+        afa["items"] = _afa_items(afa, ov_afa)
 
         # Schuldzinsen — manual expense rows win over the annuity computation.
         zins_rows = [e for e in expenses.get(pid, []) if e["category"] == "Schuldzinsen"]
@@ -546,8 +594,8 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
 
 
 @router.get("/report")
-def tax_report(year: int):
-    blocks, excluded = build_report(year)
+def tax_report(year: int, owner: int = Depends(require_auth)):
+    blocks, excluded = build_report(year, owner)
     return {
         "year": year,
         "properties": blocks,
@@ -561,9 +609,10 @@ def tax_report(year: int):
 
 
 @router.get("/report/pdf")
-def tax_report_pdf(year: int, property_id: int | None = None):
+def tax_report_pdf(year: int, property_id: int | None = None,
+                   owner: int = Depends(require_auth)):
     from pdfgen import generate_tax_report
-    blocks, _ = build_report(year)
+    blocks, _ = build_report(year, owner)
     if property_id is not None:
         blocks = [b for b in blocks if b["property_id"] == property_id]
         if not blocks:

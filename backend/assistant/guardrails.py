@@ -44,12 +44,12 @@ class ScopeError(Exception):
 
 
 def require_scope(landlord_id: int) -> None:
-    """Phase-1 isolation gate. Any scope other than the bootstrap landlord is
-    refused. Phase 2 replaces this with the SQL predicate + RLS session GUC."""
-    if landlord_id != BOOTSTRAP_LANDLORD_ID:
-        raise ScopeError(
-            f"no data accessible for landlord {landlord_id} in this scope"
-        )
+    """Isolation gate. `landlord_id` is the authenticated owner id (verified by
+    the auth layer); the real isolation is the `owner_id = ?` predicate every
+    tool query now carries. We only reject a missing/invalid scope here so a tool
+    can never run unscoped."""
+    if not isinstance(landlord_id, int) or landlord_id <= 0:
+        raise ScopeError(f"no data accessible for landlord {landlord_id} in this scope")
 
 
 # ── Prompt-injection neutralisation for tool payloads (TRD §8, R1-adjacent) ──

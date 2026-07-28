@@ -16,21 +16,18 @@ from pydantic import BaseModel, Field
 
 from auth import require_auth
 from assistant.agent import run_agent, run_agent_stream
-from assistant.guardrails import BOOTSTRAP_LANDLORD_ID
 from assistant import threads
 
 router = APIRouter(prefix="/assistant", tags=["Assistant"])
 
 
-def resolve_landlord_id(user: str) -> int:
+def resolve_landlord_id(user: int) -> int:
     """The single source of `landlord_id` (TRD §6, §11).
 
-    Phase 1 is single-tenant, so every authenticated user maps to the one
-    bootstrap landlord. Phase 2 replaces this with a JWT custom claim
-    (`landlord_id`) read off the verified token — the *only* change needed here,
-    because nothing else in the stack sources the scope from anywhere else.
+    Now multi-tenant: the landlord scope IS the authenticated user's id (the data
+    owner), taken from the verified token — never from the request body.
     """
-    return BOOTSTRAP_LANDLORD_ID
+    return int(user)
 
 
 class AskRequest(BaseModel):
@@ -53,14 +50,14 @@ class ThreadSummary(BaseModel):
 
 
 @router.get("/threads", response_model=list[ThreadSummary])
-def list_threads(user: str = Depends(require_auth)) -> list[ThreadSummary]:
-    landlord_id = resolve_landlord_id(user)
+def list_threads(owner: int = Depends(require_auth)) -> list[ThreadSummary]:
+    landlord_id = resolve_landlord_id(owner)
     return [ThreadSummary(**t) for t in threads.list_threads(landlord_id)]
 
 
 @router.post("/ask", response_model=AskResponse)
-def ask(body: AskRequest, user: str = Depends(require_auth)) -> AskResponse:
-    landlord_id = resolve_landlord_id(user)
+def ask(body: AskRequest, owner: int = Depends(require_auth)) -> AskResponse:
+    landlord_id = resolve_landlord_id(owner)
     question = body.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="Question must not be empty")
@@ -105,7 +102,7 @@ def _sse(obj: dict) -> str:
 
 
 @router.post("/ask/stream")
-def ask_stream(body: AskRequest, user: str = Depends(require_auth)) -> StreamingResponse:
+def ask_stream(body: AskRequest, owner: int = Depends(require_auth)) -> StreamingResponse:
     """Streaming twin of /ask (TRD §6). Same contract in, but the answer comes
     back as an SSE token stream instead of one JSON blob.
 
@@ -114,7 +111,7 @@ def ask_stream(body: AskRequest, user: str = Depends(require_auth)) -> Streaming
     already sent, so agent/LLM failures surface as an SSE `{"type":"error"}`
     frame rather than an HTTP error.
     """
-    landlord_id = resolve_landlord_id(user)
+    landlord_id = resolve_landlord_id(owner)
     question = body.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="Question must not be empty")

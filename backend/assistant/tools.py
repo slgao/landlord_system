@@ -151,9 +151,8 @@ TOOL_SCHEMAS = [
 
 def _get_overdue_rent(landlord_id: int) -> dict:
     require_scope(landlord_id)
-    # Reuse the audited overdue logic verbatim. Phase 2:
-    # logic.detect_overdue(landlord_id=landlord_id).
-    overdue = logic.detect_overdue()
+    # Reuse the audited overdue logic verbatim, scoped to this landlord (= owner).
+    overdue = logic.detect_overdue(owner=landlord_id)
     return {
         "count": len(overdue),
         "tenants": [
@@ -176,8 +175,9 @@ def _list_apartments(landlord_id: int) -> dict:
         """SELECT a.id, a.name, p.name
            FROM apartments a
            JOIN properties p ON p.id = a.property_id
-           -- Phase 2 adds: WHERE p.landlord_id = <scope>
-           ORDER BY p.name, a.name"""
+           WHERE a.owner_id = ?
+           ORDER BY p.name, a.name""",
+        (landlord_id,),
     )
     return {
         "apartments": [
@@ -196,9 +196,8 @@ def _get_contract(landlord_id: int, apartment_id: int) -> dict:
            JOIN apartments a ON a.id = c.apartment_id
            JOIN properties p ON p.id = a.property_id
            JOIN tenants   t ON t.id = c.tenant_id
-           WHERE a.id = ? AND COALESCE(c.terminated, 0) = 0""",
-        # Phase 2: AND p.landlord_id = ?
-        (apartment_id,),
+           WHERE a.id = ? AND COALESCE(c.terminated, 0) = 0 AND c.owner_id = ?""",
+        (apartment_id, landlord_id),
     )
     if not rows:
         return {"error": "no active contract found for that apartment in your portfolio"}
@@ -223,11 +222,10 @@ def _get_payments(landlord_id: int, apartment_id: int, limit: int = 12) -> dict:
            JOIN contracts c ON c.id = pm.contract_id
            JOIN apartments a ON a.id = c.apartment_id
            JOIN properties p ON p.id = a.property_id
-           WHERE a.id = ? AND COALESCE(c.terminated, 0) = 0
-           -- Phase 2 adds: AND p.landlord_id = <scope>
+           WHERE a.id = ? AND COALESCE(c.terminated, 0) = 0 AND pm.owner_id = ?
            ORDER BY pm.payment_date DESC
            LIMIT ?""",
-        (apartment_id, limit),
+        (apartment_id, landlord_id, limit),
     )
     return {
         "count": len(rows),
@@ -244,7 +242,7 @@ def _get_tax_report(landlord_id: int, year: int) -> dict:
     # unless a tax question is actually asked.
     from api.routers.tax import build_report
 
-    report, excluded = build_report(int(year))  # Phase 2: build_report(year, landlord_id)
+    report, excluded = build_report(int(year), landlord_id)
     return {
         "year": int(year),
         "properties": report,

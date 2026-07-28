@@ -68,12 +68,13 @@ def _flat_costs_month(prop_id, m_start, m_end, y, m):
     return total
 
 
-def _compute_snapshot(year: int):
-    """Return (snapshot, props) suitable for balance_sheet_pdf / the API."""
+def _compute_snapshot(year: int, owner=None):
+    """Return (snapshot, props) suitable for balance_sheet_pdf / the API,
+    scoped to the given owner."""
     today = date.today()
     y = int(year)
     max_month = today.month if y == today.year else 12
-    properties = fetch("SELECT id, name FROM properties ORDER BY name")
+    properties = fetch("SELECT id, name FROM properties WHERE owner_id=? ORDER BY name", (owner,))
 
     snap_start = str(today.replace(day=1))
     snap_end = str(today.replace(day=calendar.monthrange(today.year, today.month)[1]))

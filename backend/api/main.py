@@ -7,11 +7,11 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from db import migrate_to_head
 from auth import (
-    require_auth, _USERNAME, _verify, create_access_token, verify_startup_config,
-    _password_hash, verify_access_token,
+    require_auth, create_access_token, verify_startup_config, verify_access_token,
 )
+import users_db
 from api.routers import (
-    properties, apartments, tenants, contracts, payments,
+    properties, buildings, apartments, tenants, contracts, payments,
     dashboard, flat_costs, meters, config, reports,
     co_tenants, kaution, billing_profiles, rag, tax, assistant,
 )
@@ -46,6 +46,7 @@ app.add_middleware(
 _auth = [Depends(require_auth)]
 
 app.include_router(properties.router, prefix="/api", dependencies=_auth)
+app.include_router(buildings.router,  prefix="/api", dependencies=_auth)
 app.include_router(apartments.router, prefix="/api", dependencies=_auth)
 app.include_router(tenants.router,    prefix="/api", dependencies=_auth)
 app.include_router(contracts.router,  prefix="/api", dependencies=_auth)
@@ -67,8 +68,16 @@ app.include_router(assistant.router,        prefix="/api", dependencies=_auth)
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
+    # `username` carries the email (kept as the field name for API compatibility
+    # with the existing frontend login form).
     username: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    display_name: str | None = None
 
 
 class TokenResponse(BaseModel):
@@ -76,14 +85,39 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class MeResponse(BaseModel):
+    id: int
+    email: str
+    display_name: str | None = None
+
+
 @app.post("/api/auth/token", response_model=TokenResponse, tags=["Auth"])
 def login(body: LoginRequest):
-    from auth import _password_hash
-    if _password_hash() is None:
-        return TokenResponse(access_token=create_access_token("anonymous"))
-    if body.username != _USERNAME or not _verify(body.password):
+    user = users_db.get_user_by_email(body.username)
+    if not user or not user["is_active"] or not users_db.verify_password(
+            body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    return TokenResponse(access_token=create_access_token(body.username))
+    return TokenResponse(access_token=create_access_token(user["id"]))
+
+
+@app.post("/api/auth/register", response_model=TokenResponse, status_code=201, tags=["Auth"])
+def register(body: RegisterRequest):
+    email = body.email.strip().lower()
+    if "@" not in email or len(body.password) < 8:
+        raise HTTPException(status_code=400,
+                            detail="A valid email and a password of 8+ characters are required")
+    if users_db.get_user_by_email(email):
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    uid = users_db.create_user(email, body.password, body.display_name)
+    return TokenResponse(access_token=create_access_token(uid))
+
+
+@app.get("/api/auth/me", response_model=MeResponse, tags=["Auth"])
+def me(owner: int = Depends(require_auth)):
+    user = users_db.get_user_by_id(owner)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return MeResponse(id=user["id"], email=user["email"], display_name=user["display_name"])
 
 
 # ── Signature ────────────────────────────────────────────────────────────────
@@ -232,25 +266,30 @@ document.getElementById('btn-save').addEventListener('click', async () => {
 </html>"""
 
 
-def _check_signature_access(request: Request, token: str | None) -> None:
-    """Guard the signature endpoints. These are registered on `app` (outside the
-    require_auth-protected routers) because the browser loads them via <img> and
-    <iframe>, which can't set an Authorization header — so a token is accepted in
-    the query string as well. When no password is configured the API is open and
-    this is a no-op, matching the behaviour of require_auth."""
-    if _password_hash() is None:
-        return
+def _signature_owner(request: Request, token: str | None) -> int:
+    """Guard the signature endpoints and return the owner id. These are registered
+    on `app` (outside the require_auth-protected routers) because the browser loads
+    them via <img>/<iframe>, which can't set an Authorization header — so a token is
+    accepted in the query string as well. The signature file is scoped per user."""
     auth_header = request.headers.get("Authorization", "")
     tok = auth_header[7:] if auth_header.startswith("Bearer ") else token
     if not tok:
         raise HTTPException(status_code=401, detail="Authentication required")
-    verify_access_token(tok)  # raises 401 if invalid/expired
+    uid = verify_access_token(tok)  # raises 401 if invalid/expired
+    user = users_db.get_user_by_id(uid)
+    if not user or not user["is_active"]:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    return uid
+
+
+def _signature_path(owner: int) -> Path:
+    return Path(f"pdf/signature_{owner}.png")
 
 
 @app.get("/api/signature", tags=["Files"])
 def get_signature(request: Request, token: str | None = None):
-    _check_signature_access(request, token)
-    dest = Path("pdf/signature.png")
+    owner = _signature_owner(request, token)
+    dest = _signature_path(owner)
     if not dest.exists():
         raise HTTPException(status_code=404, detail="No signature on file")
     return FileResponse(dest, media_type="image/png")
@@ -258,7 +297,7 @@ def get_signature(request: Request, token: str | None = None):
 
 @app.get("/api/signature-pad", tags=["Files"], response_class=HTMLResponse)
 def signature_pad(request: Request, token: str | None = None):
-    _check_signature_access(request, token)
+    _signature_owner(request, token)
     # Inject the caller's token so the pad's POST can authenticate too.
     html = _SIGNATURE_PAD_HTML.replace("__SIG_TOKEN__", token or "")
     return HTMLResponse(html)
@@ -270,11 +309,11 @@ class SignaturePayload(BaseModel):
 
 @app.post("/api/signature", tags=["Files"])
 def save_signature(body: SignaturePayload, request: Request, token: str | None = None):
-    _check_signature_access(request, token)
+    owner = _signature_owner(request, token)
     _, _, b64 = body.data_url.partition(",")
     if not b64:
         raise HTTPException(status_code=400, detail="Invalid data URL")
-    dest = Path("pdf/signature.png")
+    dest = _signature_path(owner)
     dest.parent.mkdir(exist_ok=True)
     dest.write_bytes(base64.b64decode(b64))
     return {"status": "saved"}

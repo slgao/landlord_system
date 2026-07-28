@@ -11,7 +11,7 @@ from auth import (
     _password_hash, verify_access_token,
 )
 from api.routers import (
-    properties, apartments, tenants, contracts, payments,
+    properties, buildings, apartments, tenants, contracts, payments,
     dashboard, flat_costs, meters, config, reports,
     co_tenants, kaution, billing_profiles, rag, tax, assistant,
 )
@@ -46,6 +46,7 @@ app.add_middleware(
 _auth = [Depends(require_auth)]
 
 app.include_router(properties.router, prefix="/api", dependencies=_auth)
+app.include_router(buildings.router,  prefix="/api", dependencies=_auth)
 app.include_router(apartments.router, prefix="/api", dependencies=_auth)
 app.include_router(tenants.router,    prefix="/api", dependencies=_auth)
 app.include_router(contracts.router,  prefix="/api", dependencies=_auth)

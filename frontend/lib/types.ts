@@ -1,7 +1,22 @@
+export interface Building {
+  id: number;
+  name?: string | null;
+  street?: string | null;
+  house_no?: string | null;
+  zip?: string | null;
+  city?: string | null;
+  notes?: string | null;
+  unit_count: number;
+}
+
 export interface Property {
   id: number;
   name: string;
   address?: string;
+  building_id?: number | null;
+  we_label?: string | null;   // Wohnungseigentum unit label, e.g. "WE 3"
+  mea?: number | null;        // Miteigentumsanteil
+  building_name?: string | null;
 }
 
 export interface Apartment {
@@ -285,7 +300,7 @@ export interface TaxReportProperty {
     split_source: "contracts" | "override" | null;
   };
   werbungskosten: {
-    afa: { afa: number; complete: boolean; source: "computed" | "override" | "incomplete"; computed_afa?: number; base?: number; annual?: number; months?: number };
+    afa: { afa: number; complete: boolean; source: "computed" | "override" | "incomplete"; computed_afa?: number; base?: number; annual?: number; months?: number; items?: { label: string; amount: number }[] };
     schuldzinsen: {
       final: number;
       source: "manual" | "computed" | "none" | "override";

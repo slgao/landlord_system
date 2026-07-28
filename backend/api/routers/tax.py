@@ -5,6 +5,8 @@ its source rows ("derivation"), and figures the DB can't know (gap-year income,
 Sondertilgung-affected interest) are overridable per (property, year, field)
 via tax_year_overrides. Manual always wins over computed.
 """
+import json
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -280,14 +282,16 @@ def expense_inventory_pdf(year: int, property_id: int | None = None):
         WHERE substr(e.expense_date,1,4) = ?
         ORDER BY p.name, e.expense_date
     """, (str(year),))
-    groups: dict[str, dict] = {}
+    groups: dict[int, dict] = {}
     grand_total = 0.0
     for pname, aname, edate, amount, cat, vendor, note, dyears, src, pid in rows:
         if property_id is not None and pid != property_id:
             continue
         amount = float(amount)
         dyears = int(dyears or 1)
-        g = groups.setdefault(pname, {"property_name": pname, "rows": [], "subtotal": 0.0})
+        # Group by property id, not name: two distinct properties (e.g. two WEs
+        # at the same address) may share a display name but must never merge.
+        g = groups.setdefault(pid, {"property_name": pname, "rows": [], "subtotal": 0.0})
         g["rows"].append({
             "expense_date": edate, "amount": amount, "category": cat,
             "vendor": _clean(vendor), "apartment_name": _clean(aname),
@@ -359,6 +363,32 @@ def set_override(property_id: int, tax_year: int, body: OverrideIn):
 
 
 # ── The report ───────────────────────────────────────────────────────────────
+
+def _afa_items(afa: dict, ov) -> list[dict]:
+    """Transparent AfA line items [{label, amount}] — e.g. Gebäude + Einbauküche.
+    An override's note may carry a JSON list; otherwise a single line is returned."""
+    if ov is not None:
+        note = ov[1]
+        if note:
+            try:
+                parsed = json.loads(note)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, list):
+                out = []
+                for it in parsed:
+                    try:
+                        out.append({"label": str(it.get("label", "AfA")),
+                                    "amount": round(float(it["amount"]), 2)})
+                    except Exception:
+                        continue
+                if out:
+                    return out
+        return [{"label": "AfA (manuell)", "amount": afa["afa"]}]
+    if afa.get("source") == "computed":
+        return [{"label": "Gebäude-AfA", "amount": afa["afa"]}]
+    return []
+
 
 def build_report(year: int) -> tuple[list[dict], list[str]]:
     """Returns (per-property blocks for tax-relevant properties,
@@ -465,6 +495,7 @@ def build_report(year: int) -> tuple[list[dict], list[str]]:
         ov_afa = overrides.get((pid, "afa"))
         if ov_afa is not None:
             afa = {**afa, "computed_afa": afa["afa"], "afa": ov_afa[0], "source": "override"}
+        afa["items"] = _afa_items(afa, ov_afa)
 
         # Schuldzinsen — manual expense rows win over the annuity computation.
         zins_rows = [e for e in expenses.get(pid, []) if e["category"] == "Schuldzinsen"]

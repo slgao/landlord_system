@@ -1484,9 +1484,20 @@ def generate_tax_report(year, blocks):
                                " · NK-Anteil je Vertrag nicht gepflegt", size=8),
                          _eur(inc["final"], bold=True)])
         afa_src = wk["afa"].get("source") or ("computed" if wk["afa"].get("complete") else "incomplete")
-        rows.append([_cell("AfA (Gebäude-Abschreibung)"),
-                     _cell("" if afa_src == "computed" else SOURCE_LABEL.get(afa_src, ""), size=8),
-                     _eur(wk["afa"]["afa"])])
+        afa_items = wk["afa"].get("items") or []
+        afa_hint = "" if afa_src == "computed" else SOURCE_LABEL.get(afa_src, "")
+        if len(afa_items) > 1:
+            for it in afa_items:
+                rows.append([_cell(f"AfA — {it['label']}"),
+                             _cell(afa_hint, size=8),
+                             _eur(it["amount"])])
+            rows.append([_cell("AfA gesamt", bold=True),
+                         _cell(""),
+                         _eur(wk["afa"]["afa"], bold=True)])
+        else:
+            rows.append([_cell("AfA (Gebäude-Abschreibung)"),
+                         _cell(afa_hint, size=8),
+                         _eur(wk["afa"]["afa"])])
         rows.append([_cell("Schuldzinsen"),
                      _cell(SOURCE_LABEL.get(wk["schuldzinsen"]["source"], ""), size=8),
                      _eur(wk["schuldzinsen"]["final"])])

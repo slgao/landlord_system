@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, type ChangeEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { TaxReport, TaxReportProperty } from "@/lib/types";
@@ -13,7 +13,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, FileDown, Check, X, Pencil } from "lucide-react";
+import { ChevronDown, ChevronRight, FileDown, Check, X, Pencil, Upload, Download } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -135,6 +135,85 @@ export default function TaxReportPage() {
     URL.revokeObjectURL(a.href);
   }
 
+  // ── JSON import/export of per-property income & key figures ────────────────
+  // Round-trips through the existing (property, year) override endpoint, so a
+  // file exported here can be edited offline and re-imported. Fields left null
+  // fall back to the app's computed value.
+  const JSON_FIELDS = ["income_total", "income_kaltmiete", "afa", "schuldzinsen", "recurring_total"] as const;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function exportJson() {
+    if (!report) return;
+    const out = {
+      type: "vermio-tax-income",
+      tax_year: year,
+      properties: report.properties.map((b) => ({
+        property_id: b.property_id,
+        property_name: b.property_name,
+        income_total: b.income.final,
+        income_kaltmiete: b.income.kaltmiete,
+        afa: b.werbungskosten.afa.afa,
+        afa_items: b.werbungskosten.afa.items ?? [],
+        schuldzinsen: b.werbungskosten.schuldzinsen.final,
+        recurring_total: b.werbungskosten.recurring_total,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `vermio-tax-income-${year}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  const importJson = useMutation({
+    mutationFn: async (file: File) => {
+      const data = JSON.parse(await file.text());
+      if (data?.tax_year && data.tax_year !== year)
+        throw new Error(`File is for ${data.tax_year} — switch to that year first`);
+      if (!Array.isArray(data?.properties)) throw new Error("No 'properties' array in file");
+      let n = 0;
+      for (const p of data.properties) {
+        if (typeof p?.property_id !== "number") continue;
+        // AfA with a breakdown: the note carries the JSON items so the split
+        // stays transparent on the report/PDF; value is the authoritative sum.
+        const items = Array.isArray(p.afa_items)
+          ? p.afa_items
+              .filter((it: unknown): it is { label: unknown; amount: unknown } =>
+                !!it && typeof it === "object")
+              .map((it: { label: unknown; amount: unknown }) => ({
+                label: String(it.label ?? "AfA"), amount: Number(it.amount),
+              }))
+              .filter((it: { amount: number }) => Number.isFinite(it.amount))
+          : [];
+        for (const f of JSON_FIELDS) {
+          const v = p[f];
+          if (v === undefined || v === null) continue;
+          const note =
+            f === "afa" && items.length > 1
+              ? JSON.stringify(items)
+              : `imported ${file.name}`;
+          await api.put(`/api/tax/overrides/${p.property_id}/${year}`, {
+            field: f, value: Number(v), note,
+          });
+          n++;
+        }
+      }
+      return n;
+    },
+    onSuccess: (n) => {
+      qc.invalidateQueries({ queryKey: ["tax-report", year] });
+      toast.success(`Imported ${n} value${n === 1 ? "" : "s"}`);
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Import failed"),
+  });
+
+  function onImportFile(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (f) importJson.mutate(f);
+    e.target.value = "";
+  }
+
   return (
     <div className="max-w-5xl">
       <PageHeader
@@ -154,6 +233,13 @@ export default function TaxReportPage() {
         <Button size="sm" variant="outline" onClick={() => downloadPdf()}>
           <FileDown className="size-4 mr-1" /> PDF (all properties)
         </Button>
+        <Button size="sm" variant="outline" onClick={exportJson} disabled={!report}>
+          <Download className="size-4 mr-1" /> Export JSON
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importJson.isPending}>
+          <Upload className="size-4 mr-1" /> Import JSON
+        </Button>
+        <input ref={fileInputRef} type="file" accept="application/json,.json" hidden onChange={onImportFile} />
         <p className="text-xs text-muted-foreground">
           Figures are aids for ELSTER — not tax advice. Verify estimates against bank statements.
         </p>
@@ -300,6 +386,16 @@ export default function TaxReportPage() {
                             value={wk.afa.afa} overridden={wk.afa.source === "override"}
                             computedHint={wk.afa.computed_afa} />
                         </div>
+                        {wk.afa.items && wk.afa.items.length > 1 && (
+                          <div className="pl-4 pb-1 space-y-0.5">
+                            {wk.afa.items.map((it, i) => (
+                              <div key={i} className="flex justify-between text-xs text-muted-foreground">
+                                <span>— {it.label}</span>
+                                <span className="font-mono">{eur(it.amount)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <div className="flex justify-between items-center py-1">
                           <span className="text-muted-foreground flex items-center gap-2">
                             Schuldzinsen <SourceBadge source={wk.schuldzinsen.source} />

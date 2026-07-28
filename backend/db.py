@@ -158,12 +158,14 @@ def delete(table, entry_id):
 _CONN_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
 
 
-def _run_once(query, params, commit):
+def _run_once(query, params, commit, returning=False):
     conn = get_conn()
     try:
         c = conn.cursor()
         c.execute(_adapt(query), params)
-        result = None if commit else _normalize(c.fetchall())
+        # `returning` fetches the RETURNING rows before committing so callers get
+        # the generated id/values back from a writing statement.
+        result = _normalize(c.fetchall()) if (returning or not commit) else None
         if commit:
             conn.commit()
     except _CONN_ERRORS:
@@ -198,6 +200,16 @@ def execute(query, params=()):
         _run_once(query, params, commit=True)
     except _CONN_ERRORS:
         _run_once(query, params, commit=True)
+
+
+def execute_returning(query, params=()):
+    """Run a writing statement with a RETURNING clause, commit, and return the
+    returned rows (e.g. `INSERT ... RETURNING id`). Use this instead of fetch()
+    for writes — fetch() never commits."""
+    try:
+        return _run_once(query, params, commit=True, returning=True)
+    except _CONN_ERRORS:
+        return _run_once(query, params, commit=True, returning=True)
 
 
 def get_tenant_address(tenant_name):

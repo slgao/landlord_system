@@ -9,8 +9,9 @@ import auth
 # ── JWT ───────────────────────────────────────────────────────────────────────
 
 def test_jwt_roundtrip():
-    token = auth.create_access_token("alice")
-    assert auth.verify_access_token(token) == "alice"
+    # Tokens now carry the integer user id as the subject (multi-user auth).
+    token = auth.create_access_token(42)
+    assert auth.verify_access_token(token) == 42
 
 
 def test_verify_rejects_garbage_token():

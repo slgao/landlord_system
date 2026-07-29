@@ -352,9 +352,10 @@ def detect_overdue(default_months_back=12, owner=None):
         FROM payments p
         JOIN contracts c ON p.contract_id = c.id
         WHERE COALESCE(c.terminated, 0) = 0
+          AND c.owner_id = ?
           AND p.payment_date >= ? AND p.payment_date <= ?
         GROUP BY p.contract_id, substr(p.payment_date, 1, 7)
-    """, (str(min_start), str(today)))
+    """, (owner, str(min_start), str(today)))
     paid_by = {(cid, ym): total for cid, ym, total in paid_rows}
 
     results = []

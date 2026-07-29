@@ -1,4 +1,5 @@
 import base64
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -33,11 +34,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Allowed browser origins. Defaults to the Next.js dev server; in a deployed
+# multi-tenant SaaS set CORS_ORIGINS to the frontend's real origin(s),
+# comma-separated (e.g. "https://app.vermio.de,https://vermio.de").
+_cors_origins = [
+    o.strip()
+    for o in os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",   # Next.js dev
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

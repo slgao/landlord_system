@@ -203,6 +203,13 @@ def _run_once(query, params, commit, returning=False):
         result = _normalize(c.fetchall()) if (returning or not commit) else None
         if commit:
             conn.commit()
+        else:
+            # End the read's implicit transaction before the connection returns
+            # to the pool. psycopg2 opens a transaction on the first statement;
+            # without this the pooled connection sits "idle in transaction" and
+            # keeps a stale MVCC snapshot, so a later request on the same
+            # connection could read data frozen at this point in time.
+            conn.rollback()
     except _CONN_ERRORS:
         # Evict the dead connection so the pool replaces it on the next getconn().
         try:

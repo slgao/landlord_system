@@ -20,6 +20,11 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # Set BAKE_MODELS=false for offline / firewalled builds — skips the
+        # huggingface.co model download so the image builds without network.
+        # Then supply the models via the HF-cache volume below.
+        BAKE_MODELS: ${BAKE_MODELS:-true}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -28,9 +33,13 @@ services:
       - "8000:8000"
     volumes:
       - pdf_data:/app/pdf
-      # No model-cache volume here on purpose: the embedding/reranker weights and
-      # the legal index are baked into the image at build time (see Dockerfile).
-      # Mounting an (empty) named volume over /app/.hf_cache would shadow them.
+      # Default baked image: no model-cache volume on purpose — the embedding/
+      # reranker weights and the legal index are baked into the image at build
+      # time (see Dockerfile); an empty volume over /app/.hf_cache would shadow
+      # them. For an offline build (BAKE_MODELS=false), uncomment the next line
+      # to supply the models from a host Hugging Face cache so the assistant
+      # works without a build-time download (the index self-rebuilds on first use):
+      #- ${HF_CACHE:-${HOME}/.cache/huggingface}:/app/.hf_cache
 
   frontend:
     build:

@@ -26,7 +26,41 @@ CORPUS_DIR = Path(__file__).parent / "corpus"
 CHUNK_SIZE_TOKENS = 350
 CHUNK_OVERLAP_TOKENS = 50
 
-_encoding = tiktoken.get_encoding("cl100k_base")  # approximation — see README
+# ~4 characters ≈ 1 token for German legal prose; used only by the offline
+# fallback below to keep chunk sizes comparable to the real tokenizer.
+_CHARS_PER_TOKEN = 4
+
+
+class _CharApproxEncoding:
+    """Network-free stand-in for tiktoken, used only to *approximate* chunk sizes.
+
+    tiktoken.get_encoding("cl100k_base") downloads its BPE table from
+    openaipublic.blob.core.windows.net on first use, which makes both the Docker
+    build and the first import hard-depend on reaching that host — the build
+    fails on offline / firewalled / CI machines that can't resolve it. Since the
+    encoding here is admittedly an approximation (see README), we fall back to
+    counting characters; window sizes are scaled by _CHARS_PER_TOKEN so the
+    resulting chunks stay comparable to tiktoken's.
+    """
+
+    def encode(self, text: str) -> list[int]:
+        return [ord(c) for c in text]
+
+    def decode(self, tokens: list[int]) -> str:
+        return "".join(chr(t) for t in tokens)
+
+
+def _load_encoding() -> tuple[object, int]:
+    """Return (encoder, size_scale): the real tokenizer with scale 1 when it can
+    be fetched, else the character fallback with scale _CHARS_PER_TOKEN so token
+    targets convert to the fallback's character units."""
+    try:
+        return tiktoken.get_encoding("cl100k_base"), 1  # approximation — see README
+    except Exception:
+        return _CharApproxEncoding(), _CHARS_PER_TOKEN
+
+
+_encoding, _SIZE_SCALE = _load_encoding()
 
 
 @dataclass
@@ -71,6 +105,10 @@ def _split_by_heading(body: str) -> list[tuple[str, str]]:
 
 
 def _token_windows(text: str, size: int, overlap: int) -> list[str]:
+    # Convert token targets into the active encoder's units (1:1 for tiktoken,
+    # ~chars-per-token for the offline fallback).
+    size *= _SIZE_SCALE
+    overlap *= _SIZE_SCALE
     tokens = _encoding.encode(text)
     if len(tokens) <= size:
         return [text]

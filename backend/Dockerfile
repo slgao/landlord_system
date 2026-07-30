@@ -32,13 +32,25 @@ COPY . .
 # request. This makes the image large (~3.5 GB) and needs network during
 # `docker build`; HF_HUB_DOWNLOAD_TIMEOUT gives the large weight files headroom
 # on a slow link. build_index needs no DB/API keys (corpus + embedder only).
-#
-# NOTE: because the weights live at /app/.hf_cache inside the image, do NOT
-# mount a named volume there in docker-compose — an empty volume would shadow
-# the baked models and force a runtime re-download.
 ENV HF_HOME=/app/.hf_cache HF_HUB_DOWNLOAD_TIMEOUT=120
-RUN python -m rag.build_index --reset \
-    && python -c "from rag.retriever import Reranker; Reranker()"
+# The bake reaches huggingface.co. On offline / firewalled build hosts that
+# download fails, so gate it behind a build arg: pass --build-arg BAKE_MODELS=false
+# (or `BAKE_MODELS=false docker compose build`) to skip it and build with no
+# network. Then supply the models at runtime by mounting a host Hugging Face
+# cache at /app/.hf_cache (see docker-compose.yml); the legal index rebuilds
+# itself from the corpus on first assistant use (RagPipeline upserts when the
+# collection is empty), and until the models are present the assistant endpoints
+# return 503 while the rest of the API works normally.
+#
+# NOTE: for the default baked image do NOT mount a volume over /app/.hf_cache —
+# an empty volume would shadow the baked models and force a runtime re-download.
+ARG BAKE_MODELS=true
+RUN if [ "$BAKE_MODELS" = "true" ]; then \
+        python -m rag.build_index --reset \
+        && python -c "from rag.retriever import Reranker; Reranker()"; \
+    else \
+        echo ">> BAKE_MODELS=$BAKE_MODELS — skipping model download + index bake (offline build)."; \
+    fi
 
 RUN mkdir -p pdf
 

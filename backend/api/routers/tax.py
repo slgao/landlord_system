@@ -232,9 +232,13 @@ def list_expenses(year: int | None = None, property_id: int | None = None,
     if property_id:
         rows = [r for r in rows if r["property_id"] == property_id]
     if year:
-        # Include rows whose §82b spreading window touches the year.
+        # Include rows whose §82b spreading window touches the year. Use != 0,
+        # not > 0: a credit note (Gutschrift) is a negative amount and its share
+        # is negative in the affected year — > 0 silently dropped it from the
+        # report/PDF, overstating costs. Rows outside the window return 0.0 and
+        # are correctly excluded.
         rows = [r for r in rows if tax_logic.expense_share_for_year(
-            r["expense_date"], r["amount"], r["distribute_years"], year) > 0]
+            r["expense_date"], r["amount"], r["distribute_years"], year) != 0]
     return rows
 
 

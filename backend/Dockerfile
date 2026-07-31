@@ -34,22 +34,26 @@ COPY . .
 # on a slow link. build_index needs no DB/API keys (corpus + embedder only).
 ENV HF_HOME=/app/.hf_cache HF_HUB_DOWNLOAD_TIMEOUT=120
 # The bake reaches huggingface.co. On offline / firewalled build hosts that
-# download fails, so gate it behind a build arg: pass --build-arg BAKE_MODELS=false
-# (or `BAKE_MODELS=false docker compose build`) to skip it and build with no
-# network. Then supply the models at runtime by mounting a host Hugging Face
-# cache at /app/.hf_cache (see docker-compose.yml); the legal index rebuilds
-# itself from the corpus on first assistant use (RagPipeline upserts when the
-# collection is empty), and until the models are present the assistant endpoints
-# return 503 while the rest of the API works normally.
+# download fails — but it must NOT break the build: the models power only the
+# "Ask Vermio" assistant, not the core API. So the bake is BEST-EFFORT by
+# default: it tries to download + index, and on any failure prints a warning and
+# continues, so `docker compose up --build` always succeeds. If the models
+# aren't baked, the assistant endpoints return 503 (the legal index self-rebuilds
+# from the corpus on first use once the models are present — mount a host HF cache
+# at /app/.hf_cache, see docker-compose.yml); the rest of the API is unaffected.
 #
-# NOTE: for the default baked image do NOT mount a volume over /app/.hf_cache —
+# BAKE_MODELS=false skips the attempt entirely (fully offline build, no network).
+#
+# NOTE: for a fully baked image do NOT mount a volume over /app/.hf_cache —
 # an empty volume would shadow the baked models and force a runtime re-download.
 ARG BAKE_MODELS=true
-RUN if [ "$BAKE_MODELS" = "true" ]; then \
-        python -m rag.build_index --reset \
-        && python -c "from rag.retriever import Reranker; Reranker()"; \
+RUN if [ "$BAKE_MODELS" = "false" ]; then \
+        echo ">> BAKE_MODELS=false — skipping model download + index bake (offline build)."; \
     else \
-        echo ">> BAKE_MODELS=$BAKE_MODELS — skipping model download + index bake (offline build)."; \
+        ( python -m rag.build_index --reset \
+          && python -c "from rag.retriever import Reranker; Reranker()" \
+          && echo ">> Model bake OK." ) \
+        || echo ">> WARNING: model bake failed (no network to huggingface.co?). Building WITHOUT baked models — the Ask-Vermio assistant will return 503 until models are available at runtime; the rest of the API works normally."; \
     fi
 
 RUN mkdir -p pdf

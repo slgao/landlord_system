@@ -80,7 +80,7 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
       <nav className="flex-1 overflow-y-auto py-3 px-2">
         {NAV.map((section) => (
           <div key={section.group} className="mb-4">
-            <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+            <p className="px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
               {section.group}
             </p>
             {section.items.map(({ href, label, icon: Icon }) => {

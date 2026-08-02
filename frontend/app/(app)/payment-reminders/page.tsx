@@ -133,7 +133,7 @@ export default function PaymentRemindersPage() {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-4">
                       <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Rent / month</p><p className="text-sm font-semibold">{r.rent.toFixed(2)} {r.currency}</p></div>
                       <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total due</p><p className="text-sm font-semibold">{r.expected_total.toFixed(2)}</p></div>
-                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total paid</p><p className="text-sm font-semibold text-emerald-400">{r.paid_total.toFixed(2)}</p></div>
+                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total paid</p><p className="text-sm font-semibold text-primary">{r.paid_total.toFixed(2)}</p></div>
                       <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Outstanding</p><p className="text-sm font-semibold text-destructive">{r.amount_due.toFixed(2)}</p></div>
                     </div>
                     {r.current_month_paid > 0 && (
@@ -156,7 +156,7 @@ export default function PaymentRemindersPage() {
                           <TableRow key={j}>
                             <TableCell className="text-muted-foreground">{m.month}</TableCell>
                             <TableCell className="text-right font-mono">{m.expected.toFixed(2)}</TableCell>
-                            <TableCell className={`text-right font-mono ${m.paid > 0 ? "text-emerald-400" : ""}`}>{m.paid.toFixed(2)}</TableCell>
+                            <TableCell className={`text-right font-mono ${m.paid > 0 ? "text-primary" : ""}`}>{m.paid.toFixed(2)}</TableCell>
                             <TableCell className={`text-right font-mono font-medium ${m.balance_after < -0.005 ? "text-destructive" : "text-muted-foreground"}`}>{m.balance_after.toFixed(2)}</TableCell>
                           </TableRow>
                         ))}

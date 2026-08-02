@@ -38,7 +38,7 @@ function MetricCard({
           <Icon className="size-3.5" style={{ color: accent }} />
           <p className="text-xs uppercase tracking-wide">{label}</p>
         </div>
-        <p className={`text-2xl font-semibold mt-1.5 tabular-nums ${positive === true ? "text-emerald-400" : positive === false ? "text-destructive" : ""}`}>
+        <p className={`text-2xl font-semibold mt-1.5 tabular-nums ${positive === true ? "text-primary" : positive === false ? "text-destructive" : ""}`}>
           {value}
         </p>
         {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
@@ -150,7 +150,7 @@ export default function BalanceSheetPage() {
                     <p className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                       <Wallet className="size-3.5" /> Expected net · {monthLabel}
                     </p>
-                    <p className={`text-[2.75rem] leading-tight font-semibold mt-1 tabular-nums ${curNet >= 0 ? "text-emerald-400" : "text-destructive"}`}>
+                    <p className={`text-[2.75rem] leading-tight font-semibold mt-1 tabular-nums ${curNet >= 0 ? "text-primary" : "text-destructive"}`}>
                       {fmt(curNet)}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -262,7 +262,7 @@ export default function BalanceSheetPage() {
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm font-medium">{prop.name}</CardTitle>
-                    <span className={`text-sm font-semibold tabular-nums ${net >= 0 ? "text-emerald-400" : "text-destructive"}`}>
+                    <span className={`text-sm font-semibold tabular-nums ${net >= 0 ? "text-primary" : "text-destructive"}`}>
                       {net >= 0 ? <TrendingUp className="inline size-3.5 mr-1" /> : <TrendingDown className="inline size-3.5 mr-1" />}
                       {fmt(net)}
                     </span>
@@ -308,11 +308,11 @@ export default function BalanceSheetPage() {
                             <TableCell className="text-muted-foreground">{row["Month"]}</TableCell>
                             <TableCell className="text-right font-mono">{row["Expected rent (€)"]?.toFixed(2)}</TableCell>
                             <TableCell className="text-right font-mono">{row["Actual received (€)"]?.toFixed(2)}</TableCell>
-                            <TableCell className={`text-right font-mono ${variance < 0 ? "text-destructive" : variance > 0 ? "text-emerald-400" : "text-muted-foreground"}`}>
+                            <TableCell className={`text-right font-mono ${variance < 0 ? "text-destructive" : variance > 0 ? "text-primary" : "text-muted-foreground"}`}>
                               {variance >= 0 ? "+" : ""}{variance?.toFixed(2)}
                             </TableCell>
                             <TableCell className="text-right font-mono text-muted-foreground">{row["Costs (€)"]?.toFixed(2)}</TableCell>
-                            <TableCell className={`text-right font-mono font-medium ${netRow >= 0 ? "text-emerald-400" : "text-destructive"}`}>
+                            <TableCell className={`text-right font-mono font-medium ${netRow >= 0 ? "text-primary" : "text-destructive"}`}>
                               {netRow?.toFixed(2)}
                             </TableCell>
                           </TableRow>

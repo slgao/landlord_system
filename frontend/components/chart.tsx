@@ -3,12 +3,15 @@
 // custom tooltip/legend whose swatches resolve a solid colour by series key
 // (gradient-filled bars expose a url(#…) fill that isn't a valid CSS colour).
 
-// Professional palette tuned for the dark indigo theme.
+// Kontobuch palette — resolves to CSS vars so charts follow the light/dark
+// ledger theme. Disciplined and near-monochrome: a faint grey-green target,
+// solid seal for what's real, a brighter seal for the running net, and the
+// accounting red reserved for costs/negatives.
 export const C = {
-  expected: "#818cf8", // indigo-400
-  actual: "#34d399",   // emerald-400
-  costs: "#fb7185",    // rose-400
-  net: "#fbbf24",      // amber-400
+  expected: "hsl(var(--muted-foreground))",
+  actual: "hsl(var(--primary))",
+  costs: "hsl(var(--destructive))",
+  net: "hsl(var(--seal-bright))",
 };
 
 export const SERIES_COLOR: Record<string, string> = {

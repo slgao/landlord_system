@@ -255,7 +255,7 @@ export default function TaxReportPage() {
         <div className="grid grid-cols-3 gap-2 mb-4">
           <Card><CardContent className="p-3"><p className="text-[10px] uppercase tracking-wide text-muted-foreground">Income</p><p className="font-semibold">{eur(report.totals.income)}</p></CardContent></Card>
           <Card><CardContent className="p-3"><p className="text-[10px] uppercase tracking-wide text-muted-foreground">Werbungskosten</p><p className="font-semibold">{eur(report.totals.werbungskosten)}</p></CardContent></Card>
-          <Card><CardContent className="p-3"><p className="text-[10px] uppercase tracking-wide text-muted-foreground">Result</p><p className={`font-semibold ${report.totals.result < 0 ? "text-destructive" : "text-emerald-400"}`}>{eur(report.totals.result)}</p></CardContent></Card>
+          <Card><CardContent className="p-3"><p className="text-[10px] uppercase tracking-wide text-muted-foreground">Result</p><p className={`font-semibold ${report.totals.result < 0 ? "text-destructive" : "text-primary"}`}>{eur(report.totals.result)}</p></CardContent></Card>
         </div>
       )}
 
@@ -282,7 +282,7 @@ export default function TaxReportPage() {
                     <div className="flex items-center gap-4 text-sm font-mono">
                       <span>{eur(b.income.final)}</span>
                       <span className="text-muted-foreground">− {eur(wk.total)}</span>
-                      <span className={`font-semibold ${b.result < 0 ? "text-destructive" : "text-emerald-400"}`}>{eur(b.result)}</span>
+                      <span className={`font-semibold ${b.result < 0 ? "text-destructive" : "text-primary"}`}>{eur(b.result)}</span>
                       <Button size="sm" variant="outline"
                         onClick={(e) => { e.stopPropagation(); downloadPdf(b.property_id); }}>
                         <FileDown className="size-4" />
@@ -439,7 +439,7 @@ export default function TaxReportPage() {
                         </div>
                         <div className="flex justify-between py-1 font-semibold">
                           <span>Überschuss / Verlust</span>
-                          <span className={`font-mono ${b.result < 0 ? "text-destructive" : "text-emerald-400"}`}>{eur(b.result)}</span>
+                          <span className={`font-mono ${b.result < 0 ? "text-destructive" : "text-primary"}`}>{eur(b.result)}</span>
                         </div>
                       </div>
                     </div>

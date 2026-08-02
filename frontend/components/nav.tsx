@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { logout } from "@/lib/api";
 import { Logo } from "@/components/logo";
+import { ThemeToggle } from "@/components/theme-toggle";
 import {
   LayoutDashboard, Building2, Home, Users, FileText,
   CreditCard, DollarSign, Gauge, BarChart3, Bell,
@@ -106,7 +107,8 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         ))}
       </nav>
-      <div className="p-2 border-t border-border">
+      <div className="p-2 border-t border-border space-y-0.5">
+        <ThemeToggle />
         <button
           onClick={logout}
           className="flex items-center gap-2.5 w-full px-2 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"

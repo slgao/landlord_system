@@ -36,7 +36,7 @@ export default function LoginPage() {
         <div className="flex flex-col items-center space-y-3">
           <LogoMark className="size-12" />
           <h1 className="text-2xl font-semibold tracking-tight">
-            Ver<span className="text-primary">mio</span>
+            Dach<span className="text-primary">ly</span>
           </h1>
           <p className="text-sm text-muted-foreground">Sign in to continue</p>
         </div>

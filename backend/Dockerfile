@@ -35,7 +35,7 @@ COPY . .
 ENV HF_HOME=/app/.hf_cache HF_HUB_DOWNLOAD_TIMEOUT=120
 # The bake reaches huggingface.co. On offline / firewalled build hosts that
 # download fails — but it must NOT break the build: the models power only the
-# "Ask Vermio" assistant, not the core API. So the bake is BEST-EFFORT by
+# "Ask Dachly" assistant, not the core API. So the bake is BEST-EFFORT by
 # default: it tries to download + index, and on any failure prints a warning and
 # continues, so `docker compose up --build` always succeeds. If the models
 # aren't baked, the assistant endpoints return 503 (the legal index self-rebuilds
@@ -53,7 +53,7 @@ RUN if [ "$BAKE_MODELS" = "false" ]; then \
         ( python -m rag.build_index --reset \
           && python -c "from rag.retriever import Reranker; Reranker()" \
           && echo ">> Model bake OK." ) \
-        || echo ">> WARNING: model bake failed (no network to huggingface.co?). Building WITHOUT baked models — the Ask-Vermio assistant will return 503 until models are available at runtime; the rest of the API works normally."; \
+        || echo ">> WARNING: model bake failed (no network to huggingface.co?). Building WITHOUT baked models — the Ask-Dachly assistant will return 503 until models are available at runtime; the rest of the API works normally."; \
     fi
 
 RUN mkdir -p pdf

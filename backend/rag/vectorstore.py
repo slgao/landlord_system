@@ -19,7 +19,7 @@ from .embed import Embedder
 from .ingest import Chunk
 
 PERSIST_DIR = Path(__file__).parent / ".chroma"
-COLLECTION_NAME = "vermio_legal"
+COLLECTION_NAME = "dachly_legal"
 
 
 class VectorStore:

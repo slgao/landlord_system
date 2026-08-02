@@ -1,4 +1,4 @@
-"""The agent loop — the core of Ask Vermio (TRD §2).
+"""The agent loop — the core of Ask Dachly (TRD §2).
 
 A `while` loop around Groq's OpenAI-compatible chat-completions call. The model
 decides which tools to call; we execute them (always binding `landlord_id`
@@ -18,7 +18,7 @@ from .tools import TOOL_SCHEMAS, dispatch
 
 log = logging.getLogger("uvicorn.error")
 
-SYSTEM_PROMPT = """Du bist der Vermio-Assistent für Vermieter. Du beantwortest \
+SYSTEM_PROMPT = """Du bist der Dachly-Assistent für Vermieter. Du beantwortest \
 Fragen zum Immobilien-Portfolio des angemeldeten Vermieters und zum deutschen \
 Mietrecht.
 

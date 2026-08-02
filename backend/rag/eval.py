@@ -53,7 +53,7 @@ EVAL_SET = [
         "expect_refusal": False,
     },
     {
-        "question": "Wie geht Vermio mit unterschiedlichen Abrechnungszeiträumen einzelner Kostenarten um?",
+        "question": "Wie geht Dachly mit unterschiedlichen Abrechnungszeiträumen einzelner Kostenarten um?",
         "expected_law_ref": None,  # internal_doc, not a Gesetz
         "expect_refusal": False,
     },

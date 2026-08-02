@@ -4,7 +4,7 @@ Revision ID: a2c4e6f80b13
 Revises: f1b2c3d4e5f6
 Create Date: 2026-07-20
 
-Backing store for the Ask Vermio assistant's multi-turn conversations
+Backing store for the Ask Dachly assistant's multi-turn conversations
 (docs/TRD-assistant.md §7). Two tables:
 
   assistant_threads   — one row per conversation, scoped by landlord_id.

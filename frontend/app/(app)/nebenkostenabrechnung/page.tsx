@@ -172,7 +172,7 @@ function CalcPreview({ label, result }: { label: string; result: any }) {
         {result.cost_tenant != null && <span>Ihr Anteil: <b>€ {result.cost_tenant?.toFixed(2)}</b></span>}
         {result.prepay != null && <span>Vorauszahlung: <b>€ {result.prepay?.toFixed(2)}</b></span>}
         {result.nach != null && (
-          <span className={result.nach > 0 ? "text-destructive font-bold" : "text-emerald-400 font-bold"}>
+          <span className={result.nach > 0 ? "text-destructive font-bold" : "text-primary font-bold"}>
             Nachzahlung: € {result.nach?.toFixed(2)}
           </span>
         )}
@@ -911,7 +911,7 @@ export default function NebenkostenabrechnungPage() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                     <span>Period cost: <b>€ {r.period_cost?.toFixed(2)}</b></span>
                     <span>Limit: <b>€ {r.limit_period?.toFixed(2)}</b></span>
-                    <span className={r.nach > 0 ? "text-destructive font-bold" : "text-emerald-400 font-bold"}>
+                    <span className={r.nach > 0 ? "text-destructive font-bold" : "text-primary font-bold"}>
                       Nachzahlung: € {r.nach?.toFixed(2)}
                     </span>
                   </div>

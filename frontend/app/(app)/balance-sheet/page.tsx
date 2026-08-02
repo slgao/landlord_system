@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/table";
 import {
   ComposedChart, Bar, Line, Area, AreaChart, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine,
+  Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import {
   Download, TrendingUp, TrendingDown, Wallet, Banknote, Receipt, Target,
@@ -25,23 +25,22 @@ const currentYear = new Date().getFullYear();
 const YEARS = Array.from({ length: 5 }, (_, i) => currentYear - i);
 
 function MetricCard({
-  label, value, sub, positive, accent, icon: Icon,
+  label, value, sub, positive, icon: Icon,
 }: {
   label: string; value: string; sub?: string; positive?: boolean;
-  accent: string; icon: any;
+  accent?: string; icon: any;
 }) {
   return (
-    <Card className="relative overflow-hidden">
-      <span className="absolute left-0 top-0 h-full w-1" style={{ background: accent }} />
-      <CardContent className="p-4 pl-5">
+    <Card>
+      <CardContent className="p-4">
         <div className="flex items-center gap-1.5 text-muted-foreground">
-          <Icon className="size-3.5" style={{ color: accent }} />
-          <p className="text-xs uppercase tracking-wide">{label}</p>
+          <Icon className="size-3.5" />
+          <p className="eyebrow">{label}</p>
         </div>
-        <p className={`text-2xl font-semibold mt-1.5 tabular-nums ${positive === true ? "text-emerald-400" : positive === false ? "text-destructive" : ""}`}>
+        <p className={`text-2xl font-mono font-medium mt-2 tabular-nums ${positive === true ? "text-primary" : positive === false ? "text-destructive" : ""}`}>
           {value}
         </p>
-        {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+        {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
       </CardContent>
     </Card>
   );
@@ -146,11 +145,9 @@ export default function BalanceSheetPage() {
             <Card className="overflow-hidden">
               <CardContent className="p-0">
                 <div className="grid md:grid-cols-[1.3fr_1fr]">
-                  <div className="p-6 bg-gradient-to-br from-primary/15 via-primary/5 to-transparent">
-                    <p className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                      <Wallet className="size-3.5" /> Expected net · {monthLabel}
-                    </p>
-                    <p className={`text-[2.75rem] leading-tight font-semibold mt-1 tabular-nums ${curNet >= 0 ? "text-emerald-400" : "text-destructive"}`}>
+                  <div className="p-6">
+                    <p className="eyebrow">Expected net · {monthLabel}</p>
+                    <p className={`text-[2.75rem] leading-tight font-mono font-medium mt-2 tabular-nums ${curNet >= 0 ? "text-primary" : "text-destructive"}`}>
                       {fmt(curNet)}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -185,30 +182,19 @@ export default function BalanceSheetPage() {
                 <CardTitle className="text-sm font-medium">Income vs Target · {year}</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={280}>
+                <ResponsiveContainer width="100%" height={260}>
                   <ComposedChart data={aggregateChartData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="gActual" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={C.actual} stopOpacity={0.95} />
-                        <stop offset="100%" stopColor={C.actual} stopOpacity={0.5} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.5} vertical={false} />
                     <XAxis dataKey="month" tickLine={false} axisLine={false}
                       tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
                     <YAxis tickLine={false} axisLine={false} width={52} tickFormatter={fmtAxis}
                       tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                    <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--accent))", opacity: 0.4 }} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--accent))", opacity: 0.35 }} />
                     <Legend content={<ChartLegend />} />
-                    <Bar dataKey="Expected" name="Expected" fill={C.expected} fillOpacity={0.22}
-                      stroke={C.expected} strokeOpacity={0.5} strokeDasharray="3 3" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="Actual" name="Actual" fill="url(#gActual)" radius={[4, 4, 0, 0]} maxBarSize={42}>
-                      {aggregateChartData.map((d: any, i: number) => (
-                        <Cell key={i} stroke={d.isCurrent ? C.actual : "transparent"} strokeWidth={d.isCurrent ? 2 : 0} />
-                      ))}
-                    </Bar>
-                    <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={2}
-                      dot={{ r: 2.5, fill: C.net, strokeWidth: 0 }} activeDot={{ r: 4 }} />
+                    <Bar dataKey="Expected" name="Expected" fill={C.expected} fillOpacity={0.14} maxBarSize={34} />
+                    <Bar dataKey="Actual" name="Actual" fill={C.actual} fillOpacity={0.9} maxBarSize={34} />
+                    <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={1.5}
+                      dot={false} activeDot={{ r: 3 }} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -224,13 +210,7 @@ export default function BalanceSheetPage() {
               <CardContent>
                 <ResponsiveContainer width="100%" height={200}>
                   <AreaChart data={aggregateChartData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="gNet" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={C.actual} stopOpacity={0.35} />
-                        <stop offset="100%" stopColor={C.actual} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.5} vertical={false} />
                     <XAxis dataKey="month" tickLine={false} axisLine={false}
                       tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
                     <YAxis tickLine={false} axisLine={false} width={52} tickFormatter={fmtAxis}
@@ -238,9 +218,9 @@ export default function BalanceSheetPage() {
                     <Tooltip content={<ChartTooltip />} />
                     <Legend content={<ChartLegend />} />
                     <ReferenceLine y={0} stroke="hsl(var(--border))" />
-                    <Area type="monotone" dataKey="Net" name="Actual net" stroke={C.actual} strokeWidth={2}
-                      fill="url(#gNet)" dot={{ r: 2.5, fill: C.actual, strokeWidth: 0 }} activeDot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="Expected net" name="Expected net" stroke={C.net}
+                    <Area type="monotone" dataKey="Net" name="Actual net" stroke={C.actual} strokeWidth={1.5}
+                      fill={C.actual} fillOpacity={0.06} dot={false} activeDot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="Expected net" name="Expected net" stroke={C.expected}
                       strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -262,7 +242,7 @@ export default function BalanceSheetPage() {
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm font-medium">{prop.name}</CardTitle>
-                    <span className={`text-sm font-semibold tabular-nums ${net >= 0 ? "text-emerald-400" : "text-destructive"}`}>
+                    <span className={`text-sm font-semibold tabular-nums ${net >= 0 ? "text-primary" : "text-destructive"}`}>
                       {net >= 0 ? <TrendingUp className="inline size-3.5 mr-1" /> : <TrendingDown className="inline size-3.5 mr-1" />}
                       {fmt(net)}
                     </span>
@@ -308,11 +288,11 @@ export default function BalanceSheetPage() {
                             <TableCell className="text-muted-foreground">{row["Month"]}</TableCell>
                             <TableCell className="text-right font-mono">{row["Expected rent (€)"]?.toFixed(2)}</TableCell>
                             <TableCell className="text-right font-mono">{row["Actual received (€)"]?.toFixed(2)}</TableCell>
-                            <TableCell className={`text-right font-mono ${variance < 0 ? "text-destructive" : variance > 0 ? "text-emerald-400" : "text-muted-foreground"}`}>
+                            <TableCell className={`text-right font-mono ${variance < 0 ? "text-destructive" : variance > 0 ? "text-primary" : "text-muted-foreground"}`}>
                               {variance >= 0 ? "+" : ""}{variance?.toFixed(2)}
                             </TableCell>
                             <TableCell className="text-right font-mono text-muted-foreground">{row["Costs (€)"]?.toFixed(2)}</TableCell>
-                            <TableCell className={`text-right font-mono font-medium ${netRow >= 0 ? "text-emerald-400" : "text-destructive"}`}>
+                            <TableCell className={`text-right font-mono font-medium ${netRow >= 0 ? "text-primary" : "text-destructive"}`}>
                               {netRow?.toFixed(2)}
                             </TableCell>
                           </TableRow>

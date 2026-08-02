@@ -102,7 +102,7 @@ export default function TenantLedgerPage() {
                       <TableCell className="text-muted-foreground">{c.start_date}</TableCell>
                       <TableCell className="text-muted-foreground">{c.end_date || "—"}</TableCell>
                       <TableCell>
-                        <Badge variant={c.terminated ? "secondary" : "default"} className={!c.terminated ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20" : ""}>
+                        <Badge variant={c.terminated ? "secondary" : "default"} className={!c.terminated ? "bg-primary/15 text-primary border-primary/20" : ""}>
                           {c.terminated ? "Ended" : "Active"}
                         </Badge>
                       </TableCell>

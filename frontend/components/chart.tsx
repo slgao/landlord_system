@@ -3,12 +3,15 @@
 // custom tooltip/legend whose swatches resolve a solid colour by series key
 // (gradient-filled bars expose a url(#…) fill that isn't a valid CSS colour).
 
-// Professional palette tuned for the dark indigo theme.
+// Kontobuch palette — resolves to CSS vars so charts follow the light/dark
+// ledger theme. Disciplined and near-monochrome: a faint grey-green target,
+// solid seal for what's real, a brighter seal for the running net, and the
+// accounting red reserved for costs/negatives.
 export const C = {
-  expected: "#818cf8", // indigo-400
-  actual: "#34d399",   // emerald-400
-  costs: "#fb7185",    // rose-400
-  net: "#fbbf24",      // amber-400
+  expected: "hsl(var(--muted-foreground))",
+  actual: "hsl(var(--primary))",
+  costs: "hsl(var(--destructive))",
+  net: "hsl(var(--foreground))", // quiet ink line — the bottom line
 };
 
 export const SERIES_COLOR: Record<string, string> = {
@@ -36,7 +39,7 @@ export function fmtAxis(n: number) {
 export function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-border bg-card/95 backdrop-blur px-3 py-2 shadow-xl">
+    <div className="rounded-md border border-border bg-card px-3 py-2">
       <p className="text-xs font-medium mb-1.5">{label}</p>
       <div className="space-y-1">
         {payload.map((p: any) => (

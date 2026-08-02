@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <!-- Ledger identity: ink Λ mark standing on a pine ruled line, on paper. -->
-  <rect width="64" height="64" rx="14" fill="#EFF1EB"/>
-  <path d="M32 13 L52 49 L42 49 L32 30 L22 49 L12 49 Z" fill="#171C18"/>
-  <rect x="12" y="52" width="40" height="3" rx="1.5" fill="#1F5D3F"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="150" viewBox="0 0 150 150">
+  <!-- Roof-gable Λ mark, matching the landing page. Ink on a paper tile so it
+       stays legible as a browser-tab favicon. -->
+  <rect width="150" height="150" rx="32" fill="#EFF1EB"/>
+  <path d="M75 28 L133 122 L109 122 L75 68 L41 122 L17 122 Z" fill="#171C18"/>
 </svg>

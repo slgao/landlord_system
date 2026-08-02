@@ -232,6 +232,10 @@ documents/
 # Logo design scratch (SVG concepts/iterations) — local working files
 logos/
 
+# Internal design docs — kept out of the public repo
+docs/PRD-*.md
+docs/TRD-*.md
+
 # Locally installed agent skills (via `npx skills add`) — machine-local.
 .agents/
 .claude/skills/

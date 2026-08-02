@@ -1443,7 +1443,7 @@ def generate_tax_report(year, blocks):
     story.append(_header_banner(
         f"ANLAGE V AUSFÜLLHILFE {year}",
         f"Einkünfte aus Vermietung und Verpachtung  ·  Erstellt am {today_str}",
-        "Vermio", today_str,
+        "Dachly", today_str,
     ))
     story.append(_accent_line(C_BLUE))
     story.append(Spacer(1, 18))
@@ -1581,7 +1581,7 @@ def generate_expense_inventory(year, groups, grand_total):
     story.append(_header_banner(
         f"BELEGLISTE {year}",
         f"Rechnungen und Belege je Objekt  ·  Erstellt am {today_str}",
-        "Vermio", today_str,
+        "Dachly", today_str,
     ))
     story.append(_accent_line(C_BLUE))
     story.append(Spacer(1, 16))
@@ -1639,7 +1639,7 @@ def generate_expense_inventory(year, groups, grand_total):
         canvas.saveState()
         canvas.setFont("Helvetica", 7)
         canvas.setFillColorRGB(0.514, 0.584, 0.655)
-        canvas.drawString(25 * mm, 10 * mm, f"Belegliste {year}  ·  Vermio")
+        canvas.drawString(25 * mm, 10 * mm, f"Belegliste {year}  ·  Dachly")
         canvas.drawRightString(A4[0] - 20 * mm, 10 * mm, f"Seite {doc.page}")
         canvas.restoreState()
 

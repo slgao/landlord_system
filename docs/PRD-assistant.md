@@ -1,4 +1,4 @@
-# PRD — Vermio Assistant ("Ask Vermio")
+# PRD — Dachly Assistant ("Ask Dachly")
 
 **Status:** Draft for build (2026-07-20)
 **Owner:** Shulin
@@ -8,7 +8,7 @@
 
 ## 1. Problem
 
-Vermio already stores everything a landlord needs — properties, apartments, tenants,
+Dachly already stores everything a landlord needs — properties, apartments, tenants,
 contracts, rent payments, Kaution, meter readings, recurring costs, tax figures — but
 answering a real question means clicking through 6 screens and doing arithmetic in your
 head. *"Which tenants are behind on rent, and by how much?"* *"How much AfA can I still
@@ -25,10 +25,10 @@ sources cited.
 
 ## 2. What we're building
 
-A conversational assistant — **"Ask Vermio"** — that a landlord talks to in natural
+A conversational assistant — **"Ask Dachly"** — that a landlord talks to in natural
 language and that answers by:
 
-1. **Querying the landlord's own Vermio data** through a set of read-only tools
+1. **Querying the landlord's own Dachly data** through a set of read-only tools
    (overdue rent, contract terms, payments, tax report, Kaution status, …).
 2. **Searching the legal knowledge base** (the existing hybrid-RAG corpus) when the
    question is about the law or a rule.

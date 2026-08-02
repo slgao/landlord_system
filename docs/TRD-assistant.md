@@ -1,4 +1,4 @@
-# TRD — Vermio Assistant ("Ask Vermio")
+# TRD — Dachly Assistant ("Ask Dachly")
 
 **Status:** Draft for build (2026-07-20)
 **Implements:** `docs/PRD-assistant.md`
@@ -83,7 +83,7 @@ from .guardrails import sanitize_tool_output        # §8
 MAX_ITERATIONS = 6          # hard stop — never let the model loop forever (cost + latency)
 MODEL = "llama-3.3-70b-versatile"
 
-SYSTEM_PROMPT = """Du bist der Vermio-Assistent für Vermieter. Du beantwortest Fragen
+SYSTEM_PROMPT = """Du bist der Dachly-Assistent für Vermieter. Du beantwortest Fragen
 zum Immobilien-Portfolio des angemeldeten Vermieters und zum deutschen Mietrecht.
 
 Regeln:
@@ -188,7 +188,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_legal_corpus",
-            "description": "Search German tenancy law (BetrKV, BGB §§551/556) and Vermio "
+            "description": "Search German tenancy law (BetrKV, BGB §§551/556) and Dachly "
                            "docs. Use for legal rules, limits, definitions.",
             "parameters": {
                 "type": "object",

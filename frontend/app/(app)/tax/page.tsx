@@ -145,7 +145,7 @@ export default function TaxReportPage() {
   function exportJson() {
     if (!report) return;
     const out = {
-      type: "vermio-tax-income",
+      type: "dachly-tax-income",
       tax_year: year,
       properties: report.properties.map((b) => ({
         property_id: b.property_id,
@@ -161,7 +161,7 @@ export default function TaxReportPage() {
     const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `vermio-tax-income-${year}.json`;
+    a.download = `dachly-tax-income-${year}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
   }

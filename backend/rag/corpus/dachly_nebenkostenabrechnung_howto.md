@@ -1,13 +1,13 @@
 ---
 source_type: internal_doc
 law_ref: null
-title: "Vermio – wie die Nebenkostenabrechnung berechnet wird"
+title: "Dachly – wie die Nebenkostenabrechnung berechnet wird"
 url: null
 ---
 
 ## Proration: tagesgenau, pro Kopf
 
-Vermio berechnet die Nebenkostenabrechnung tagesgenau (day-based) und pro
+Dachly berechnet die Nebenkostenabrechnung tagesgenau (day-based) und pro
 Kopf (per-person), nicht pauschal pro Wohnung. Jede Kostenart (Strom, Gas,
 Wasser, Heizung, sonstige Betriebskosten) kann entweder über Zählerstände
 erfasst werden oder über einen direkten Gesamtbetrag, und kann mehrere
@@ -16,7 +16,7 @@ die einzeln ausgewiesen und am Ende zu einer Abrechnung summiert werden.
 
 ## WG-Awareness
 
-Die Personenzahl-Logik ist WG-fähig: Vermio unterscheidet zwischen einem
+Die Personenzahl-Logik ist WG-fähig: Dachly unterscheidet zwischen einem
 gemeinsamen Vertrag für eine Wohngemeinschaft (Kostenanteil nach Kopfzahl der
 gesamten WG) und einem Einzelvertrag pro Zimmer (jeder Vertrag zählt
 unabhängig). Das ist wichtig, weil BetrKV keine Umlageschlüssel vorschreibt —
@@ -35,7 +35,7 @@ Mieterwechsel.
 
 ## Verrechnung mit der Kaution
 
-Ein offener Nachzahlungsbetrag aus der Nebenkostenabrechnung kann in Vermio
+Ein offener Nachzahlungsbetrag aus der Nebenkostenabrechnung kann in Dachly
 gegen eine noch gehaltene Kaution verrechnet werden (siehe BGB §551 zur
 Kaution und BGB §556 zur Abrechnung) — das System zeigt den verbleibenden
 Kautionssaldo nach Verrechnung.

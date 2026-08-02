@@ -1,7 +1,7 @@
-# Vermio — Frontend
+# Dachly — Frontend
 
 Next.js 14 (App Router) + TypeScript + Tailwind CSS + shadcn/ui + Recharts UI for
-the Vermio property-management system. It talks to the FastAPI backend over REST
+the Dachly property-management system. It talks to the FastAPI backend over REST
 with a JWT Bearer token.
 
 For the full project (Docker setup, backend, database, scripts), see the

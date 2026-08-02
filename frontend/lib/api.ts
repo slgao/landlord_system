@@ -2,10 +2,10 @@ import axios from "axios";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// Where the Ask Vermio conversation is cached in the browser (see /ask). Exposed
+// Where the Ask Dachly conversation is cached in the browser (see /ask). Exposed
 // here so every session-end path can wipe it — the cache holds the landlord's
 // own portfolio answers and must not survive a logout or a switch of user.
-export const ASSISTANT_CACHE_KEY = "vermio_assistant_chat_v1";
+export const ASSISTANT_CACHE_KEY = "dachly_assistant_chat_v1";
 
 export function clearAssistantCache() {
   if (typeof window !== "undefined") localStorage.removeItem(ASSISTANT_CACHE_KEY);

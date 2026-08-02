@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/favicon.svg" width="76" alt="Vermio" />
+  <img src="docs/favicon.svg" width="76" alt="Dachly" />
 </p>
 
-<h1 align="center">Vermio</h1>
+<h1 align="center">Dachly</h1>
 
 <p align="center">Property management for German landlords — rent tracking, utility billing, Anlage&nbsp;V tax prep, PDF generation, and a data-aware AI assistant.</p>
 
@@ -27,7 +27,7 @@ Built to manage a handful of properties without commercial landlord software. Co
 - **Kaution tracking** — log deductions, track open balance, mark returned, and offset against a Nebenkostenabrechnung
 - **Balance Sheet** — monthly/annual P&L per property with per-flat breakdown, a current-month expected-net headline, and income-vs-target / net-trend charts
 - **Anlage V (tax) helper** — per-property, per-year rental income and Werbungskosten totals in the categories the German Anlage V asks for, on a strict cash basis (§11 EStG). One-time AfA (building depreciation) setup, an annuity-mortgage split (only Schuldzinsen is deductible, not Tilgung), one-off expense entry with §82b multi-year distribution, and per-(property, year, field) manual overrides that win over computed values. Every figure is traceable to its source rows and exports as a fill-in PDF next to ELSTER. Auto-fills from live payment data for 2026+; 2025 has a manual-entry fallback.
-- **Ask Vermio** — a read-only AI assistant you talk to in plain language. It answers by querying your own data through read-only tools (overdue rent, contracts, payments, tax report) *and* searching a German tenancy-law corpus, then composes a grounded answer that cites both (`[payments]`, `[BGB §551]`). Answers stream token-by-token with a live tool trace (which tool ran, with which arguments) and saved conversation threads.
+- **Ask Dachly** — a read-only AI assistant you talk to in plain language. It answers by querying your own data through read-only tools (overdue rent, contracts, payments, tax report) *and* searching a German tenancy-law corpus, then composes a grounded answer that cites both (`[payments]`, `[BGB §551]`). Answers stream token-by-token with a live tool trace (which tool ran, with which arguments) and saved conversation threads.
 
 Also: multi-currency (EUR/CNY/USD/GBP), co-tenants (Mitmieter), fixed-term and open-ended leases, meter readings, flat costs (Hausgeld, mortgage, Grundsteuer).
 
@@ -52,7 +52,7 @@ wizard (live calculation preview, per-period meter/total-cost billings, and
 reusable, in-place-updatable billing profiles), Mahnung generation, balance-sheet
 charts, per-meter reading history, co-tenant and Kaution management, payment
 reminders, the **Anlage V** tax helper (per-property setup + yearly report with
-PDF export), the **Ask Vermio** assistant, and SMTP/landlord settings.
+PDF export), the **Ask Dachly** assistant, and SMTP/landlord settings.
 
 ---
 
@@ -78,7 +78,7 @@ The database schema is created automatically on first start (Alembic runs at API
 
 ---
 
-## Ask Vermio (AI assistant)
+## Ask Dachly (AI assistant)
 
 The `/ask` page is a read-only assistant that answers questions about your own
 portfolio **and** German tenancy law, citing its sources. It runs an agentic
@@ -188,7 +188,7 @@ landlord_system/
 │   │   │                       # flat-costs, meters, kaution, billing-profiles,
 │   │   │                       # co-tenants, reports, tax, assistant, rag, config
 │   │   └── schemas/
-│   ├── assistant/              # "Ask Vermio" agent: tool-calling loop, guardrails,
+│   ├── assistant/              # "Ask Dachly" agent: tool-calling loop, guardrails,
 │   │                           #   tools, thread persistence, streaming
 │   ├── rag/                    # Legal hybrid-RAG pipeline + corpus + index builder
 │   ├── balance_compute.py      # balance-sheet computations (used by reports)

@@ -22,7 +22,7 @@ MIN_RERANK_SCORE = 0.05
 
 NO_CONTEXT_ANSWER = (
     "Dazu finde ich in meinen aktuellen Quellen (BetrKV, BGB §§551/556, "
-    "Vermio-Doku) keine hinreichend sichere Antwort. Bitte im Zweifel "
+    "Dachly-Doku) keine hinreichend sichere Antwort. Bitte im Zweifel "
     "anwaltlich prüfen lassen."
 )
 

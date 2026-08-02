@@ -1,4 +1,4 @@
-# PRD — Vermio Tax Module (Anlage V Helper)
+# PRD — Dachly Tax Module (Anlage V Helper)
 
 **Status:** Phase-1 MVP implemented (2026-07-19) · **Author:** Shulin + Claude
 **Deadline driver:** 2025 tax declaration due **2026-07-31** (self-filed via ELSTER)
@@ -7,7 +7,7 @@
 
 ## 1. Problem
 
-Vermio tracks properties, contracts, rent payments, and recurring costs — but at tax
+Dachly tracks properties, contracts, rent payments, and recurring costs — but at tax
 time all of it has to be manually re-aggregated into **Anlage V** (Einkünfte aus
 Vermietung und Verpachtung), one form **per property**, per tax year. With 8
 properties / 12 apartments that is hours of error-prone spreadsheet work, repeated
@@ -70,7 +70,7 @@ derivations → export PDF → type into ELSTER. Target: under an hour per year.
 
 **A. Tax profile per property** (one-time setup, new table `property_tax_profiles`):
 - purchase_date, purchase_price, building_share_pct (or building value), afa_rate,
-  optional afa_note (for pre-Vermio accumulated logic), land registry / unit info
+  optional afa_note (for pre-Dachly accumulated logic), land registry / unit info
   free-text.
 - Computed: yearly AfA + pro-rata first year.
 
@@ -109,7 +109,7 @@ warning).
 - Bank CSV import → payments/expenses (also fixes historical gaps).
 - Receipt attachments (file per expense row).
 - Anlage V PDF laid out to mirror the official form ordering.
-- RAG corpus: add Anlage-V / §21 EStG / AfA docs so "Ask Vermio" answers tax
+- RAG corpus: add Anlage-V / §21 EStG / AfA docs so "Ask Dachly" answers tax
   questions with citations.
 - Multi-year comparison + plausibility warnings (expense > 5× last year, missing
   Grundsteuer, etc.).

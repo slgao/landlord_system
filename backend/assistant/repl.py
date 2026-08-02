@@ -98,7 +98,7 @@ def main() -> None:
         return
 
     # interactive
-    print("Ask Vermio REPL — landlord_id=%d. Ctrl-D / 'exit' to quit.\n" % LANDLORD_ID)
+    print("Ask Dachly REPL — landlord_id=%d. Ctrl-D / 'exit' to quit.\n" % LANDLORD_ID)
     while True:
         try:
             q = input(f"{_BOLD}> {_RST}").strip()

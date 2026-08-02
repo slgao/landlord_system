@@ -67,7 +67,7 @@ function ToolTrace({ steps }: { steps: ToolStep[] }) {
             ) : s.status === "error" ? (
               <AlertTriangle className="size-3.5 text-destructive" />
             ) : (
-              <Check className="size-3.5 text-emerald-600 dark:text-emerald-500" />
+              <Check className="size-3.5 text-primary dark:text-primary" />
             )}
           </span>
           <div className="min-w-0 flex-1">

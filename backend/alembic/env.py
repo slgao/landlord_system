@@ -35,9 +35,14 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    search_path = os.environ.get("DB_SEARCH_PATH", '"$user", public')
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
+            # Pin the search_path inside the migration transaction so Alembic finds
+            # alembic_version / existing tables even if the role default is empty
+            # (Neon's pooler discards session SETs outside a transaction).
+            connection.exec_driver_sql(f"SET search_path TO {search_path}")
             context.run_migrations()
 
 

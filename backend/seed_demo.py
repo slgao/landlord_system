@@ -44,12 +44,41 @@ def _load_env_file(path: str) -> None:
 _load_env_file(".env.demo")
 
 # ── Now safe to import db (uses the demo DATABASE_URL) ──────────────────────
-from db import get_conn, init_db   # noqa: E402
+from db import get_conn, migrate_to_head   # noqa: E402
+from users_db import hash_password          # noqa: E402
+
+
+# ── Demo owner (multi-user) ─────────────────────────────────────────────────
+# Every seeded row is owned by this user; the app scopes all reads by owner_id,
+# so without an owner the seeded data would be invisible after login.
+DEMO_EMAIL = os.environ.get("DEMO_EMAIL", "demo@dachly.app")
+DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "demo1234")
+_OWNER_ID: int | None = None   # set by _ensure_demo_owner() before seeding
+
+
+def _ensure_demo_owner(cur) -> int:
+    """Create (or refresh) the demo login and return its user id. Uses the
+    seeder's own cursor so the owner exists in the same transaction as the data
+    whose owner_id FK points at it."""
+    pw = hash_password(DEMO_PASSWORD)
+    cur.execute("SELECT id FROM users WHERE lower(email) = lower(%s)", (DEMO_EMAIL,))
+    row = cur.fetchone()
+    if row:
+        cur.execute("UPDATE users SET password_hash = %s, display_name = %s WHERE id = %s",
+                    (pw, "Demo", row[0]))
+        return row[0]
+    cur.execute("INSERT INTO users (email, password_hash, display_name) "
+                "VALUES (%s, %s, %s) RETURNING id", (DEMO_EMAIL, pw, "Demo"))
+    return cur.fetchone()[0]
 
 
 # ── DB helper: INSERT … RETURNING id ────────────────────────────────────────
 
 def _ins(cur, table: str, cols: list[str], vals: list) -> int:
+    # All demo tables are owner-scoped; stamp every row with the demo owner.
+    if _OWNER_ID is not None:
+        cols = [*cols, "owner_id"]
+        vals = [*vals, _OWNER_ID]
     ph = ", ".join(["%s"] * len(vals))
     cur.execute(
         f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({ph}) RETURNING id",
@@ -299,8 +328,12 @@ def main() -> None:
     conn = get_conn()
     cur  = conn.cursor()
 
-    print("Initialising tables …")
-    init_db()   # idempotent — creates tables if they don't exist yet
+    print("Migrating schema to head …")
+    migrate_to_head()   # brings the demo DB (incl. users + owner_id) up to date
+
+    global _OWNER_ID
+    _OWNER_ID = _ensure_demo_owner(cur)
+    print(f"  Demo owner: {DEMO_EMAIL} (id={_OWNER_ID})")
 
     if not args.reset:
         cur.execute("SELECT COUNT(*) FROM properties")
@@ -324,6 +357,7 @@ def main() -> None:
 
     print("\nLaunch the app against the demo DB:")
     print('  env $(grep ^DATABASE_URL .env.demo) uvicorn api.main:app')
+    print(f"\nDemo login:  {DEMO_EMAIL}  /  {DEMO_PASSWORD}")
 
 
 if __name__ == "__main__":

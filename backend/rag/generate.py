@@ -10,7 +10,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-SYSTEM_PROMPT = """Du bist der Vermio-Assistent für deutsches Mietrecht \
+SYSTEM_PROMPT = """Du bist der Dachly-Assistent für deutsches Mietrecht \
 (Betriebskosten, Kaution). Du beantwortest Fragen AUSSCHLIESSLICH auf Basis \
 der bereitgestellten Quellenausschnitte.
 

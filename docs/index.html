@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Vermio — Hausverwaltung als Kontobuch</title>
-  <meta name="description" content="Vermio ist selbst-gehostete Hausverwaltung für Privatvermieter: Nebenkosten tagesgenau abrechnen, Mieten führen, Mahnungen schreiben. Läuft lokal, ohne Cloud, ohne Abo. Open Source." />
+  <title>Dachly — Hausverwaltung als Kontobuch</title>
+  <meta name="description" content="Dachly ist selbst-gehostete Hausverwaltung für Privatvermieter: Nebenkosten tagesgenau abrechnen, Mieten führen, Mahnungen schreiben. Läuft lokal, ohne Cloud, ohne Abo. Open Source." />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -13,7 +13,7 @@
 
   <style>
     /* ─────────────────────────────────────────────────────────────
-       Vermio — "Das Kontobuch"
+       Dachly — "Das Kontobuch"
        A landing page composed like a well-kept ledger. Ink on
        analysis paper; every figure set in monospace, tabular.
        ───────────────────────────────────────────────────────────── */
@@ -320,10 +320,10 @@
   <!-- ── Nav ─────────────────────────────────────────────────────── -->
   <header class="nav">
     <div class="wrap nav-in">
-      <a class="brand" href="#top" aria-label="Vermio">
+      <a class="brand" href="#top" aria-label="Dachly">
         <!-- the Λ mark, rendered in ink so it reads in either theme -->
         <svg viewBox="0 0 150 150" aria-hidden="true"><path d="M75 18 L146 132 L116 132 L75 66 L34 132 L4 132 Z" fill="currentColor"/></svg>
-        <b>Vermio</b>
+        <b>Dachly</b>
       </a>
       <div class="nav-links">
         <a class="nav-hide" href="#abrechnung">Abrechnung</a>
@@ -347,7 +347,7 @@
         <span class="kicker label">Self-hosted · Open Source · BSL 1.1</span>
         <h1>Ihre Miethäuser,<br/><span class="soft">geführt wie ein Kontobuch.</span></h1>
         <p class="lede">
-          Ich habe Vermio gebaut, weil brauchbare Hausverwaltung entweder ein
+          Ich habe Dachly gebaut, weil brauchbare Hausverwaltung entweder ein
           Abo kostet oder Mieterdaten in fremde Clouds lädt. Es läuft auf dem
           eigenen Rechner und rechnet Nebenkosten <em>auf den Tag genau</em> —
           nicht geschätzt.
@@ -395,7 +395,7 @@
     <div class="wrap">
       <div class="sheet-mark">
         <span class="no">Blatt 01</span>
-        <h2>Was Vermio führt</h2>
+        <h2>Was Dachly führt</h2>
       </div>
       <div class="register">
         <div class="entry">
@@ -406,7 +406,7 @@
         <div class="entry">
           <span class="en">Mieten</span>
           <h3>Im Blick behalten</h3>
-          <p>Wer hat gezahlt, wer nicht — pro Monat und Objekt. Rückstände erkennt Vermio selbst, die Jahresbilanz rechnet Rendite je Wohnung.</p>
+          <p>Wer hat gezahlt, wer nicht — pro Monat und Objekt. Rückstände erkennt Dachly selbst, die Jahresbilanz rechnet Rendite je Wohnung.</p>
         </div>
         <div class="entry">
           <span class="en">Mahnungen</span>
@@ -427,7 +427,7 @@
         </div>
         <p class="body">
           In Excel entstehen die Fehler beim Einzug mitten im Jahr oder beim
-          Mieterwechsel im Abrechnungszeitraum. Vermio nimmt die Vertragsdaten
+          Mieterwechsel im Abrechnungszeitraum. Dachly nimmt die Vertragsdaten
           und rechnet die Nutzungszeit exakt auf den Tag — für jede Kostenart
           mit ihrem eigenen Zeitraum.
         </p>
@@ -443,7 +443,7 @@
       </div>
       <div class="frame">
         <div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">Nebenkostenabrechnung</span></div>
-        <img src="screenshots/nebenkostenabrechnung.png" alt="Formular der Nebenkostenabrechnung in Vermio mit Kostenarten und Zählerständen" loading="lazy" />
+        <img src="screenshots/nebenkostenabrechnung.png" alt="Formular der Nebenkostenabrechnung in Dachly mit Kostenarten und Zählerständen" loading="lazy" />
       </div>
     </div>
   </section>
@@ -551,7 +551,7 @@
   <!-- ── Footer ───────────────────────────────────────────────────── -->
   <footer class="foot-site">
     <div class="wrap foot-in">
-      <span class="lic">Vermio — Business Source License 1.1</span>
+      <span class="lic">Dachly — Business Source License 1.1</span>
       <nav>
         <a href="https://github.com/slgao/landlord_system" target="_blank" rel="noopener">GitHub</a>
         <a href="https://github.com/slgao/landlord_system/issues" target="_blank" rel="noopener">Issues</a>
@@ -566,7 +566,7 @@
       var root = document.documentElement;
       var btn = document.getElementById('theme');
       var stored = null;
-      try { stored = localStorage.getItem('vermio_theme'); } catch (e) {}
+      try { stored = localStorage.getItem('dachly_theme'); } catch (e) {}
       var mql = window.matchMedia('(prefers-color-scheme: dark)');
       function apply(mode) {
         root.setAttribute('data-theme', mode);
@@ -576,7 +576,7 @@
       btn.addEventListener('click', function () {
         var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
         apply(next);
-        try { localStorage.setItem('vermio_theme', next); } catch (e) {}
+        try { localStorage.setItem('dachly_theme', next); } catch (e) {}
       });
     })();
   </script>

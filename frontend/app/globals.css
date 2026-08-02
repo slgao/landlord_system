@@ -2,28 +2,71 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Dachly — "Kontobuch" identity.
+   Analysis-paper ground, green-black ink, pine-green seal, accounting red.
+   Ported from the landing page (docs/index.html) so app and marketing match.
+   ───────────────────────────────────────────────────────────────────────── */
+
 :root {
-  --background: 0 0% 4%;
-  --foreground: 0 0% 97%;
-  --card: 0 0% 8%;
-  --card-foreground: 0 0% 97%;
-  --popover: 0 0% 10%;
-  --popover-foreground: 0 0% 97%;
-  --primary: 239 68% 63%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 0 0% 13%;
-  --secondary-foreground: 0 0% 97%;
-  --muted: 0 0% 13%;
-  --muted-foreground: 0 0% 55%;
-  --accent: 0 0% 13%;
-  --accent-foreground: 0 0% 97%;
-  --destructive: 0 62% 55%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 0 0% 15%;
-  --input: 0 0% 15%;
-  --ring: 239 68% 63%;
-  --radius: 0.5rem;
-  --sidebar: 0 0% 6%;
+  /* paper ledger (light) */
+  --background: 80 18% 93%;          /* pale green-grey analysis paper */
+  --foreground: 132 10% 10%;         /* green-black ink */
+  --card: 72 22% 95%;                /* a fresh sheet on the desk */
+  --card-foreground: 132 10% 10%;
+  --popover: 72 22% 95%;
+  --popover-foreground: 132 10% 10%;
+  --primary: 151 50% 24%;            /* pine — the "seal" */
+  --primary-foreground: 72 22% 95%;
+  --secondary: 76 15% 86%;
+  --secondary-foreground: 132 10% 10%;
+  --muted: 80 16% 89%;
+  --muted-foreground: 120 5% 36%;    /* ink-soft */
+  --accent: 76 15% 86%;
+  --accent-foreground: 132 10% 10%;
+  --destructive: 7 58% 42%;          /* accounting red — semantic only */
+  --destructive-foreground: 72 22% 95%;
+  --border: 88 13% 80%;              /* hairline ruling */
+  --input: 88 13% 80%;
+  --ring: 151 50% 24%;
+  --radius: 0.3rem;
+  --sidebar: 75 15% 90%;
+
+  /* extra ink stops (not part of shadcn's set) */
+  --seal-bright: 150 49% 32%;
+  --ink-faint: 104 4% 50%;
+
+  /* Type roles. Fonts load via <link> in layout; families fall back cleanly. */
+  --font-sans: 'Archivo', system-ui, -apple-system, sans-serif;
+  --font-display: 'Archivo', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+  --font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+}
+
+.dark {
+  --background: 94 19% 7%;
+  --foreground: 80 24% 90%;
+  --card: 87 18% 10%;
+  --card-foreground: 80 24% 90%;
+  --popover: 87 18% 10%;
+  --popover-foreground: 80 24% 90%;
+  --primary: 143 35% 57%;
+  --primary-foreground: 94 19% 7%;
+  --secondary: 81 22% 13%;
+  --secondary-foreground: 80 24% 90%;
+  --muted: 87 18% 10%;
+  --muted-foreground: 87 10% 63%;
+  --accent: 81 22% 13%;
+  --accent-foreground: 80 24% 90%;
+  --destructive: 7 65% 65%;
+  --destructive-foreground: 94 19% 7%;
+  --border: 95 13% 18%;
+  --input: 95 13% 18%;
+  --ring: 143 35% 57%;
+  --sidebar: 90 25% 5%;
+
+  --seal-bright: 143 44% 69%;
+  --ink-faint: 88 8% 47%;
 }
 
 @layer base {
@@ -33,12 +76,49 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Display face — Archivo, cut tight, like the ledger's printed headings */
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+  /* Every figure reads as an accountant set it: mono, tabular, aligned */
+  th, td { font-variant-numeric: tabular-nums; }
+}
+
+@layer components {
+  /* Eyebrow / section label — mono, spaced, in seal. The ledger's tab titles. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: hsl(var(--primary));
+    font-weight: 500;
+  }
+  /* Any numeric value — amounts, counts, dates. Tabular mono. */
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+  /* Ledger card: fresh sheet, hairline rule, no drop shadow (print, not glass) */
+  .sheet {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
   }
 }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+::selection { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+
+/* Scrollbar — a hairline in the ruling colour */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }

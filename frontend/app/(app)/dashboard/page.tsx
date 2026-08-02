@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Building2, Home, Users, FileText } from "lucide-react";
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend, Cell,
+  ResponsiveContainer, Legend,
 } from "recharts";
 import { C, fmtAxis, ChartTooltip, ChartLegend } from "@/components/chart";
 
@@ -87,38 +87,18 @@ export default function DashboardPage() {
           <CardContent>
             <ResponsiveContainer width="100%" height={260}>
               <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="dashReceived" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={C.actual} stopOpacity={0.95} />
-                    <stop offset="100%" stopColor={C.actual} stopOpacity={0.5} />
-                  </linearGradient>
-                  <linearGradient id="dashCosts" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={C.costs} stopOpacity={0.85} />
-                    <stop offset="100%" stopColor={C.costs} stopOpacity={0.45} />
-                  </linearGradient>
-                  <filter id="netGlow" x="-20%" y="-40%" width="140%" height="180%">
-                    <feDropShadow dx="0" dy="0" stdDeviation="3.5" floodColor={C.net} floodOpacity="0.75" />
-                  </filter>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.5} vertical={false} />
                 <XAxis dataKey="month" tickLine={false} axisLine={false}
                   tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
                 <YAxis tickLine={false} axisLine={false} width={52} tickFormatter={fmtAxis}
                   tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--accent))", opacity: 0.4 }} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--accent))", opacity: 0.35 }} />
                 <Legend content={<ChartLegend />} />
-                <Bar dataKey="Expected" name="Expected" fill={C.expected} fillOpacity={0.22}
-                  stroke={C.expected} strokeOpacity={0.5} strokeDasharray="3 3" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Received" name="Received" fill="url(#dashReceived)" radius={[4, 4, 0, 0]} maxBarSize={28}>
-                  {chartData.map((d: any, i: number) => (
-                    <Cell key={i} stroke={d.isCurrent ? C.actual : "transparent"} strokeWidth={d.isCurrent ? 2 : 0} />
-                  ))}
-                </Bar>
-                <Bar dataKey="Costs" name="Costs" fill="url(#dashCosts)" radius={[4, 4, 0, 0]} maxBarSize={28} />
-                <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={3}
-                  filter="url(#netGlow)"
-                  dot={{ r: 4, fill: C.net, stroke: "hsl(var(--card))", strokeWidth: 2 }}
-                  activeDot={{ r: 6, fill: C.net, stroke: "hsl(var(--card))", strokeWidth: 2 }} />
+                <Bar dataKey="Expected" name="Expected" fill={C.expected} fillOpacity={0.14} maxBarSize={24} />
+                <Bar dataKey="Received" name="Received" fill={C.actual} fillOpacity={0.9} maxBarSize={24} />
+                <Bar dataKey="Costs" name="Costs" fill={C.costs} fillOpacity={0.85} maxBarSize={24} />
+                <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={1.5}
+                  dot={false} activeDot={{ r: 3 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </CardContent>

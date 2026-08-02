@@ -214,7 +214,7 @@ export default function ContractsPage() {
       if (days < 0) return "bg-destructive/15 text-destructive border-destructive/20";
       if (days <= 90) return "bg-amber-500/15 text-amber-400 border-amber-500/20";
     }
-    return "bg-emerald-500/15 text-emerald-400 border-emerald-500/20";
+    return "bg-primary/15 text-primary border-primary/20";
   };
 
   return (
@@ -270,7 +270,7 @@ export default function ContractsPage() {
                           )}
                           {c.terminated && (
                             <Button variant="ghost" size="icon" title="Reopen" onClick={() => reopen.mutate(c.id)}>
-                              <RotateCcw className="size-4 text-emerald-400" />
+                              <RotateCcw className="size-4 text-primary" />
                             </Button>
                           )}
                           <ConfirmButton
@@ -303,8 +303,8 @@ export default function ContractsPage() {
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-3 gap-3 text-sm">
                   <div><p className="text-xs text-muted-foreground">Agreed amount</p><p className="font-semibold">{selectedContract?.kaution_amount?.toFixed(2) || "—"} {selectedContract?.kaution_currency}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Paid so far</p><p className="font-semibold text-emerald-400">{totalPaid.toFixed(2)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Outstanding</p><p className={`font-semibold ${kautionOutstanding <= 0.001 ? "text-emerald-400" : "text-amber-400"}`}>{kautionOutstanding.toFixed(2)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Paid so far</p><p className="font-semibold text-primary">{totalPaid.toFixed(2)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Outstanding</p><p className={`font-semibold ${kautionOutstanding <= 0.001 ? "text-primary" : "text-amber-400"}`}>{kautionOutstanding.toFixed(2)}</p></div>
                 </div>
                 {legacyFullyPaid && (
                   <p className="text-xs text-muted-foreground -mt-1">
@@ -325,7 +325,7 @@ export default function ContractsPage() {
                             <TableCell><Input className="h-7 text-xs" placeholder="Note" value={editPay.note} onChange={(e) => setEditPay({ ...editPay, note: e.target.value })} /></TableCell>
                             <TableCell className="text-right"><Input type="number" step="0.01" className="h-7 text-xs w-24 ml-auto" value={editPay.amount || ""} onChange={(e) => setEditPay({ ...editPay, amount: Number(e.target.value) })} /></TableCell>
                             <TableCell className="flex gap-1">
-                              <Button variant="ghost" size="icon" onClick={() => updatePayment.mutate(editPay)} disabled={!editPay.amount || updatePayment.isPending}><Check className="size-3 text-emerald-400" /></Button>
+                              <Button variant="ghost" size="icon" onClick={() => updatePayment.mutate(editPay)} disabled={!editPay.amount || updatePayment.isPending}><Check className="size-3 text-primary" /></Button>
                               <Button variant="ghost" size="icon" onClick={() => setEditPay(null)}><X className="size-3" /></Button>
                             </TableCell>
                           </TableRow>
@@ -353,7 +353,7 @@ export default function ContractsPage() {
 
                 <div className="grid grid-cols-2 gap-3 text-sm border-t border-border pt-3">
                   <div><p className="text-xs text-muted-foreground">Deducted</p><p className="font-semibold text-destructive">{totalDeducted.toFixed(2)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Balance (after deductions)</p><p className={`font-semibold ${kautionBalance >= 0 ? "text-emerald-400" : "text-destructive"}`}>{kautionBalance.toFixed(2)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Balance (after deductions)</p><p className={`font-semibold ${kautionBalance >= 0 ? "text-primary" : "text-destructive"}`}>{kautionBalance.toFixed(2)}</p></div>
                 </div>
                 {kautionDeductions.length > 0 && (
                   <Table>
@@ -371,7 +371,7 @@ export default function ContractsPage() {
                           <TableCell><Input className="h-7 text-xs" placeholder="Reason" value={editDed.reason} onChange={(e) => setEditDed({ ...editDed, reason: e.target.value })} /></TableCell>
                           <TableCell className="text-right"><Input type="number" step="0.01" className="h-7 text-xs w-24 ml-auto" value={editDed.amount || ""} onChange={(e) => setEditDed({ ...editDed, amount: Number(e.target.value) })} /></TableCell>
                           <TableCell className="flex gap-1">
-                            <Button variant="ghost" size="icon" onClick={() => updateDeduction.mutate(editDed)} disabled={!editDed.amount || updateDeduction.isPending}><Check className="size-3 text-emerald-400" /></Button>
+                            <Button variant="ghost" size="icon" onClick={() => updateDeduction.mutate(editDed)} disabled={!editDed.amount || updateDeduction.isPending}><Check className="size-3 text-primary" /></Button>
                             <Button variant="ghost" size="icon" onClick={() => setEditDed(null)}><X className="size-3" /></Button>
                           </TableCell>
                         </TableRow>
@@ -393,14 +393,14 @@ export default function ContractsPage() {
                 {/* Kaution return section */}
                 {selectedContract?.kaution_amount && !selectedContract.kaution_returned_date && (
                   <div className="border-t border-border pt-3 space-y-2">
-                    <p className="text-xs font-medium text-emerald-400">Mark Kaution as Returned</p>
+                    <p className="text-xs font-medium text-primary">Mark Kaution as Returned</p>
                     <div className="flex gap-2">
                       <Input type="date" className="h-8 text-sm" value={kautionReturnForm.date}
                         onChange={(e) => setKautionReturnForm((f) => ({ ...f, date: e.target.value }))} />
                       <Input type="number" step="0.01" className="h-8 text-sm w-32" placeholder="Amount"
                         value={kautionReturnForm.amount || kautionBalance}
                         onChange={(e) => setKautionReturnForm((f) => ({ ...f, amount: Number(e.target.value) }))} />
-                      <Button size="sm" variant="outline" className="text-emerald-400 border-emerald-400/30"
+                      <Button size="sm" variant="outline" className="text-primary border-primary/30"
                         onClick={() => markKautionReturned.mutate()} disabled={markKautionReturned.isPending}>
                         Mark Returned
                       </Button>
@@ -408,8 +408,8 @@ export default function ContractsPage() {
                   </div>
                 )}
                 {selectedContract?.kaution_returned_date && (
-                  <div className="rounded-md bg-emerald-500/10 border border-emerald-500/20 p-3 flex justify-between items-center">
-                    <p className="text-sm text-emerald-400">
+                  <div className="rounded-md bg-primary/10 border border-primary/20 p-3 flex justify-between items-center">
+                    <p className="text-sm text-primary">
                       Returned {selectedContract.kaution_returned_amount?.toFixed(2)} on {selectedContract.kaution_returned_date}
                     </p>
                     <Button size="sm" variant="ghost" onClick={() => clearKautionReturn.mutate()}>Clear</Button>
@@ -512,7 +512,7 @@ export default function ContractsPage() {
                       <TableCell className="text-right font-mono">
                         {(r.paid ?? 0) > 0 ? (
                           <>
-                            <span className="text-emerald-400">{r.paid.toFixed(2)}</span>
+                            <span className="text-primary">{r.paid.toFixed(2)}</span>
                             {(r.outstanding ?? 0) > 0.001 && <span className="text-amber-400 text-xs block">−{r.outstanding.toFixed(2)} offen</span>}
                           </>
                         ) : (
@@ -520,10 +520,10 @@ export default function ContractsPage() {
                         )}
                       </TableCell>
                       <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{r.deducted?.toFixed(2)}</TableCell>
-                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-emerald-400" : "text-destructive"}`}>{r.balance?.toFixed(2)}</TableCell>
+                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-primary" : "text-destructive"}`}>{r.balance?.toFixed(2)}</TableCell>
                       <TableCell className="text-muted-foreground">
                         {r.kaution_returned_date ? (
-                          <span className="text-emerald-400 text-xs">{r.kaution_returned_amount?.toFixed(2)} on {r.kaution_returned_date}</span>
+                          <span className="text-primary text-xs">{r.kaution_returned_amount?.toFixed(2)} on {r.kaution_returned_date}</span>
                         ) : "—"}
                       </TableCell>
                     </TableRow>
@@ -556,7 +556,7 @@ export default function ContractsPage() {
                           <TableCell className="text-right font-mono">{b.kaution.toFixed(2)} {cur}</TableCell>
                           <TableCell className="text-right font-mono text-amber-400">{b.outstanding > 0.001 ? `−${b.outstanding.toFixed(2)} offen` : "—"}</TableCell>
                           <TableCell />
-                          <TableCell className="text-right font-mono text-emerald-400">{b.balance.toFixed(2)} {cur}</TableCell>
+                          <TableCell className="text-right font-mono text-primary">{b.balance.toFixed(2)} {cur}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">held now</TableCell>
                         </TableRow>
                       );

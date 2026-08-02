@@ -229,6 +229,9 @@ legal/
 # Convention: documents/<year>/<property-name>/<file>.pdf
 documents/
 
+# Logo design scratch (SVG concepts/iterations) — local working files
+logos/
+
 # Locally installed agent skills (via `npx skills add`) — machine-local.
 .agents/
 .claude/skills/

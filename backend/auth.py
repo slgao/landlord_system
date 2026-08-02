@@ -110,7 +110,7 @@ def _authenticate(request: Request, basic_creds: Optional[HTTPBasicCredentials])
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required",
-        headers={"WWW-Authenticate": 'Bearer, Basic realm="Vermio"'},
+        headers={"WWW-Authenticate": 'Bearer, Basic realm="Dachly"'},
     )
 
 

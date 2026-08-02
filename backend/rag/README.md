@@ -1,8 +1,8 @@
-# Vermio RAG Assistant — architecture notes
+# Dachly RAG Assistant — architecture notes
 
 `POST /api/rag/ask {"question": "..."}` — answers German landlord questions
 (Betriebskosten, Kaution) grounded in real legal text (BetrKV, BGB §§551/556)
-plus Vermio's own billing-logic docs, with per-claim citations and a refusal
+plus Dachly's own billing-logic docs, with per-claim citations and a refusal
 path when the corpus doesn't cover the question.
 
 Built as a practice project to get real, run-it-yourself RAG experience

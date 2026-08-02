@@ -129,7 +129,7 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "search_legal_corpus",
             "description": (
-                "Search German tenancy law (BetrKV, BGB §§551/556) and the Vermio "
+                "Search German tenancy law (BetrKV, BGB §§551/556) and the Dachly "
                 "docs. Use for legal rules, limits, definitions — e.g. the maximum "
                 "Kaution, which costs are umlagefähig, Nebenkosten deadlines."
             ),

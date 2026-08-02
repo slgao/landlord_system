@@ -1,4 +1,4 @@
-"""Ask Vermio — the agentic assistant for landlords.
+"""Ask Dachly — the agentic assistant for landlords.
 
 Package layout (see docs/TRD-assistant.md §13):
 

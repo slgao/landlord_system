@@ -1,4 +1,4 @@
-"""POST /api/assistant/ask — the Ask Vermio endpoint (TRD Step 5, §13).
+"""POST /api/assistant/ask — the Ask Dachly endpoint (TRD Step 5, §13).
 
 Non-streaming first (simpler to debug); streaming is TRD Step 6 and slots in
 behind the same request contract. The endpoint's one security job is to derive

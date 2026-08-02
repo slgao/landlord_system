@@ -62,7 +62,7 @@ const NAV = [
   {
     group: "Assistant",
     items: [
-      { href: "/ask", label: "Ask Vermio", icon: Sparkles },
+      { href: "/ask", label: "Ask Dachly", icon: Sparkles },
     ],
   },
   {

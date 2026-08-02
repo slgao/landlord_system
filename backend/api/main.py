@@ -28,15 +28,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Vermio API",
-    description="REST API for Vermio — self-hosted property management.",
+    title="Dachly API",
+    description="REST API for Dachly — self-hosted property management.",
     version="2.0.0",
     lifespan=lifespan,
 )
 
 # Allowed browser origins. Defaults to the Next.js dev server; in a deployed
 # multi-tenant SaaS set CORS_ORIGINS to the frontend's real origin(s),
-# comma-separated (e.g. "https://app.vermio.de,https://vermio.de").
+# comma-separated (e.g. "https://app.dachly.de,https://dachly.de").
 _cors_origins = [
     o.strip()
     for o in os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")

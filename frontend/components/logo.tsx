@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-// Vermio mark — the ledger identity: an ink Λ (roof gable / "V") standing on a
+// Dachly mark — the ledger identity: an ink Λ (roof gable / "V") standing on a
 // pine ruled line, on a paper tile. Matches the favicon (app/icon.svg).
 export function LogoMark({ className }: { className?: string }) {
   return (

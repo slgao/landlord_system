@@ -53,7 +53,7 @@ def upgrade() -> None:
     conn = op.get_bind()
     # Seed user from the current single-user credentials so existing data has an
     # owner and the current password keeps working (now as email login).
-    email = os.environ.get("SEED_USER_EMAIL", "admin@vermio.local")
+    email = os.environ.get("SEED_USER_EMAIL", "admin@dachly.local")
     pw_hash = os.environ.get("APP_PASSWORD_HASH", "") or None
     name = os.environ.get("APP_USERNAME", "admin")
     seed_id = conn.execute(sa.text(

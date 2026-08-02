@@ -232,7 +232,7 @@ export default function AskPage() {
           <Sparkles className="size-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <h1 className="text-sm font-semibold leading-tight">Ask Vermio</h1>
+          <h1 className="text-sm font-semibold leading-tight">Ask Dachly</h1>
           <p className="text-xs text-muted-foreground truncate">
             Fragen zu deinem Portfolio &amp; Mietrecht — Antworten aus deinen echten Daten und den Quellen (BGB, BetrKV)
           </p>

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="150" height="150" viewBox="0 0 150 150">
-  <!-- Roof-gable Λ mark, matching the header and the app. Ink on a paper tile
-       so it stays legible as a browser-tab favicon. -->
+  <!-- Roof-gable Λ mark, matching the landing page. Ink on a paper tile so it
+       stays legible as a browser-tab favicon. -->
   <rect width="150" height="150" rx="32" fill="#EFF1EB"/>
   <path d="M75 28 L133 122 L109 122 L75 68 L41 122 L17 122 Z" fill="#171C18"/>
 </svg>

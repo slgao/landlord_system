@@ -21,6 +21,14 @@ load_dotenv()
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
+# Schema search_path enforced on every connection. Neon's pooler rejects the
+# libpq `options` startup param and, in transaction pooling, discards a
+# session-level SET across statements — so we can't rely on connect-time options
+# or a one-off SET. We instead issue this as the first statement of each
+# transaction (see get_conn), which keeps the app working even if the database
+# role's default search_path is empty/misconfigured. Override via DB_SEARCH_PATH.
+_SEARCH_PATH = os.environ.get("DB_SEARCH_PATH", '"$user", public')
+
 # Request-scoped current owner (user id). Set by auth.require_auth for every
 # authenticated request; read by insert() to stamp owner_id, and available to
 # routers that scope their reads. None outside a request (e.g. migrations).
@@ -57,7 +65,22 @@ def _get_pool() -> _pg_pool.AbstractConnectionPool:
 
 
 def get_conn():
-    return _get_pool().getconn()
+    conn = _get_pool().getconn()
+    try:
+        # First statement of the transaction: pin the schema search_path so every
+        # subsequent query in this checkout resolves unqualified table names,
+        # regardless of the role's default. _SEARCH_PATH is a trusted constant,
+        # not user input, so interpolation is safe.
+        with conn.cursor() as c:
+            c.execute(f"SET search_path TO {_SEARCH_PATH}")
+        return conn
+    except Exception:
+        # Don't return a half-initialised connection to the pool.
+        try:
+            _get_pool().putconn(conn, close=True)
+        except Exception:
+            pass
+        raise
 
 
 def put_conn(conn) -> None:

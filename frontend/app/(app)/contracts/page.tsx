@@ -100,8 +100,19 @@ export default function ContractsPage() {
   });
 
   const markKautionReturned = useMutation({
-    mutationFn: () => api.post(`/api/contracts/${selectedContract!.id}/kaution-return`, kautionReturnForm),
-    onSuccess: (res) => { qc.invalidateQueries({ queryKey: ["contracts"] }); setSelectedContract(res.data); toast.success("Kaution marked as returned"); },
+    // Backend expects returned_date / returned_amount; send the amount shown in
+    // the field (falls back to the outstanding balance when left untouched).
+    mutationFn: () => api.post(`/api/contracts/${selectedContract!.id}/kaution-return`, {
+      returned_date: kautionReturnForm.date,
+      returned_amount: kautionReturnForm.amount || kautionBalance,
+    }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["contracts"] });
+      qc.invalidateQueries({ queryKey: ["kaution-overview"] });
+      setSelectedContract(res.data);
+      toast.success("Kaution marked as returned");
+    },
+    onError: () => toast.error("Failed to mark Kaution as returned"),
   });
 
   const clearKautionReturn = useMutation({

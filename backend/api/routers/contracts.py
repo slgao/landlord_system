@@ -209,6 +209,13 @@ class RentSettleIn(_BM):
     settled_until: _Opt[str] = None   # ISO date, or null/empty to clear
 
 
+class RenewIn(_BM):
+    mode: str                       # "extend" | "new_term"
+    end_date: _Opt[str] = None      # new end date; null/empty = open-ended
+    start_date: _Opt[str] = None    # new_term only: start of the new contract
+    rent: _Opt[float] = None        # new_term only: new rent (defaults to current)
+
+
 @router.post("/{contract_id}/settle-rent")
 def settle_rent(contract_id: int, body: RentSettleIn, owner: int = Depends(require_auth)):
     _assert_own(contract_id, owner)
@@ -234,6 +241,58 @@ def clear_kaution_return(contract_id: int, owner: int = Depends(require_auth)):
     execute("UPDATE contracts SET kaution_returned_date=NULL, kaution_returned_amount=NULL "
             "WHERE id=? AND owner_id=?", (contract_id, owner))
     return _row(_get(contract_id, owner))
+
+
+@router.post("/{contract_id}/renew", response_model=ContractOut)
+def renew_contract(contract_id: int, body: RenewIn, owner: int = Depends(require_auth)):
+    """Extend a contract in place, or roll it into a new term.
+
+    - mode="extend": move (or clear) the end date on the existing contract so the
+      same tenancy simply continues; un-terminates it if it was terminated.
+      Returns the updated contract.
+    - mode="new_term": close the current contract the day before `start_date`
+      and create a fresh contract for the same tenant + apartment with the new
+      rent. The deposit stays on the original contract (the new one starts at 0)
+      so it is never double-counted; the per-month expected-rent logic then uses
+      the old rent for old months and the new rent from the new term onward.
+      Returns the NEW contract.
+    """
+    old = _get(contract_id, owner)                      # 404s if not owned
+    new_end = (body.end_date or "").strip() or None
+
+    if body.mode == "extend":
+        execute("UPDATE contracts SET end_date=?, terminated=0 WHERE id=? AND owner_id=?",
+                (new_end, contract_id, owner))
+        return _row(_get(contract_id, owner))
+
+    if body.mode == "new_term":
+        new_start = (body.start_date or "").strip()
+        if not new_start:
+            raise HTTPException(status_code=400, detail="A start date is required for a new term")
+        from datetime import date, timedelta
+        try:
+            old_end = (date.fromisoformat(new_start) - timedelta(days=1)).isoformat()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start date (expected YYYY-MM-DD)")
+        new_rent = body.rent if body.rent is not None else float(old[6])
+        # Close the old term the day before the new one begins.
+        execute("UPDATE contracts SET end_date=? WHERE id=? AND owner_id=?",
+                (old_end, contract_id, owner))
+        # Clone tenant/apartment/currency into a new term; deposit carries over (0).
+        new_id = execute_returning("""
+            INSERT INTO contracts
+              (tenant_id, apartment_id, rent, currency, start_date, end_date,
+               kaution_amount, kaution_currency, kaution_paid_date,
+               kaution_returned_date, kaution_returned_amount, terminated, owner_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            RETURNING id
+        """, (old[1], old[3], new_rent, old[7] or "EUR",
+              new_start, new_end,
+              0, old[11] or "EUR", None,
+              None, None, 0, owner))[0][0]
+        return _row(_get(new_id, owner))
+
+    raise HTTPException(status_code=400, detail="mode must be 'extend' or 'new_term'")
 
 
 @router.get("/kaution-overview", response_model=list)

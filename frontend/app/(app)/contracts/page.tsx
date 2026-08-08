@@ -38,6 +38,9 @@ export default function ContractsPage() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"contracts" | "detail" | "kaution-overview">("contracts");
   const [kautionReturnForm, setKautionReturnForm] = useState({ date: new Date().toISOString().split("T")[0], amount: 0 });
+  const [renewOpen, setRenewOpen] = useState(false);
+  const [renewForm, setRenewForm] = useState<{ mode: "extend" | "new_term"; end_date: string; start_date: string; rent: number }>(
+    { mode: "extend", end_date: "", start_date: "", rent: 0 });
   const [editing, setEditing] = useState<Contract | null>(null);
   const [form, setForm] = useState<typeof CONTRACT_EMPTY>(CONTRACT_EMPTY);
   const [showAll, setShowAll] = useState(false);
@@ -120,6 +123,23 @@ export default function ContractsPage() {
     onSuccess: (res) => { qc.invalidateQueries({ queryKey: ["contracts"] }); setSelectedContract(res.data); toast.success("Kaution return cleared"); },
   });
 
+  const renew = useMutation({
+    mutationFn: () => api.post(`/api/contracts/${selectedContract!.id}/renew`, {
+      mode: renewForm.mode,
+      end_date: renewForm.end_date || null,
+      start_date: renewForm.mode === "new_term" ? renewForm.start_date : null,
+      rent: renewForm.mode === "new_term" ? (renewForm.rent || selectedContract!.rent) : null,
+    }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["contracts"] });
+      qc.invalidateQueries({ queryKey: ["kaution-overview"] });
+      setSelectedContract(res.data);
+      setRenewOpen(false);
+      toast.success(renewForm.mode === "extend" ? "Contract extended" : "New term created");
+    },
+    onError: () => toast.error("Failed to renew contract"),
+  });
+
   const save = useMutation({
     mutationFn: (data: typeof CONTRACT_EMPTY) => {
       const body = { ...data, end_date: data.end_date || null, kaution_paid_date: data.kaution_paid_date || null,
@@ -187,6 +207,15 @@ export default function ContractsPage() {
   });
 
   function openCreate() { setEditing(null); setForm(CONTRACT_EMPTY); setOpen(true); }
+  function openRenew() {
+    if (!selectedContract) return;
+    const oldEnd = selectedContract.end_date;
+    const nextStart = oldEnd
+      ? new Date(new Date(oldEnd).getTime() + 86_400_000).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0];
+    setRenewForm({ mode: "extend", end_date: "", start_date: nextStart, rent: selectedContract.rent });
+    setRenewOpen(true);
+  }
   function openEdit(c: Contract) {
     setEditing(c);
     setForm({ tenant_id: c.tenant_id, apartment_id: c.apartment_id, rent: c.rent, currency: c.currency,
@@ -304,6 +333,7 @@ export default function ContractsPage() {
         // ── Detail view ──
         <>
           <PageHeader title={`${selectedContract?.tenant_name} — ${selectedContract?.apartment_name}`}>
+            <Button variant="outline" size="sm" onClick={openRenew}>Renew / extend</Button>
             <Button variant="outline" size="sm" onClick={() => setTab("contracts")}>← Back</Button>
           </PageHeader>
 
@@ -683,6 +713,61 @@ export default function ContractsPage() {
               terminate.mutate({ id: terminateTarget.id, end_date });
             }} disabled={terminate.isPending || (terminateChoice === "custom" && !terminateCustom)}>
               {terminate.isPending ? "Terminating…" : "Terminate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Renew / extend a contract that's coming to an end */}
+      <Dialog open={renewOpen} onOpenChange={setRenewOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Renew / extend contract</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div className="flex gap-2">
+              <Button type="button" size="sm" variant={renewForm.mode === "extend" ? "default" : "outline"}
+                onClick={() => setRenewForm((f) => ({ ...f, mode: "extend" }))}>Extend (same terms)</Button>
+              <Button type="button" size="sm" variant={renewForm.mode === "new_term" ? "default" : "outline"}
+                onClick={() => setRenewForm((f) => ({ ...f, mode: "new_term" }))}>New term (rent changes)</Button>
+            </div>
+
+            {renewForm.mode === "extend" ? (
+              <>
+                <p className="text-muted-foreground">
+                  Keeps the same contract, tenant and rent — just moves the end date.
+                  Leave it empty to make the lease open-ended (unbefristet).
+                </p>
+                <div className="space-y-1.5"><Label>New end date (optional)</Label>
+                  <Input type="date" value={renewForm.end_date}
+                    onChange={(e) => setRenewForm((f) => ({ ...f, end_date: e.target.value }))} /></div>
+              </>
+            ) : (
+              <>
+                <p className="text-muted-foreground">
+                  Closes the current term the day before the new start and creates a new
+                  contract for the same tenant &amp; apartment. The deposit carries over
+                  (the new term starts at 0 so it isn&apos;t double-counted).
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5"><Label>New start date</Label>
+                    <Input type="date" value={renewForm.start_date}
+                      onChange={(e) => setRenewForm((f) => ({ ...f, start_date: e.target.value }))} /></div>
+                  <div className="space-y-1.5"><Label>New end date (optional)</Label>
+                    <Input type="date" value={renewForm.end_date}
+                      onChange={(e) => setRenewForm((f) => ({ ...f, end_date: e.target.value }))} /></div>
+                </div>
+                <div className="space-y-1.5"><Label>New monthly rent ({selectedContract?.currency})</Label>
+                  <Input type="number" step="0.01" value={renewForm.rent}
+                    onChange={(e) => setRenewForm((f) => ({ ...f, rent: Number(e.target.value) }))} /></div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenewOpen(false)}>Cancel</Button>
+            <Button onClick={() => renew.mutate()}
+              disabled={renew.isPending || (renewForm.mode === "new_term" && !renewForm.start_date)}>
+              {renew.isPending ? "Saving…" : renewForm.mode === "extend" ? "Extend" : "Create new term"}
             </Button>
           </DialogFooter>
         </DialogContent>

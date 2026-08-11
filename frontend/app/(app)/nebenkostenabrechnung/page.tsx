@@ -444,8 +444,10 @@ export default function NebenkostenabrechnungPage() {
       // Cost is split by the persons present in this run, but the prepayment is a
       // fixed amount the tenant paid regardless of occupancy — keep it divided by
       // the ORIGINAL count. The backend divides prepay by num_tenants (= r.persons),
-      // so pre-scale it here to cancel back to ÷base.
+      // so pre-scale it here to cancel back to ÷base. _base_tenants/_prepay_base
+      // carry the unscaled figure + original divisor for an honest PDF display.
       prepay_monthly: (b.prepay_monthly || 0) * r.persons / base,
+      _base_tenants: base, _prepay_base: b.prepay_monthly || 0,
     }));
   });
   const expandBK = (list: any[]) => occSegs().length === 0 ? list : list.flatMap((b: any) => {
@@ -454,20 +456,26 @@ export default function NebenkostenabrechnungPage() {
     const base = b.tenants ?? numTenants;
     const runs = occRuns(es, ee, base);
     if (runs.length <= 1) return [b];
-    // BK is month-based: prorate each run by its day-share so the runs' months sum
-    // to the whole period's months (a mid-month vacancy boundary must not double-
-    // count the boundary month). The last run absorbs the rounding remainder so the
-    // sum is exact.
+    // BK is month-based. When every split point lands on a month boundary (a room
+    // re-let on the 1st — the common case) the runs' whole months already sum to
+    // the period's months, so keep clean integers. Only when a boundary is mid-
+    // month (no honest whole-month answer) fall back to day-proportional shares so
+    // the runs still sum exactly (last run absorbs the rounding remainder) instead
+    // of double-counting the boundary month.
     const totMonths = monthsBetween(es, ee), totDays = billDays(es, ee);
+    const intMonths = runs.map((r) => monthsBetween(r.start, r.end));
+    const aligned = intMonths.reduce((a, b) => a + b, 0) === totMonths;
     const r2 = (x: number) => Math.round(x * 100) / 100;
     let acc = 0;
     return runs.map((r, i) => {
-      const m = i === runs.length - 1 ? r2(totMonths - acc) : r2(totMonths * billDays(r.start, r.end) / totDays);
+      const m = aligned ? intMonths[i]
+        : (i === runs.length - 1 ? r2(totMonths - acc) : r2(totMonths * billDays(r.start, r.end) / totDays));
       acc += m;
       return {
         ...b, eff_start: r.start, eff_end: r.end, tenants: r.persons, _occ_months: m,
         // BK prepay limit stays divided by the ORIGINAL count (see expandMetered).
         limit_per_month: (b.limit_per_month || 0) * r.persons / base,
+        _base_tenants: base, _limit_base: b.limit_per_month || 0,
       };
     });
   });
@@ -552,7 +560,11 @@ export default function NebenkostenabrechnungPage() {
         // Integer person count for this sub-period (from the occupancy split, or
         // the flat's count when no timeline is set).
         num_tenants: b.num_tenants ?? numTenants,
-        monthly_limit: b.prepay_monthly,
+        // Prepayment shown unscaled and divided by the original count (the tenant's
+        // fixed prepayment) — the result still equals c.prepay. Defaults to the
+        // cost divisor when there's no occupancy split.
+        monthly_limit: b._prepay_base ?? b.prepay_monthly,
+        prepay_tenants: b._base_tenants ?? (b.num_tenants ?? numTenants),
         cost: c.cost_tenant, limit: c.prepay, is_pauschale: b.is_pauschale, mode: b.mode,
       };
     };
@@ -576,7 +588,10 @@ export default function NebenkostenabrechnungPage() {
           ...c,
           num_tenants: b.tenants,
           total_cost: b.cost_flat,
-          monthly_limit: b.limit_per_month,
+          // Unscaled prepay limit + original divisor for an honest display; the
+          // result (c.limit_period) is unchanged. Defaults when no occupancy split.
+          monthly_limit: b._limit_base ?? b.limit_per_month,
+          prepay_tenants: b._base_tenants ?? b.tenants,
           bill_period: fmtPeriod(b.bk_start, b.bk_end),
           num_months: monthsBetween(b.bk_start, b.bk_end),
           period: fmtPeriod(effS, effE),

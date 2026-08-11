@@ -24,7 +24,12 @@ RUN pip install --no-cache-dir --timeout 300 --retries 5 \
         --index-url https://download.pytorch.org/whl/cpu torch \
     && pip install --no-cache-dir --timeout 300 --retries 5 -r requirements-rag.txt
 
-COPY . .
+# Copy ONLY the rag package (corpus + build scripts) before the model bake. The
+# bake imports nothing outside rag/, so this layer — and the expensive bake below
+# — stay cached across ordinary application-code edits. Without this, `COPY . .`
+# would sit above the bake and re-download models + re-embed the corpus on every
+# backend change (the build bottleneck).
+COPY rag/ ./rag/
 
 # Pre-download the embedding + reranker models and build the legal index at
 # build time, baking them into the image (HF_HOME). The assistant then answers
@@ -55,6 +60,10 @@ RUN if [ "$BAKE_MODELS" = "false" ]; then \
           && echo ">> Model bake OK." ) \
         || echo ">> WARNING: model bake failed (no network to huggingface.co?). Building WITHOUT baked models — the Ask-Dachly assistant will return 503 until models are available at runtime; the rest of the API works normally."; \
     fi
+
+# Application code last: editing it invalidates only from here down, so an
+# ordinary backend change rebuilds in seconds (the cached bake above is reused).
+COPY . .
 
 RUN mkdir -p pdf
 

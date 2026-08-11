@@ -82,6 +82,12 @@ class NKCalcRequest(BaseModel):
     warmwater: Optional[Any] = None
     heizung: Optional[Any] = None
     bk: Optional[Any] = None
+    # Optional occupancy timeline: [{"start","end","persons"}] segments over the
+    # billing period. When present, consumption costs are divided by the number
+    # of persons actually living in the flat on each day (so a vacant room during
+    # part of the year is shared by the remaining residents). Applies to the
+    # metered utilities only — NOT to Betriebskosten (fixed costs stay put).
+    occupancy: Optional[Any] = None
 
 
 def _norm_billings(x):
@@ -91,6 +97,45 @@ def _norm_billings(x):
     if not x:
         return []
     return x if isinstance(x, list) else [x]
+
+
+def _effective_persons(billing, schedule):
+    """The person-divisor for one metered billing, weighted by day-level
+    occupancy. Returns a float `p` such that dividing by it over the tenant's
+    living period yields Σ_day (1/persons(day)) — i.e. each day's cost is split
+    among the people actually present that day. Days not covered by any segment
+    fall back to the billing's own `num_tenants`. With no schedule (or an
+    all-uniform one) it returns the base count unchanged."""
+    base = float(billing.get("num_tenants") or 1) or 1.0
+    es, ee = billing.get("eff_start"), billing.get("eff_end")
+    if not schedule or not es or not ee:
+        return base
+    try:
+        ls, le = date.fromisoformat(es), date.fromisoformat(ee)
+    except (TypeError, ValueError):
+        return base
+    if le < ls:
+        return base
+    total = (le - ls).days + 1          # inclusive day count of the living period
+    covered, share = 0, 0.0
+    for seg in schedule:
+        try:
+            ss, se = date.fromisoformat(seg["start"]), date.fromisoformat(seg["end"])
+            persons = float(seg["persons"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if persons <= 0:
+            continue
+        os_, oe = max(ls, ss), min(le, se)   # overlap with the living period
+        if oe < os_:
+            continue
+        ov = (oe - os_).days + 1
+        share += ov / persons
+        covered += ov
+    uncovered = total - covered
+    if uncovered > 0:                    # days outside every segment → base count
+        share += uncovered / base
+    return (total / share) if share > 0 else base
 
 
 @router.post("/nebenkostenabrechnung/calculate")
@@ -112,7 +157,14 @@ def nk_calculate(body: NKCalcRequest, owner: int = Depends(require_auth)):
     def _calc_list(items, meter_fn):
         out = []
         for d in items:
-            out.append(_sum(d) if d.get("mode") == "sum" else meter_fn(d))
+            # Divide by day-level occupancy when a timeline is given (metered
+            # utilities are consumption costs, so the present residents share
+            # a vacant room's would-be share).
+            d["num_tenants"] = _effective_persons(d, body.occupancy)
+            r = _sum(d) if d.get("mode") == "sum" else meter_fn(d)
+            if isinstance(r, dict):
+                r["eff_persons"] = round(float(d.get("num_tenants") or 0), 2)
+            out.append(r)
         return out
 
     if body.strom:

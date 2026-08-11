@@ -270,6 +270,9 @@ function BillingShell({ idx, count, b, set, onRemove, costLabel, preview, childr
 export default function NebenkostenabrechnungPage() {
   const [contractId, setContractId] = useState("");
   const [numTenants, setNumTenants] = useState(1);
+  // Optional occupancy timeline (WG): spans where fewer/more people lived, e.g. a
+  // vacant room. Applied to consumption utilities only. Empty = use numTenants.
+  const [occTimeline, setOccTimeline] = useState<{ start: string; end: string; persons: number }[]>([]);
   const [calcResult, setCalcResult] = useState<any>({});
   const [calculating, setCalculating] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -359,6 +362,9 @@ export default function NebenkostenabrechnungPage() {
     setNumTenants(occupancy.auto_count);
   }, [selected?.id, occupancy?.auto_count]);
 
+  // Occupancy timeline is contract-specific — clear it when the contract changes.
+  useEffect(() => { setOccTimeline([]); }, [selected?.id]);
+
   // Changing the contract clears the "currently loaded profile" so Update can't
   // accidentally overwrite a different tenant's profile.
   useEffect(() => {
@@ -428,6 +434,8 @@ export default function NebenkostenabrechnungPage() {
       // effective living months drive the proration on the backend
       months: monthsBetween(b.eff_start || b.bk_start, b.eff_end || b.bk_end),
     }));
+    const occ = occTimeline.filter((s) => s.start && s.end && s.persons > 0);
+    if (occ.length > 0) p.occupancy = occ;
     return p;
   }
 
@@ -444,7 +452,10 @@ export default function NebenkostenabrechnungPage() {
         bill_days: billDays(b.bill_start, b.bill_end),
         period: fmtPeriod(effS, effE),
         days: hasEff ? billDays(effS, effE) : effectiveDays(b.bill_start, b.bill_end, cs, ce),
-        num_tenants: numTenants, monthly_limit: b.prepay_monthly,
+        // Show the occupancy-weighted divisor when a timeline was applied, so the
+        // PDF's "÷ N Mieter" explanation reconciles with the (already-computed) amount.
+        num_tenants: (c && typeof c.eff_persons === "number") ? c.eff_persons : numTenants,
+        monthly_limit: b.prepay_monthly,
         cost: c.cost_tenant, limit: c.prepay, is_pauschale: b.is_pauschale, mode: b.mode,
       };
     };
@@ -701,6 +712,39 @@ export default function NebenkostenabrechnungPage() {
                   Auto-detected {occupancy.auto_count} tenants sharing this flat (WG) — auto-set to {occupancy.auto_count} persons
                 </p>
               ) : null}
+            </div>
+          )}
+
+          {selected && (
+            <div className="rounded-md border border-border p-3 space-y-2">
+              <div>
+                <p className="text-xs font-medium">Occupancy over time (optional)</p>
+                <p className="text-[11px] text-muted-foreground">
+                  WG only: if a room was vacant part of the period, add the span and how many
+                  persons actually lived there. Consumption costs (Strom/Gas/Wasser/Heizung) are
+                  then split among the residents present each day; days you don&apos;t list use the
+                  fixed count above. Betriebskosten are unaffected.
+                </p>
+              </div>
+              {occTimeline.map((seg, i) => (
+                <div key={i} className="flex items-end gap-2">
+                  <DateF label="From" value={seg.start}
+                    onChange={(v) => setOccTimeline((a) => a.map((s, j) => (j === i ? { ...s, start: v } : s)))} />
+                  <DateF label="To" value={seg.end}
+                    onChange={(v) => setOccTimeline((a) => a.map((s, j) => (j === i ? { ...s, end: v } : s)))} />
+                  <div className="w-24">
+                    <Num label="Persons" value={seg.persons} step="1" min="1"
+                      onChange={(v) => setOccTimeline((a) => a.map((s, j) => (j === i ? { ...s, persons: v } : s)))} />
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={() => setOccTimeline((a) => a.filter((_, j) => j !== i))}>
+                    <Trash2 className="size-4 text-destructive" />
+                  </Button>
+                </div>
+              ))}
+              <Button variant="outline" size="sm"
+                onClick={() => setOccTimeline((a) => [...a, { start: "", end: "", persons: Math.max(1, numTenants - 1) }])}>
+                <Plus className="size-4 mr-1" /> Add vacancy / occupancy period
+              </Button>
             </div>
           )}
 

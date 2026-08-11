@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -151,12 +152,8 @@ function Num({ label, value, onChange, step = "0.01", min = "0" }: {
 }
 
 function DateF({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      <Input type="date" className="h-8 text-sm" value={value} onChange={(e) => onChange(e.target.value)} />
-    </div>
-  );
+  // Calendar popover that opens straight to a day grid (see DatePicker).
+  return <DatePicker label={label} value={value} onChange={onChange} />;
 }
 
 function CalcPreview({ label, result }: { label: string; result: any }) {
@@ -842,10 +839,14 @@ export default function NebenkostenabrechnungPage() {
               </div>
               {occTimeline.map((seg, i) => (
                 <div key={i} className="flex items-end gap-2">
-                  <DateF label="From" value={seg.start}
-                    onChange={(v) => setOccTimeline((a) => a.map((s, j) => (j === i ? { ...s, start: v } : s)))} />
-                  <DateF label="To" value={seg.end}
-                    onChange={(v) => setOccTimeline((a) => a.map((s, j) => (j === i ? { ...s, end: v } : s)))} />
+                  <div className="flex-1">
+                    <DateF label="From" value={seg.start}
+                      onChange={(v) => setOccTimeline((a) => a.map((s, j) => (j === i ? { ...s, start: v } : s)))} />
+                  </div>
+                  <div className="flex-1">
+                    <DateF label="To" value={seg.end}
+                      onChange={(v) => setOccTimeline((a) => a.map((s, j) => (j === i ? { ...s, end: v } : s)))} />
+                  </div>
                   <div className="w-24">
                     <Num label="Persons" value={seg.persons} step="1" min="1"
                       onChange={(v) => setOccTimeline((a) => a.map((s, j) => (j === i ? { ...s, persons: v } : s)))} />

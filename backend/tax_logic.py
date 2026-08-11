@@ -27,6 +27,7 @@ def annuity_year_breakdown(
     tilgung_rate_pct: float,
     start_date: str,
     year: int,
+    end_month: int = 12,
 ) -> dict:
     """Interest (Schuldzinsen) and principal (Tilgung) paid in `year`.
 
@@ -38,6 +39,11 @@ def annuity_year_breakdown(
 
     First payment is assumed in the month of `start_date`. The final payment
     is capped so the balance never goes below zero.
+
+    `end_month` (1–12) stops the simulation at that month of `year` — pass the
+    current month for a mid-year "as of now" snapshot (balance_end / *_ytd /
+    *_total then reflect what's actually been paid so far, not a projected
+    year-end). Defaults to 12 (full year), which is what the tax module wants.
     """
     start = _parse(start_date)
     monthly_rate = interest_rate_pct / 100.0 / 12.0
@@ -46,10 +52,10 @@ def annuity_year_breakdown(
     balance = float(principal)
     interest_ytd = 0.0
     tilgung_ytd = 0.0
-    interest_total = 0.0  # cumulative interest since acquisition through end of `year`
-    # Simulate month by month from the first payment through December of `year`.
+    interest_total = 0.0  # cumulative interest since acquisition through the end month
+    # Simulate month by month from the first payment through `end_month` of `year`.
     m = start.year * 12 + (start.month - 1)
-    end_m = year * 12 + 11
+    end_m = year * 12 + (max(1, min(12, end_month)) - 1)
     while m <= end_m and balance > 0.005:
         interest = balance * monthly_rate
         # Tilgung 0 (interest-only) legitimately amortizes nothing; never negative.

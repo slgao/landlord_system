@@ -436,14 +436,40 @@ export default function NebenkostenabrechnungPage() {
   const expandMetered = (list: any[]) => occSegs().length === 0 ? list : list.flatMap((b: any) => {
     const es = b.eff_start || b.bill_start, ee = b.eff_end || b.bill_end;
     if (!es || !ee) return [b];
-    const runs = occRuns(es, ee, b.num_tenants ?? numTenants);
-    return runs.length <= 1 ? [b] : runs.map((r) => ({ ...b, eff_start: r.start, eff_end: r.end, num_tenants: r.persons }));
+    const base = b.num_tenants ?? numTenants;
+    const runs = occRuns(es, ee, base);
+    if (runs.length <= 1) return [b];
+    return runs.map((r) => ({
+      ...b, eff_start: r.start, eff_end: r.end, num_tenants: r.persons,
+      // Cost is split by the persons present in this run, but the prepayment is a
+      // fixed amount the tenant paid regardless of occupancy — keep it divided by
+      // the ORIGINAL count. The backend divides prepay by num_tenants (= r.persons),
+      // so pre-scale it here to cancel back to ÷base.
+      prepay_monthly: (b.prepay_monthly || 0) * r.persons / base,
+    }));
   });
   const expandBK = (list: any[]) => occSegs().length === 0 ? list : list.flatMap((b: any) => {
     const es = b.eff_start || b.bk_start, ee = b.eff_end || b.bk_end;
     if (!es || !ee) return [b];
-    const runs = occRuns(es, ee, b.tenants ?? numTenants);
-    return runs.length <= 1 ? [b] : runs.map((r) => ({ ...b, eff_start: r.start, eff_end: r.end, tenants: r.persons }));
+    const base = b.tenants ?? numTenants;
+    const runs = occRuns(es, ee, base);
+    if (runs.length <= 1) return [b];
+    // BK is month-based: prorate each run by its day-share so the runs' months sum
+    // to the whole period's months (a mid-month vacancy boundary must not double-
+    // count the boundary month). The last run absorbs the rounding remainder so the
+    // sum is exact.
+    const totMonths = monthsBetween(es, ee), totDays = billDays(es, ee);
+    const r2 = (x: number) => Math.round(x * 100) / 100;
+    let acc = 0;
+    return runs.map((r, i) => {
+      const m = i === runs.length - 1 ? r2(totMonths - acc) : r2(totMonths * billDays(r.start, r.end) / totDays);
+      acc += m;
+      return {
+        ...b, eff_start: r.start, eff_end: r.end, tenants: r.persons, _occ_months: m,
+        // BK prepay limit stays divided by the ORIGINAL count (see expandMetered).
+        limit_per_month: (b.limit_per_month || 0) * r.persons / base,
+      };
+    });
   });
 
   // The calc returns one result per expanded interval; fold them back to one per
@@ -503,8 +529,9 @@ export default function NebenkostenabrechnungPage() {
     if (useBK) p.bk = expandBK(bkB).map((b: any) => ({
       cost_flat: b.cost_flat, tenants: b.tenants,
       bk_start: b.bk_start, bk_end: b.bk_end, limit_per_month: b.limit_per_month,
-      // effective living months drive the proration on the backend
-      months: monthsBetween(b.eff_start || b.bk_start, b.eff_end || b.bk_end),
+      // effective living months drive the proration on the backend; occupancy runs
+      // carry a day-proportional month share (_occ_months) so they sum correctly.
+      months: b._occ_months ?? monthsBetween(b.eff_start || b.bk_start, b.eff_end || b.bk_end),
     }));
     return p;
   }
@@ -553,7 +580,7 @@ export default function NebenkostenabrechnungPage() {
           bill_period: fmtPeriod(b.bk_start, b.bk_end),
           num_months: monthsBetween(b.bk_start, b.bk_end),
           period: fmtPeriod(effS, effE),
-          months: monthsBetween(effS, effE),
+          months: b._occ_months ?? monthsBetween(effS, effE),
           cost: c.period_cost,
           limit: c.limit_period,
           nach: c.nach,
@@ -792,9 +819,10 @@ export default function NebenkostenabrechnungPage() {
                 <p className="text-xs font-medium">Occupancy over time (optional)</p>
                 <p className="text-[11px] text-muted-foreground">
                   WG only: if a room was vacant part of the period, add the span and how many
-                  persons actually lived there. Consumption costs (Strom/Gas/Wasser/Heizung) are
-                  then split among the residents present each day; days you don&apos;t list use the
-                  fixed count above. Betriebskosten are unaffected.
+                  persons actually lived there. Every cost — consumption (Strom/Gas/Wasser/Heizung)
+                  <b> and Betriebskosten</b> — is then split among the residents present each day;
+                  days you don&apos;t list use the fixed count above. Your fixed prepayment stays
+                  divided by the full tenant count.
                 </p>
               </div>
               {occTimeline.map((seg, i) => (

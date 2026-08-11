@@ -17,13 +17,17 @@ def _financing(prop_id, owner, year):
     (Schuldzinsen) and principal repaid (Tilgung = equity built). Returns zeros
     when the property has no mortgage."""
     from tax_logic import annuity_year_breakdown
+    # For the current year, stop at the current month so debt/interest/equity are
+    # "as of now" (what's actually been paid) rather than a projected year-end.
+    today = date.today()
+    end_month = today.month if int(year) == today.year else 12
     rows = fetch("SELECT principal, interest_rate_pct, tilgung_rate_pct, start_date "
                  "FROM mortgages WHERE property_id=? AND owner_id=?", (prop_id, owner))
     debt = interest = equity = 0.0
     interest_acq = equity_acq = 0.0
     for principal, ir, tr, sd in rows:
         try:
-            b = annuity_year_breakdown(float(principal), float(ir), float(tr), sd, int(year))
+            b = annuity_year_breakdown(float(principal), float(ir), float(tr), sd, int(year), end_month)
         except Exception:
             continue
         debt += b["balance_end"]

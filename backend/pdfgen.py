@@ -1159,6 +1159,44 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
     hdr   = ParagraphStyle("_h",  fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=C_WHITE)
     hdr_r = ParagraphStyle("_hr", fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=C_WHITE, alignment=TA_RIGHT)
 
+    # Metric "card" cell + the 5-column financing table (reused in the snapshot
+    # summary and per-property sections).
+    def _mc(label, value, sub=None, vc=None):
+        lbl_s = ParagraphStyle("_mcl", fontName="Helvetica",      fontSize=7,  leading=10, textColor=C_MUTED)
+        val_s = ParagraphStyle("_mcv", fontName="Helvetica-Bold", fontSize=10, leading=13,
+                               textColor=colors.HexColor(vc) if vc else C_TEXT)
+        sub_s = ParagraphStyle("_mcs", fontName="Helvetica",      fontSize=7,  leading=10, textColor=C_MUTED)
+        cells = [Paragraph(label, lbl_s), Paragraph(value, val_s)]
+        if sub:
+            cells.append(Paragraph(sub, sub_s))
+        return cells
+
+    def _fin_metric_table(row5):
+        t = Table(row5, colWidths=[94, 94, 94, 93, 93])
+        t.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C_SECBG),
+            ("BOX",           (0, 0), (-1, -1), 0.5, C_MGRAY),
+            ("INNERGRID",     (0, 0), (-1, -1), 0.5, C_MGRAY),
+            ("TOPPADDING",    (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ]))
+        return t
+
+    def _fin_row(p, prefix=""):
+        return [[
+            _mc("Restschuld",        f"€ {p.get('debt_remaining', 0):,.2f}", vc="#e74c3c"),
+            _mc(f"Zinsen {year}",    f"€ {p.get('interest_paid', 0):,.2f}"),
+            _mc(f"Tilgung {year}",   f"€ {p.get('equity_paid', 0):,.2f}", vc="#27ae60"),
+            _mc("Zinsen seit Kauf",  f"€ {p.get('interest_since_acq', 0):,.2f}"),
+            _mc("Tilgung seit Kauf", f"€ {p.get('equity_since_acq', 0):,.2f}", vc="#27ae60"),
+        ]]
+
+    def _is_financed(p):
+        return bool(p.get("debt_remaining", 0) or p.get("interest_since_acq", 0) or p.get("equity_since_acq", 0))
+
     # ── Header banner ─────────────────────────────────────────────────────────
     story.append(_header_banner(
         f"JAHRESABSCHLUSS {year}",
@@ -1212,6 +1250,18 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
     ]))
     story.append(snap_t)
     story.append(Spacer(1, 22))
+
+    # ── Financing summary (mortgages) — totals across all objects, "as of now" ──
+    if any(_is_financed(p) for p in props):
+        _tot = {k: sum(p.get(k, 0) for p in props)
+                for k in ("debt_remaining", "interest_paid", "equity_paid",
+                          "interest_since_acq", "equity_since_acq")}
+        cap_s = ParagraphStyle("_fincap", fontName="Helvetica-Bold", fontSize=10,
+                               leading=13, textColor=C_TEXT)
+        story.append(Paragraph("Finanzierung (alle Objekte)", cap_s))
+        story.append(Spacer(1, 6))
+        story.append(_fin_metric_table(_fin_row(_tot)))
+        story.append(Spacer(1, 22))
 
     # ═════════════════════════════════════════════════════════════════════════
     # SECTIONS 2+ — Per-property annual detail
@@ -1277,16 +1327,6 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
         nc = "#27ae60" if net_act >= 0 else "#e74c3c"
         dc = "#27ae60" if (ta - te) >= 0 else "#e74c3c"
 
-        def _mc(label, value, sub=None, vc=None):
-            lbl_s = ParagraphStyle("_mcl", fontName="Helvetica",      fontSize=7,  leading=10, textColor=C_MUTED)
-            val_s = ParagraphStyle("_mcv", fontName="Helvetica-Bold", fontSize=10, leading=13,
-                                   textColor=colors.HexColor(vc) if vc else C_TEXT)
-            sub_s = ParagraphStyle("_mcs", fontName="Helvetica",      fontSize=7,  leading=10, textColor=C_MUTED)
-            cells = [Paragraph(label, lbl_s), Paragraph(value, val_s)]
-            if sub:
-                cells.append(Paragraph(sub, sub_s))
-            return cells
-
         metrics_row = [[
             _mc("Soll-Miete",    f"€ {te:,.2f}"),
             _mc("Ist-Einnahmen", f"€ {ta:,.2f}", sub=f"{ta - te:+.2f} € vs. Soll", vc=dc),
@@ -1308,26 +1348,8 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
         story.append(Spacer(1, 14))
 
         # ── Financing row (mortgages) — only when the property is financed ──
-        if prop.get("debt_remaining", 0) or prop.get("interest_since_acq", 0) or prop.get("equity_since_acq", 0):
-            fin_row = [[
-                _mc("Restschuld",        f"€ {prop.get('debt_remaining', 0):,.2f}", vc="#e74c3c"),
-                _mc(f"Zinsen {year}",    f"€ {prop.get('interest_paid', 0):,.2f}"),
-                _mc(f"Tilgung {year}",   f"€ {prop.get('equity_paid', 0):,.2f}", vc="#27ae60"),
-                _mc("Zinsen seit Kauf",  f"€ {prop.get('interest_since_acq', 0):,.2f}"),
-                _mc("Tilgung seit Kauf", f"€ {prop.get('equity_since_acq', 0):,.2f}", vc="#27ae60"),
-            ]]
-            ft = Table(fin_row, colWidths=[94, 94, 94, 93, 93])
-            ft.setStyle(TableStyle([
-                ("BACKGROUND",    (0, 0), (-1, -1), C_SECBG),
-                ("BOX",           (0, 0), (-1, -1), 0.5, C_MGRAY),
-                ("INNERGRID",     (0, 0), (-1, -1), 0.5, C_MGRAY),
-                ("TOPPADDING",    (0, 0), (-1, -1), 9),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
-                ("LEFTPADDING",   (0, 0), (-1, -1), 10),
-                ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
-                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-            ]))
-            story.append(ft)
+        if _is_financed(prop):
+            story.append(_fin_metric_table(_fin_row(prop)))
             story.append(Spacer(1, 14))
 
         # ── Per-flat breakdown table ──────────────────────────────────────

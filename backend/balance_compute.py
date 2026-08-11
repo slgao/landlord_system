@@ -20,6 +20,7 @@ def _financing(prop_id, owner, year):
     rows = fetch("SELECT principal, interest_rate_pct, tilgung_rate_pct, start_date "
                  "FROM mortgages WHERE property_id=? AND owner_id=?", (prop_id, owner))
     debt = interest = equity = 0.0
+    interest_acq = equity_acq = 0.0
     for principal, ir, tr, sd in rows:
         try:
             b = annuity_year_breakdown(float(principal), float(ir), float(tr), sd, int(year))
@@ -28,9 +29,13 @@ def _financing(prop_id, owner, year):
         debt += b["balance_end"]
         interest += b["interest"]
         equity += b["tilgung"]
+        interest_acq += b["interest_total"]
+        equity_acq += b["equity_total"]
     return {"debt_remaining": round(debt, 2),
             "interest_paid": round(interest, 2),
-            "equity_paid": round(equity, 2)}
+            "equity_paid": round(equity, 2),
+            "interest_since_acq": round(interest_acq, 2),
+            "equity_since_acq": round(equity_acq, 2)}
 
 
 def _expected_rent(prop_id, m_start, m_end):

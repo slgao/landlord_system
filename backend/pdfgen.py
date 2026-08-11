@@ -1307,6 +1307,29 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
         story.append(mt)
         story.append(Spacer(1, 14))
 
+        # ── Financing row (mortgages) — only when the property is financed ──
+        if prop.get("debt_remaining", 0) or prop.get("interest_since_acq", 0) or prop.get("equity_since_acq", 0):
+            fin_row = [[
+                _mc("Restschuld",        f"€ {prop.get('debt_remaining', 0):,.2f}", vc="#e74c3c"),
+                _mc(f"Zinsen {year}",    f"€ {prop.get('interest_paid', 0):,.2f}"),
+                _mc(f"Tilgung {year}",   f"€ {prop.get('equity_paid', 0):,.2f}", vc="#27ae60"),
+                _mc("Zinsen seit Kauf",  f"€ {prop.get('interest_since_acq', 0):,.2f}"),
+                _mc("Tilgung seit Kauf", f"€ {prop.get('equity_since_acq', 0):,.2f}", vc="#27ae60"),
+            ]]
+            ft = Table(fin_row, colWidths=[94, 94, 94, 93, 93])
+            ft.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, -1), C_SECBG),
+                ("BOX",           (0, 0), (-1, -1), 0.5, C_MGRAY),
+                ("INNERGRID",     (0, 0), (-1, -1), 0.5, C_MGRAY),
+                ("TOPPADDING",    (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ]))
+            story.append(ft)
+            story.append(Spacer(1, 14))
+
         # ── Per-flat breakdown table ──────────────────────────────────────
         if prop.get("flat_rows"):
             fl_hdr   = ParagraphStyle("_fh",  fontName="Helvetica-Bold", fontSize=8, leading=10, textColor=C_WHITE)

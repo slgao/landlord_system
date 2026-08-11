@@ -127,6 +127,8 @@ export default function BalanceSheetPage() {
   const totalDebt = properties.reduce((s: number, p: any) => s + (p.debt_remaining || 0), 0);
   const totalInterest = properties.reduce((s: number, p: any) => s + (p.interest_paid || 0), 0);
   const totalEquity = properties.reduce((s: number, p: any) => s + (p.equity_paid || 0), 0);
+  const totalInterestAcq = properties.reduce((s: number, p: any) => s + (p.interest_since_acq || 0), 0);
+  const totalEquityAcq = properties.reduce((s: number, p: any) => s + (p.equity_since_acq || 0), 0);
   const hasFinancing = totalDebt > 0 || totalInterest > 0 || totalEquity > 0;
 
   return (
@@ -194,12 +196,20 @@ export default function BalanceSheetPage() {
                   <span className="font-mono tabular-nums text-sm font-semibold text-destructive">{fmt(totalDebt)}</span>
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-xs text-muted-foreground">Interest paid</span>
+                  <span className="text-xs text-muted-foreground">Interest ({year})</span>
                   <span className="font-mono tabular-nums text-sm">{fmt(totalInterest)}</span>
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-xs text-muted-foreground">Equity built</span>
+                  <span className="text-xs text-muted-foreground">Equity ({year})</span>
                   <span className="font-mono tabular-nums text-sm text-primary">{fmt(totalEquity)}</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-muted-foreground">Interest since purchase</span>
+                  <span className="font-mono tabular-nums text-sm">{fmt(totalInterestAcq)}</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-muted-foreground">Equity since purchase</span>
+                  <span className="font-mono tabular-nums text-sm text-primary">{fmt(totalEquityAcq)}</span>
                 </div>
               </CardContent>
             </Card>

@@ -316,13 +316,14 @@ def _sum_billing_flowables(d, s):
     """Render one SUM-mode billing: the provider's bill already states the
     total cost for the flat, so we prorate that directly with no meter rows."""
     n = d["num_tenants"]
+    pt = d.get("prepay_tenants", n)  # prepay divisor (original count during a vacancy)
     pauschale = d.get("is_pauschale", False)
     vz = "Pauschale" if pauschale else "Vorauszahlung"
     return [
         _info_box(
             f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
             f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-            f"{vz}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+            f"{vz}: {d['monthly_limit']:.2f} €/Monat  ·  {pt} Mieter"
             + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale else "")
             + "  ·  Gesamtbetrag laut Rechnung", s),
         Spacer(1, 8),
@@ -331,7 +332,7 @@ def _sum_billing_flowables(d, s):
             ["Gesamtkosten Wohnung", "Rechnungsbetrag (Gesamt)", f"{d['cost_flat']:.2f} €"],
             ["Ihr Anteil (Zeitraum)", f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
              f"{d['cost']:.2f} €"],
-            [f"{vz} Zeitraum", f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+            [f"{vz} Zeitraum", f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {pt} Mieter",
              f"{d['limit']:.2f} €"],
             ["Nachzahlung", f"Ihr Anteil − {vz}" + (" (mind. 0 €)" if pauschale else ""),
              f"{d['nach']:.2f} €"],
@@ -428,6 +429,7 @@ def invoice_pdf(
         _sub = 0.0
         for _bi, d in enumerate(_strom_list, 1):
             n = d["num_tenants"]
+            pt = d.get("prepay_tenants", n)  # prepay divisor (original count during a vacancy)
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
@@ -447,7 +449,7 @@ def invoice_pdf(
                     f"{meter_line_s}"
                     f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
                     f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-                    f"{vz_label_s}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    f"{vz_label_s}: {d['monthly_limit']:.2f} €/Monat  ·  {pt} Mieter"
                     + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_s else ""), s
                 ))
                 story.append(Spacer(1, 8))
@@ -469,7 +471,7 @@ def invoice_pdf(
                      f"{d['grundkosten']:.2f} €"],
                     ["Gesamtkosten Ihr Anteil",  "Arbeitskosten + Grundpreis",
                      f"{d['cost']:.2f} €"],
-                    [f"{vz_label_s} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                    [f"{vz_label_s} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {pt} Mieter",
                      f"{d['limit']:.2f} €"],
                     [f"Nachzahlung Strom",       f"Ihr Anteil − {vz_label_s}" + (" (mind. 0 €)" if pauschale_s else ""),
                      f"{d['nach']:.2f} €"],
@@ -490,6 +492,7 @@ def invoice_pdf(
         _sub = 0.0
         for _bi, d in enumerate(_gas_list, 1):
             n = d["num_tenants"]
+            pt = d.get("prepay_tenants", n)  # prepay divisor (original count during a vacancy)
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
@@ -502,7 +505,7 @@ def invoice_pdf(
                 story.append(_info_box(
                     f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
                     f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-                    f"{vz_label_g}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    f"{vz_label_g}: {d['monthly_limit']:.2f} €/Monat  ·  {pt} Mieter"
                     + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_g else ""), s
                 ))
                 story.append(Spacer(1, 8))
@@ -526,7 +529,7 @@ def invoice_pdf(
                      f"{d['grundkosten']:.2f} €"],
                     ["Gesamtkosten Ihr Anteil",  "Arbeitskosten + Grundpreis",
                      f"{d['cost']:.2f} €"],
-                    [f"{vz_label_g} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                    [f"{vz_label_g} Zeitraum",   f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {pt} Mieter",
                      f"{d['limit']:.2f} €"],
                     ["Nachzahlung Gas",          f"Ihr Anteil − {vz_label_g}" + (" (mind. 0 €)" if pauschale_g else ""),
                      f"{d['nach']:.2f} €"],
@@ -547,6 +550,7 @@ def invoice_pdf(
         _sub = 0.0
         for _bi, d in enumerate(_water_list, 1):
             n = d["num_tenants"]
+            pt = d.get("prepay_tenants", n)  # prepay divisor (original count during a vacancy)
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
@@ -565,7 +569,7 @@ def invoice_pdf(
                     f"{meter_line_w}"
                     f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
                     f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-                    f"{vz_label_w}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    f"{vz_label_w}: {d['monthly_limit']:.2f} €/Monat  ·  {pt} Mieter"
                     + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_w else ""), s
                 ))
                 story.append(Spacer(1, 8))
@@ -587,7 +591,7 @@ def invoice_pdf(
                      f"{d['cost_flat']:.2f} €"],
                     ["Ihr Anteil",                f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
                      f"{d['cost']:.2f} €"],
-                    [f"{vz_label_w} Zeitraum",    f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                    [f"{vz_label_w} Zeitraum",    f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {pt} Mieter",
                      f"{d['limit']:.2f} €"],
                     ["Nachzahlung Kaltwasser",    f"Ihr Anteil − {vz_label_w}" + (" (mind. 0 €)" if pauschale_w else ""),
                      f"{d['nach']:.2f} €"],
@@ -608,6 +612,7 @@ def invoice_pdf(
         _sub = 0.0
         for _bi, d in enumerate(_warm_list, 1):
             n = d["num_tenants"]
+            pt = d.get("prepay_tenants", n)  # prepay divisor (original count during a vacancy)
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
@@ -620,7 +625,7 @@ def invoice_pdf(
                 story.append(_info_box(
                     f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
                     f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  ·  "
-                    f"{vz_label_ww}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    f"{vz_label_ww}: {d['monthly_limit']:.2f} €/Monat  ·  {pt} Mieter"
                     + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_ww else ""), s
                 ))
                 story.append(Spacer(1, 8))
@@ -655,7 +660,7 @@ def invoice_pdf(
                                 f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
                                 f"{d['cost']:.2f} €"])
                 rows_ww.append([f"{vz_label_ww} Zeitraum",
-                                f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                                f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {pt} Mieter",
                                 f"{d['limit']:.2f} €"])
                 rows_ww.append(["Nachzahlung Warmwasser",
                                 f"Ihr Anteil − {vz_label_ww}"
@@ -678,15 +683,16 @@ def invoice_pdf(
         _sub = 0.0
         for _bi, d in enumerate(_bk_list, 1):
             n = d["num_tenants"]
+            pt = d.get("prepay_tenants", n)  # prepay divisor (original count during a vacancy)
             cost_per_tenant_full = d["total_cost"] / n if n else d["total_cost"]
-            bk_limit_month = d["monthly_limit"] / n if n else 0
+            bk_limit_month = d["monthly_limit"] / pt if pt else 0
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
             story.append(_info_box(
                 f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['num_months']} Monate  |  "
                 f"Ihr Zeitraum: {d['period']}  ·  {d['months']} Monate  ·  "
-                f"Vorauszahlung gesamt: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter", s
+                f"Vorauszahlung gesamt: {d['monthly_limit']:.2f} €/Monat  ·  {pt} Mieter", s
             ))
             story.append(Spacer(1, 8))
             story.append(_calc_table([
@@ -694,7 +700,7 @@ def invoice_pdf(
                 ["Gesamte Betriebskosten", f"Abrechnungszeitraum {d['num_months']} Monate", f"{d['total_cost']:.2f} €"],
                 ["Ihr Anteil (gesamt)", f"÷ {n} Mieter", f"{cost_per_tenant_full:.2f} €"],
                 ["Ihr Anteil (Nutzungsdauer)", f"÷ {d['num_months']} × {d['months']} Monate", f"{d['cost']:.2f} €"],
-                ["Monatliche Vorauszahlung (Ihr Anteil)", f"{d['monthly_limit']:.2f} € gesamt ÷ {n} Mieter", f"{bk_limit_month:.2f} €"],
+                ["Monatliche Vorauszahlung (Ihr Anteil)", f"{d['monthly_limit']:.2f} € gesamt ÷ {pt} Mieter", f"{bk_limit_month:.2f} €"],
                 ["Vorauszahlung Zeitraum", f"{bk_limit_month:.2f} € × {d['months']} Monate", f"{d['limit']:.2f} €"],
                 ["Nachzahlung Betriebskosten", "Ihr Anteil − Vorauszahlung", f"{d['nach']:.2f} €"],
             ]))
@@ -714,6 +720,7 @@ def invoice_pdf(
         _sub = 0.0
         for _bi, d in enumerate(_heiz_list, 1):
             n = d["num_tenants"]
+            pt = d.get("prepay_tenants", n)  # prepay divisor (original count during a vacancy)
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
@@ -728,7 +735,7 @@ def invoice_pdf(
                     f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['bill_days']} Tage  |  "
                     f"Ihr Zeitraum: {d['period']}  ·  {d['days']} Tage  |  "
                     f"Preis: {price_kwh:.4f} €/kWh  ·  "
-                    f"{vz_label_h}: {d['monthly_limit']:.2f} €/Monat  ·  {n} Mieter"
+                    f"{vz_label_h}: {d['monthly_limit']:.2f} €/Monat  ·  {pt} Mieter"
                     + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_h else ""), s
                 ))
                 story.append(Spacer(1, 8))
@@ -828,7 +835,7 @@ def invoice_pdf(
                      f"{d['total_cost_flat']:.2f} €"],
                     ["Ihr Anteil (Zeitraum)",   f"× {d['days']} ÷ {d['bill_days']} Tage ÷ {n} Mieter",
                      f"{d['cost']:.2f} €"],
-                    [f"{vz_label_h} Zeitraum",  f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {n} Mieter",
+                    [f"{vz_label_h} Zeitraum",  f"{d['monthly_limit']:.2f} €/Mon × 12 ÷ 365 × {d['days']} Tage ÷ {pt} Mieter",
                      f"{d['limit']:.2f} €"],
                     [f"Nachzahlung Heizkosten", f"Ihr Anteil − {vz_label_h}" + (" (mind. 0 €)" if pauschale_h else ""),
                      f"{d['nach']:.2f} €"],

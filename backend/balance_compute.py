@@ -11,6 +11,28 @@ from db import fetch
 _ZERO = Decimal("0")
 
 
+def _financing(prop_id, owner, year):
+    """Rough financing figures for a property in `year`, summed over its
+    mortgages: outstanding debt at year-end (Restschuld), interest paid
+    (Schuldzinsen) and principal repaid (Tilgung = equity built). Returns zeros
+    when the property has no mortgage."""
+    from tax_logic import annuity_year_breakdown
+    rows = fetch("SELECT principal, interest_rate_pct, tilgung_rate_pct, start_date "
+                 "FROM mortgages WHERE property_id=? AND owner_id=?", (prop_id, owner))
+    debt = interest = equity = 0.0
+    for principal, ir, tr, sd in rows:
+        try:
+            b = annuity_year_breakdown(float(principal), float(ir), float(tr), sd, int(year))
+        except Exception:
+            continue
+        debt += b["balance_end"]
+        interest += b["interest"]
+        equity += b["tilgung"]
+    return {"debt_remaining": round(debt, 2),
+            "interest_paid": round(interest, 2),
+            "equity_paid": round(equity, 2)}
+
+
 def _expected_rent(prop_id, m_start, m_end):
     """Expected rent for a property in a month.
 
@@ -114,5 +136,6 @@ def _compute_snapshot(year: int, owner=None):
             "tot_costs": tot_costs,
             "flat_rows": [],
             "insights": [],
+            **_financing(prop_id, owner, y),
         })
     return snapshot, props

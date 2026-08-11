@@ -17,7 +17,7 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import {
-  Download, TrendingUp, TrendingDown, Wallet, Banknote, Receipt, Target,
+  Download, TrendingUp, TrendingDown, Wallet, Banknote, Receipt, Target, Landmark,
 } from "lucide-react";
 import { C, fmt, fmtAxis, ChartTooltip, ChartLegend } from "@/components/chart";
 
@@ -123,6 +123,12 @@ export default function BalanceSheetPage() {
   const totalCosts = properties.reduce((s: number, p: any) => s + (p.tot_costs || 0), 0);
   const totalNet = totalActual - totalCosts;
 
+  // Financing (mortgages): rough remaining debt + interest/equity paid this year.
+  const totalDebt = properties.reduce((s: number, p: any) => s + (p.debt_remaining || 0), 0);
+  const totalInterest = properties.reduce((s: number, p: any) => s + (p.interest_paid || 0), 0);
+  const totalEquity = properties.reduce((s: number, p: any) => s + (p.equity_paid || 0), 0);
+  const hasFinancing = totalDebt > 0 || totalInterest > 0 || totalEquity > 0;
+
   return (
     <div className="max-w-6xl space-y-6">
       <PageHeader title="Balance Sheet">
@@ -174,6 +180,30 @@ export default function BalanceSheetPage() {
             <MetricCard label="Total Costs" value={fmt(totalCosts)} accent={C.costs} icon={Receipt} />
             <MetricCard label="Net (actual)" value={fmt(totalNet)} positive={totalNet >= 0} accent={C.net} icon={Wallet} />
           </div>
+
+          {/* Financing summary — compact single-row strip (only when a mortgage exists) */}
+          {hasFinancing && (
+            <Card>
+              <CardContent className="p-4 flex flex-wrap items-center gap-x-8 gap-y-2">
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Landmark className="size-3.5" />
+                  <p className="eyebrow">Financing · {year}</p>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-muted-foreground">Remaining debt</span>
+                  <span className="font-mono tabular-nums text-sm font-semibold text-destructive">{fmt(totalDebt)}</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-muted-foreground">Interest paid</span>
+                  <span className="font-mono tabular-nums text-sm">{fmt(totalInterest)}</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-muted-foreground">Equity built</span>
+                  <span className="font-mono tabular-nums text-sm text-primary">{fmt(totalEquity)}</span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Monthly income: expected target vs actual, with net line overlay */}
           {aggregateChartData.length > 0 && (
@@ -247,10 +277,13 @@ export default function BalanceSheetPage() {
                       {fmt(net)}
                     </span>
                   </div>
-                  <div className="flex gap-6 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
                     <span>Expected: {fmt(prop.tot_expected)}</span>
                     <span>Received: {fmt(prop.tot_actual)}</span>
                     <span>Costs: {fmt(prop.tot_costs)}</span>
+                    {prop.debt_remaining > 0 && (
+                      <span>Debt remaining: <span className="text-destructive">{fmt(prop.debt_remaining)}</span></span>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">

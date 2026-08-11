@@ -46,6 +46,7 @@ def annuity_year_breakdown(
     balance = float(principal)
     interest_ytd = 0.0
     tilgung_ytd = 0.0
+    interest_total = 0.0  # cumulative interest since acquisition through end of `year`
     # Simulate month by month from the first payment through December of `year`.
     m = start.year * 12 + (start.month - 1)
     end_m = year * 12 + 11
@@ -53,6 +54,7 @@ def annuity_year_breakdown(
         interest = balance * monthly_rate
         # Tilgung 0 (interest-only) legitimately amortizes nothing; never negative.
         amortize = max(min(payment - interest, balance), 0.0)
+        interest_total += interest
         if m // 12 == year:
             interest_ytd += interest
             tilgung_ytd += amortize
@@ -64,6 +66,9 @@ def annuity_year_breakdown(
         "tilgung": round(tilgung_ytd, 2),
         "balance_end": round(max(balance, 0.0), 2),
         "monthly_payment": round(payment, 2),
+        # Cumulative since acquisition (loan start) through end of `year`:
+        "interest_total": round(interest_total, 2),
+        "equity_total": round(float(principal) - max(balance, 0.0), 2),
     }
 
 

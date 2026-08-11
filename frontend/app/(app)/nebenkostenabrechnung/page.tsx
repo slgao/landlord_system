@@ -409,6 +409,78 @@ export default function NebenkostenabrechnungPage() {
 
   const aptGasMeters = gasMeters.filter((m) => m.apartment_id === selected?.apartment_id);
 
+  // ── occupancy timeline → split each cost into sub-periods with an INTEGER
+  //    person count, so every interval renders on its own (÷3 while everyone is
+  //    there, ÷2 during a vacancy) and the parts sum. Reuses the existing
+  //    "several billing periods per utility" machinery — no backend/PDF change.
+  const occSegs = () => occTimeline.filter((s) => s.start && s.end && s.persons > 0);
+  function occRuns(es: string, ee: string, base: number) {
+    const occ = occSegs();
+    const d0 = new Date(es), d1 = new Date(ee);
+    if (occ.length === 0 || isNaN(+d0) || isNaN(+d1) || d1 < d0) return [{ start: es, end: ee, persons: base }];
+    const iso = (d: Date) => d.toISOString().split("T")[0];
+    const personsOn = (d: Date) => {
+      for (const s of occ) if (d >= new Date(s.start) && d <= new Date(s.end)) return s.persons;
+      return base;
+    };
+    const DAY = 86_400_000;
+    const runs: { start: string; end: string; persons: number }[] = [];
+    let runStart = new Date(d0), runP = personsOn(d0);
+    for (let t = +d0 + DAY; t <= +d1; t += DAY) {
+      const p = personsOn(new Date(t));
+      if (p !== runP) { runs.push({ start: iso(runStart), end: iso(new Date(t - DAY)), persons: runP }); runStart = new Date(t); runP = p; }
+    }
+    runs.push({ start: iso(runStart), end: iso(d1), persons: runP });
+    return runs;
+  }
+  const expandMetered = (list: any[]) => occSegs().length === 0 ? list : list.flatMap((b: any) => {
+    const es = b.eff_start || b.bill_start, ee = b.eff_end || b.bill_end;
+    if (!es || !ee) return [b];
+    const runs = occRuns(es, ee, b.num_tenants ?? numTenants);
+    return runs.length <= 1 ? [b] : runs.map((r) => ({ ...b, eff_start: r.start, eff_end: r.end, num_tenants: r.persons }));
+  });
+  const expandBK = (list: any[]) => occSegs().length === 0 ? list : list.flatMap((b: any) => {
+    const es = b.eff_start || b.bk_start, ee = b.eff_end || b.bk_end;
+    if (!es || !ee) return [b];
+    const runs = occRuns(es, ee, b.tenants ?? numTenants);
+    return runs.length <= 1 ? [b] : runs.map((r) => ({ ...b, eff_start: r.start, eff_end: r.end, tenants: r.persons }));
+  });
+
+  // The calc returns one result per expanded interval; fold them back to one per
+  // form billing (summing the tenant-side amounts) so the on-screen preview total
+  // matches the PDF. The PDF itself keeps the per-interval breakdown.
+  const _ADD = ["cost_tenant", "prepay", "nach", "period_cost", "limit_period"];
+  const foldResults = (slice: any[]) => {
+    if (slice.length <= 1) return slice[0];
+    const base = { ...slice[0] };
+    for (const f of _ADD)
+      if (slice.some((r) => r && r[f] != null)) base[f] = slice.reduce((s, r) => s + (r?.[f] || 0), 0);
+    return base;
+  };
+  function foldPreview(calc: any) {
+    if (occSegs().length === 0) return calc;
+    const fold = (formList: any[], results: any[], isBK: boolean) => {
+      if (!results) return results;
+      const out: any[] = [];
+      let idx = 0;
+      for (const b of formList) {
+        const es = b.eff_start || (isBK ? b.bk_start : b.bill_start);
+        const ee = b.eff_end || (isBK ? b.bk_end : b.bill_end);
+        const base = isBK ? (b.tenants ?? numTenants) : numTenants;
+        const n = es && ee ? occRuns(es, ee, base).length : 1;
+        out.push(foldResults(results.slice(idx, idx + Math.max(1, n))));
+        idx += Math.max(1, n);
+      }
+      return out;
+    };
+    return {
+      ...calc,
+      strom: fold(stromB, calc.strom, false), gas: fold(gasB, calc.gas, false),
+      water: fold(waterB, calc.water, false), warmwater: fold(warmB, calc.warmwater, false),
+      heizung: fold(heizB, calc.heizung, false), bk: fold(bkB, calc.bk, true),
+    };
+  }
+
   // ── payload builders ──
   function buildCalcPayload() {
     const cs = selected?.start_date || "";
@@ -418,24 +490,22 @@ export default function NebenkostenabrechnungPage() {
       ? billDays(b.eff_start, b.eff_end)
       : effectiveDays(b.bill_start, b.bill_end, cs, ce);
     const mk = (b: any) => ({
-      ...b, num_tenants: numTenants,
+      ...b, num_tenants: b.num_tenants ?? numTenants,
       bill_days: billDays(b.bill_start, b.bill_end),
       eff_days: effDays(b),
     });
     const p: any = {};
-    if (useStrom) p.strom = stromB.map(mk);
-    if (useGas) p.gas = gasB.map(mk);
-    if (useWater) p.water = waterB.map(mk);
-    if (useWarmwater) p.warmwater = warmB.map((b) => ({ ...mk(b), meters: b.meters }));
-    if (useHeizung) p.heizung = heizB.map((b) => ({ ...mk(b), meters: b.meters }));
-    if (useBK) p.bk = bkB.map((b) => ({
+    if (useStrom) p.strom = expandMetered(stromB).map(mk);
+    if (useGas) p.gas = expandMetered(gasB).map(mk);
+    if (useWater) p.water = expandMetered(waterB).map(mk);
+    if (useWarmwater) p.warmwater = expandMetered(warmB).map((b: any) => ({ ...mk(b), meters: b.meters }));
+    if (useHeizung) p.heizung = expandMetered(heizB).map((b: any) => ({ ...mk(b), meters: b.meters }));
+    if (useBK) p.bk = expandBK(bkB).map((b: any) => ({
       cost_flat: b.cost_flat, tenants: b.tenants,
       bk_start: b.bk_start, bk_end: b.bk_end, limit_per_month: b.limit_per_month,
       // effective living months drive the proration on the backend
       months: monthsBetween(b.eff_start || b.bk_start, b.eff_end || b.bk_end),
     }));
-    const occ = occTimeline.filter((s) => s.start && s.end && s.persons > 0);
-    if (occ.length > 0) p.occupancy = occ;
     return p;
   }
 
@@ -452,9 +522,9 @@ export default function NebenkostenabrechnungPage() {
         bill_days: billDays(b.bill_start, b.bill_end),
         period: fmtPeriod(effS, effE),
         days: hasEff ? billDays(effS, effE) : effectiveDays(b.bill_start, b.bill_end, cs, ce),
-        // Show the occupancy-weighted divisor when a timeline was applied, so the
-        // PDF's "÷ N Mieter" explanation reconciles with the (already-computed) amount.
-        num_tenants: (c && typeof c.eff_persons === "number") ? c.eff_persons : numTenants,
+        // Integer person count for this sub-period (from the occupancy split, or
+        // the flat's count when no timeline is set).
+        num_tenants: b.num_tenants ?? numTenants,
         monthly_limit: b.prepay_monthly,
         cost: c.cost_tenant, limit: c.prepay, is_pauschale: b.is_pauschale, mode: b.mode,
       };
@@ -462,15 +532,16 @@ export default function NebenkostenabrechnungPage() {
     const zip = (list: any[], res: any[]) =>
       list.map((b, i) => ({ ...(res?.[i] || {}), ...b, ...common(b, res?.[i] || {}) }));
     const payload: any = {};
-    if (useStrom && calc.strom) payload.strom = zip(stromB, calc.strom);
-    if (useGas && calc.gas) payload.gas = zip(gasB, calc.gas);
-    if (useWater && calc.water) payload.water = zip(waterB, calc.water);
-    if (useWarmwater && calc.warmwater) payload.warmwater = zip(warmB, calc.warmwater);
-    if (useHeizung && calc.heizung) payload.heizung = zip(heizB, calc.heizung);
+    // Expand the same way as the calc payload so results line up 1:1.
+    if (useStrom && calc.strom) payload.strom = zip(expandMetered(stromB), calc.strom);
+    if (useGas && calc.gas) payload.gas = zip(expandMetered(gasB), calc.gas);
+    if (useWater && calc.water) payload.water = zip(expandMetered(waterB), calc.water);
+    if (useWarmwater && calc.warmwater) payload.warmwater = zip(expandMetered(warmB), calc.warmwater);
+    if (useHeizung && calc.heizung) payload.heizung = zip(expandMetered(heizB), calc.heizung);
     if (useBK && calc.bk) {
       // Map each BK billing's form/calc fields onto the exact keys invoice_pdf expects.
       // Abrechnungszeitraum = full bill period; Ihr Zeitraum = tenant's living period.
-      payload.bk = bkB.map((b, i) => {
+      payload.bk = expandBK(bkB).map((b, i) => {
         const c = calc.bk?.[i] || {};
         const effS = b.eff_start || b.bk_start;
         const effE = b.eff_end || b.bk_end;
@@ -502,7 +573,7 @@ export default function NebenkostenabrechnungPage() {
     setCalculating(true);
     try {
       const res = await api.post("/api/reports/nebenkostenabrechnung/calculate", payload);
-      setCalcResult(res.data);
+      setCalcResult(foldPreview(res.data));
       toast.success("Calculation complete");
     } catch (e: any) {
       toast.error("Calculation failed: " + (e.response?.data?.detail || e.message));
@@ -522,7 +593,7 @@ export default function NebenkostenabrechnungPage() {
         try {
           const res = await api.post("/api/reports/nebenkostenabrechnung/calculate", payload);
           calc = res.data;
-          setCalcResult(res.data);
+          setCalcResult(foldPreview(res.data));
         } catch (e: any) {
           toast.error("Calculation failed: " + (e.response?.data?.detail || e.message));
           return;

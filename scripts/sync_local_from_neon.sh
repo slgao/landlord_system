@@ -57,8 +57,14 @@ echo ""
 # pg_dump emits session GUCs the local server may not recognise (e.g.
 # transaction_timeout, added in PG17). These are harmless top-of-file SETs, but
 # an older local server errors on them; strip them so the restore stays clean.
+#
+# --network host: the dump container needs to reach Neon over the internet, and
+# the default bridge is fragile (docker0 can lose its IPv4 address, leaving
+# containers with an unreachable gateway → "could not translate host name").
+# Host networking uses the host's own DNS and routes, including IPv6 — which
+# Neon's pooler endpoints resolve to.
 echo "→ Dumping from Neon..."
-docker run --rm postgres:18 pg_dump "$NEON_URL" --no-owner --no-acl \
+docker run --rm --network host postgres:18 pg_dump "$NEON_URL" --no-owner --no-acl \
     | grep -vE '^SET (transaction_timeout)\b' > "$DUMP_FILE"
 echo "  Done."
 

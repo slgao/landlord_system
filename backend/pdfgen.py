@@ -431,7 +431,10 @@ def invoice_pdf(
             n = d["num_tenants"]
             pt = d.get("prepay_tenants", n)  # prepay divisor (original count during a vacancy)
             if _multi:
-                story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
+                # A billing split by a Tarifwechsel is one price period of the same
+                # bill, not a separate bill — name it accordingly.
+                _hdr = d.get("tariff_label") or f"Abrechnung {_bi}"
+                story.append(Paragraph(f"<b>{_hdr}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
             if d.get("mode") == "sum":
                 story.extend(_sum_billing_flowables(d, s))
@@ -453,11 +456,19 @@ def invoice_pdf(
                     + ("  ·  Keine Erstattung bei Unterschreitung" if pauschale_s else ""), s
                 ))
                 story.append(Spacer(1, 8))
+                # A reading at a Tarifwechsel date that nobody measured is derived
+                # zeitanteilig; name the readings it came from, so the tenant can
+                # tell a computed Zählerstand from a real one and check it.
+                def _zs(estimated_key, note_key):
+                    note = d.get(note_key) or ""
+                    if d.get(estimated_key):
+                        return note or "rechnerisch ermittelt (zeitanteilig)"
+                    return note or "—"
                 story.append(_calc_table([
                     ["Position", "Berechnung", "Betrag"],
-                    ["Anfang Zählerstand",       "—",
+                    ["Anfang Zählerstand",       _zs("start_estimated", "start_note"),
                      f"{d['start_kwh']:.2f} kWh"],
-                    ["Ende Zählerstand",         "—",
+                    ["Ende Zählerstand",         _zs("end_estimated", "end_note"),
                      f"{d['end_kwh']:.2f} kWh"],
                     ["Gesamtverbrauch Wohnung",  f"{d['end_kwh']:.2f} − {d['start_kwh']:.2f}",
                      f"{d['verbrauch']:.2f} kWh"],

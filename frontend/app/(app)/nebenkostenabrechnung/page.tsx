@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Contract, GasMeter, BillingProfile } from "@/lib/types";
+import { Contract, GasMeter, StromMeter, MeterReading, BillingProfile } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,169 @@ function clampPeriod(billStart: string, billEnd: string, cStart?: string, cEnd?:
   return { start: iso(s), end: iso(e) };
 }
 
+// ── Tarifwechsel (price change inside a billing period) ───────────────────────
+// When the Strom tariff changes mid-period, each price period is billed with its
+// own Arbeits-/Grundpreis. That needs the meter reading on the change date.
+// StromGVV requires it to be determined "zeitanteilig" when nobody read the meter
+// that day — i.e. linear interpolation over the elapsed days, which is exactly
+// what Vattenfall's rechnerische Zwischenablesung does. A real value always wins:
+// enter the reading (Selbstablesung, or the figure printed on the provider's
+// invoice) on the change row and no interpolation happens at that boundary.
+
+function addDays(isoStr: string, n: number) {
+  return new Date(new Date(isoStr).getTime() + n * 86_400_000).toISOString().split("T")[0];
+}
+function dayDiff(a: string, b: string) {
+  return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86_400_000);
+}
+
+// A reading we actually have, as an interpolation anchor.
+type Anchor = { day: number; value: number; src: "bill" | "reading" | "manual" };
+
+function fmtDate(isoStr: string) { return isoStr.split("-").reverse().join("."); }
+
+// A change row carries its own prices and, optionally, the readings it is
+// interpolated from: `reading` is the exact stand on the change date (no
+// interpolation at all), while prev_/next_ are the nearest readings before and
+// after it — the two the provider itself would bracket the date with.
+const defTarif = (from = "") => ({
+  from, arbeitspreis: 0, grundpreis_monthly: 0, reading: "" as number | "",
+  prev_date: "", prev_reading: "" as number | "",
+  next_date: "", next_reading: "" as number | "",
+});
+
+// Valid change rows: dated strictly inside the billing period, in date order.
+function tarifChanges(b: any) {
+  if (!b || b.mode !== "meter" || !b.bill_start || !b.bill_end) return [];
+  return (b.tarife || [])
+    .filter((t: any) => t.from && dayDiff(b.bill_start, t.from) > 0 && dayDiff(t.from, b.bill_end) >= 0)
+    .slice()
+    .sort((x: any, y: any) => (x.from < y.from ? -1 : x.from > y.from ? 1 : 0));
+}
+
+const isNum = (v: any) => v !== "" && v !== null && v !== undefined && !isNaN(Number(v));
+const numOrBlank = (v: any): number | "" => (isNum(v) ? Number(v) : "");
+
+// Every reading we can anchor on, in "days elapsed since bill_start" order.
+// Precedence at the same day: a value typed on the tariff row beats a stored
+// Zwischenablesung, which beats nothing. The billing's own start/end readings
+// own day 0 and the last day, so a stored reading cannot silently move them.
+function buildAnchors(b: any, changes: any[], cuts: number[], total: number,
+                      readings: { date: string; value: number }[]): Anchor[] {
+  const m = new Map<number, Anchor>();
+  m.set(0, { day: 0, value: Number(b.start_kwh) || 0, src: "bill" });
+  m.set(total, { day: total, value: Number(b.end_kwh) || 0, src: "bill" });
+  // billDays is inclusive of both endpoints, so the end reading belongs to day
+  // `total` (the end of bill_end), not to dayDiff(bill_start, bill_end). Map a
+  // reading dated bill_end onto that day, or it lands one day early and drags
+  // the interpolation with it.
+  const dayOf = (date: string) => (date === b.bill_end ? total : dayDiff(b.bill_start, date));
+  for (const r of readings || []) {
+    const d = dayOf(r.date);
+    if (d > 0 && d < total && isNum(r.value)) m.set(d, { day: d, value: Number(r.value), src: "reading" });
+  }
+  changes.forEach((t: any, i: number) => {
+    const cut = cuts[i];
+    // The readings typed on the change row itself. They may sit outside the
+    // billing period (the nearest Ablesung before it often does) — that is fine,
+    // it only widens the bracket. Days 0 and `total` stay owned by the billing's
+    // own start/end readings, so a typed anchor can never move them. A "before"
+    // reading that is not actually before the change date is ignored rather than
+    // silently used as an anchor somewhere else.
+    const side = (date: string, value: any, ok: (d: number) => boolean) => {
+      if (!date || !isNum(value)) return;
+      const d = dayOf(date);
+      if (d !== 0 && d !== total && ok(d)) m.set(d, { day: d, value: Number(value), src: "manual" });
+    };
+    side(t.prev_date, t.prev_reading, (d) => d < cut);
+    side(t.next_date, t.next_reading, (d) => d > cut);
+    if (isNum(t.reading)) m.set(cut, { day: cut, value: Number(t.reading), src: "manual" });
+  });
+  const out = [...m.values()].sort((x, y) => x.day - y.day);
+  // A meter cannot run backwards; drop anything that would make it (a typo, or a
+  // reading left over from a replaced meter) rather than interpolate nonsense.
+  return out.filter((a, i) => i === 0 || a.value >= out[i - 1].value);
+}
+
+// Value at `day`: the anchor sitting on it, or a linear interpolation between the
+// two nearest ones — which is the zeitanteilige Aufteilung StromGVV asks for, and
+// what the provider computes when nobody read the meter that day.
+function readingAt(anchors: Anchor[], day: number, dateOf: (d: number) => string) {
+  const hit = anchors.find((a) => a.day === day);
+  if (hit) {
+    // A stored Zwischenablesung landing exactly on the change date needs no
+    // interpolation at all — say where it came from.
+    const n = hit.src === "reading" ? `Ablesung vom ${fmtDate(dateOf(hit.day))}` : "";
+    return { value: hit.value, estimated: false, note: n, noteShort: n };
+  }
+  if (anchors.length < 2)
+    return { value: anchors[0]?.value ?? 0, estimated: true, note: "", noteShort: "" };
+  let lo = anchors[0], hi = anchors[anchors.length - 1];
+  for (let i = 0; i < anchors.length - 1; i++) {
+    if (day >= anchors[i].day && day <= anchors[i + 1].day) { lo = anchors[i]; hi = anchors[i + 1]; break; }
+  }
+  const span = hi.day - lo.day;
+  const value = span === 0 ? hi.value : lo.value + ((hi.value - lo.value) * (day - lo.day)) / span;
+  const d0 = fmtDate(dateOf(lo.day)), d1 = fmtDate(dateOf(hi.day));
+  return {
+    value, estimated: true,
+    note: `zeitanteilig aus ${d0} (${lo.value} kWh) und ${d1} (${hi.value} kWh)`,
+    noteShort: `zeitanteilig aus ${d0} / ${d1}`,
+  };
+}
+
+// Split one metered billing into one sub-billing per price period. Each carries
+// its own dates, readings and prices, so the existing "several billings per
+// utility" machinery prices, prorates and prints them without further changes.
+function tariffSegments(b: any, readings: { date: string; value: number }[] = []): any[] {
+  const changes = tarifChanges(b);
+  if (changes.length === 0) return [b];
+
+  const total = dayDiff(b.bill_start, b.bill_end) + 1;   // inclusive length in days
+  const cuts = changes.map((t: any) => dayDiff(b.bill_start, t.from));
+  const bounds = [0, ...cuts, total];
+  const anchors = buildAnchors(b, changes, cuts, total, readings);
+  // Day `total` is the end reading, which belongs to the last day of the period.
+  const dateOf = (d: number) => (d === total ? b.bill_end : addDays(b.bill_start, d));
+
+  const es = b.eff_start || b.bill_start, ee = b.eff_end || b.bill_end;
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const nSeg = bounds.length - 1;
+  const segs: any[] = [];
+  for (let i = 0; i < nSeg; i++) {
+    const s0 = bounds[i], s1 = bounds[i + 1];
+    const segStart = addDays(b.bill_start, s0);
+    const segEnd = i === nSeg - 1 ? b.bill_end : addDays(b.bill_start, s1 - 1);
+    // Clip the tenant's living period to this price period; skip periods they
+    // were not there for (e.g. moved in after the change).
+    const cs = es > segStart ? es : segStart;
+    const ce = ee < segEnd ? ee : segEnd;
+    if (ce < cs) continue;
+    const tar = i === 0 ? b : changes[i - 1];
+    const a0 = readingAt(anchors, s0, dateOf);
+    const a1 = readingAt(anchors, s1, dateOf);
+    segs.push({
+      ...b,
+      bill_start: segStart, bill_end: segEnd,
+      eff_start: cs, eff_end: ce,
+      start_kwh: i === 0 ? Number(b.start_kwh) || 0 : r2(a0.value),
+      end_kwh: i === nSeg - 1 ? Number(b.end_kwh) || 0 : r2(a1.value),
+      arbeitspreis: Number(tar.arbeitspreis) || 0,
+      grundpreis_monthly: Number(tar.grundpreis_monthly) || 0,
+      tarife: [],
+      _tseg: i,
+      _tariff_label: `Tarifzeitraum ${i + 1} von ${nSeg}`,
+      _start_estimated: i > 0 && a0.estimated,
+      _end_estimated: i < nSeg - 1 && a1.estimated,
+      _start_note: i > 0 ? a0.note : "",
+      _end_note: i < nSeg - 1 ? a1.note : "",
+      _start_note_pdf: i > 0 ? a0.noteShort : "",
+      _end_note_pdf: i < nSeg - 1 ? a1.noteShort : "",
+    });
+  }
+  return segs.length ? segs : [b];
+}
+
 // ── billing-entry factories ────────────────────────────────────────────────────
 // Each utility holds a LIST of billing periods (e.g. one provider bill per year).
 // Every billing is either meter-based or a direct total-cost figure (mode "sum").
@@ -94,7 +257,7 @@ function fillEff(arr: any[], sField: string, eField: string, cStart?: string, cE
   });
   return changed ? next : arr;
 }
-const defStrom = () => ({ ...baseBilling(), start_kwh: 0, end_kwh: 0, arbeitspreis: 0, grundpreis_monthly: 0 });
+const defStrom = () => ({ ...baseBilling(), start_kwh: 0, end_kwh: 0, arbeitspreis: 0, grundpreis_monthly: 0, tarife: [] as any[] });
 const defGas = () => ({ ...baseBilling(), start_m3: 0, end_m3: 0, umrechnungsfaktor: 10.0, arbeitspreis: 0, grundpreis_monthly: 0 });
 const defWater = () => ({ ...baseBilling(), start_m3: 0, end_m3: 0, frischwasser_per_m3: 0, abwasser_per_m3: 0 });
 const defWarm = () => ({ ...baseBilling(), meters: [{ start: 0, end: 0 }], frischwasser_per_m3: 0, abwasser_per_m3: 0, heizenergie_per_m3: 0 });
@@ -120,6 +283,18 @@ function billingsFrom(stored: any, def: () => any, hasMeters: boolean, heiz: boo
       if (v !== undefined && v !== null) out[k] = typeof base[k] === "number" ? Number(v) : v;
     }
     out.mode = s.mode === "sum" ? "sum" : "meter";
+    if (Array.isArray(base.tarife)) {
+      out.tarife = (Array.isArray(s.tarife) ? s.tarife : []).map((t: any) => ({
+        from: t.from || "",
+        arbeitspreis: Number(t.arbeitspreis) || 0,
+        grundpreis_monthly: Number(t.grundpreis_monthly) || 0,
+        reading: numOrBlank(t.reading),
+        prev_date: t.prev_date || "",
+        prev_reading: numOrBlank(t.prev_reading),
+        next_date: t.next_date || "",
+        next_reading: numOrBlank(t.next_reading),
+      }));
+    }
     if (hasMeters) {
       const ms = Array.isArray(s.meters) ? s.meters : null;
       if (ms && ms.length) {
@@ -155,6 +330,143 @@ function DateF({ label, value, onChange }: { label: string; value: string; onCha
     <div className="space-y-1">
       <Label className="text-xs">{label}</Label>
       <Input type="date" className="h-8 text-sm" value={value} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  );
+}
+
+// Optional numeric field: empty means "not known" (the caller interpolates).
+function NumOpt({ label, value, onChange, step = "0.01", placeholder = "" }: {
+  label: string; value: number | ""; onChange: (v: number | "") => void; step?: string; placeholder?: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs">{label}</Label>
+      <Input type="number" step={step} min="0" className="h-8 text-sm" placeholder={placeholder}
+        value={value === "" || value === null || value === undefined ? "" : value}
+        onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))} />
+    </div>
+  );
+}
+
+// A bracketing reading that does not actually bracket the change date is
+// ignored by buildAnchors; say so rather than letting it look effective.
+function bracketWarning(t: any): string {
+  if (!t.from) return "";
+  const bad: string[] = [];
+  if (t.prev_date && isNum(t.prev_reading) && t.prev_date >= t.from)
+    bad.push("„Ablesung davor“ is not before the change date — dropped");
+  if (t.next_date && isNum(t.next_reading) && t.next_date <= t.from)
+    bad.push("„Ablesung danach“ is not after the change date — dropped");
+  if (isNum(t.prev_reading) && isNum(t.next_reading) && Number(t.next_reading) < Number(t.prev_reading))
+    bad.push("„Stand danach“ is lower than „Stand davor“ — a meter cannot run backwards, so the lower one is dropped");
+  return bad.length ? `${bad.join(". ")}.` : "";
+}
+
+// Tarifwechsel editor — only meaningful for a meter-based billing, so it is
+// rendered inside BillingShell's `children` (which the "sum" mode replaces).
+// Each row is a price change effective from a date inside the billing period;
+// the billing is then split into one sub-billing per price period.
+function TariffSplit({ b, anchors, onChange }: {
+  b: any; anchors: { date: string; value: number }[]; onChange: (tarife: any[]) => void;
+}) {
+  const list: any[] = b.tarife || [];
+  const segs = tariffSegments(b, anchors);
+  const inPeriod = anchors.filter((a) => a.date > b.bill_start && a.date < b.bill_end);
+  const upd = (i: number, patch: any) => onChange(list.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+
+  return (
+    <div className="rounded-md border border-dashed border-border/80 p-3 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Label className="text-xs font-semibold">Tarifwechsel — price change inside this billing period</Label>
+          <p className="text-xs text-muted-foreground">
+            Each price period is billed with its own tariff. The stand on the change day is taken
+            from the first of these that is filled in: the <b>Zählerstand am Wechseltag</b>, a
+            zeitanteilige interpolation between the <b>two nearest readings</b> you enter around it,
+            the stored Zwischenablesungen of this flat&apos;s Stromzähler, or — last resort — the
+            start/end readings above, which span the whole period.
+          </p>
+          <div className="text-xs">
+            <span className="font-medium">Stored Zwischenablesungen in this period: </span>
+            {inPeriod.length > 0
+              ? <span className="text-muted-foreground">
+                  {inPeriod.map((a) => `${fmtDate(a.date)} · ${a.value} kWh`).join("   ·   ")}
+                </span>
+              : <span className="text-muted-foreground">
+                  none — enter the two nearest readings on the change row below, or add
+                  Zwischenablesungen under Meter Readings.
+                </span>}
+          </div>
+        </div>
+        <Button variant="outline" size="sm" className="shrink-0"
+          onClick={() => onChange([...list, defTarif()])}>
+          <Plus className="size-4 mr-1" /> Tarifwechsel
+        </Button>
+      </div>
+      {list.map((t, i) => (
+        <div key={i} className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">New tariff valid from…</span>
+            <Button variant="ghost" size="icon" className="size-7"
+              onClick={() => onChange(list.filter((_, j) => j !== i))}>
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          </div>
+          <FieldRow>
+            <DateF label="Valid from" value={t.from} onChange={(v) => upd(i, { from: v })} />
+            <Num label="Arbeitspreis (€/kWh)" value={t.arbeitspreis} step="0.0001"
+              onChange={(v) => upd(i, { arbeitspreis: v })} />
+            <Num label="Grundpreis (€/month)" value={t.grundpreis_monthly}
+              onChange={(v) => upd(i, { grundpreis_monthly: v })} />
+            <NumOpt label="Zählerstand am Wechseltag (optional)" value={t.reading}
+              placeholder="interpolated" onChange={(v) => upd(i, { reading: v })} />
+          </FieldRow>
+          {/* Only meaningful while the stand on the change day is unknown — with
+              an exact reading there is nothing left to interpolate. */}
+          {!isNum(t.reading) && (
+            <div className="rounded-md bg-muted/30 border border-border/60 p-2 space-y-1">
+              <p className="text-xs text-muted-foreground">
+                Nearest readings around {t.from ? fmtDate(t.from) : "the change date"} — the stand on
+                the change day is interpolated between these two. A nearer reading always wins, so
+                one lying outside the billing period has no effect — the start/end readings above are
+                closer. Leave empty to fall back to stored Zwischenablesungen, then to those endpoints.
+              </p>
+              <FieldRow>
+                <DateF label="Ablesung davor — Datum" value={t.prev_date}
+                  onChange={(v) => upd(i, { prev_date: v })} />
+                <NumOpt label="Stand davor (kWh)" value={t.prev_reading}
+                  onChange={(v) => upd(i, { prev_reading: v })} />
+                <DateF label="Ablesung danach — Datum" value={t.next_date}
+                  onChange={(v) => upd(i, { next_date: v })} />
+                <NumOpt label="Stand danach (kWh)" value={t.next_reading}
+                  onChange={(v) => upd(i, { next_reading: v })} />
+              </FieldRow>
+              {bracketWarning(t) && <p className="text-xs text-destructive">{bracketWarning(t)}</p>}
+            </div>
+          )}
+        </div>
+      ))}
+      {segs.length > 1 && (
+        <div className="rounded-md bg-muted/40 border border-border/70 p-2 space-y-1">
+          <p className="text-xs font-medium">Resulting price periods</p>
+          {segs.map((s, i) => (
+            <div key={i} className="text-xs text-muted-foreground">
+              <p>
+                <b>{i + 1}.</b> {fmtPeriod(s.bill_start, s.bill_end)} · {billDays(s.bill_start, s.bill_end)} Tage ·{" "}
+                {s.start_kwh.toFixed(2)} → {s.end_kwh.toFixed(2)} kWh ({(s.end_kwh - s.start_kwh).toFixed(2)} kWh) ·{" "}
+                {s.arbeitspreis.toFixed(4)} €/kWh · {s.grundpreis_monthly.toFixed(2)} €/Mon
+              </p>
+              {/* Each internal boundary is the end of exactly one segment, so this
+                  prints the provenance of every derived reading exactly once. */}
+              {s._end_note && (
+                <p className="pl-4 text-primary">
+                  ↳ Zählerstand {s.end_kwh.toFixed(2)} kWh am {fmtDate(addDays(s.bill_end, 1))}: {s._end_note}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -331,6 +643,18 @@ export default function NebenkostenabrechnungPage() {
     queryFn: () => api.get("/api/meters/gas").then((r) => r.data),
   });
 
+  // Stored Zwischenablesungen anchor the Tarifwechsel interpolation, so the
+  // reading on a price-change date is derived from the two real readings around
+  // it instead of from the billing's endpoints.
+  const { data: stromMeters = [] } = useQuery<StromMeter[]>({
+    queryKey: ["strom-meters-all"],
+    queryFn: () => api.get("/api/meters/strom").then((r) => r.data),
+  });
+  const { data: stromReadings = [] } = useQuery<MeterReading[]>({
+    queryKey: ["strom-readings-all"],
+    queryFn: () => api.get("/api/meters/readings?meter_type=strom").then((r) => r.data),
+  });
+
   const selected = contracts.find((c) => String(c.id) === contractId);
 
   const { data: profiles = [] } = useQuery<BillingProfile[]>({
@@ -409,6 +733,24 @@ export default function NebenkostenabrechnungPage() {
 
   const aptGasMeters = gasMeters.filter((m) => m.apartment_id === selected?.apartment_id);
 
+  // Readings of this apartment's Stromzähler, as interpolation anchors for one
+  // billing period. A flat normally has a single Stromzähler; when it has more,
+  // take the one with the most readings inside the period (ties → lowest id) so
+  // readings from two different meters are never mixed into one curve.
+  const stromAnchorsFor = (b: any) => {
+    const ids = stromMeters.filter((m) => m.apartment_id === selected?.apartment_id).map((m) => m.id);
+    if (ids.length === 0 || !b?.bill_start || !b?.bill_end) return [];
+    const inPeriod = (r: MeterReading) => r.reading_date >= b.bill_start && r.reading_date <= b.bill_end;
+    const mine = stromReadings.filter((r) => ids.includes(r.meter_id));
+    const best = ids.slice().sort((x, y) => {
+      const d = mine.filter((r) => r.meter_id === y && inPeriod(r)).length
+              - mine.filter((r) => r.meter_id === x && inPeriod(r)).length;
+      return d !== 0 ? d : x - y;
+    })[0];
+    return mine.filter((r) => r.meter_id === best)
+               .map((r) => ({ date: r.reading_date, value: Number(r.reading) }));
+  };
+
   // ── occupancy timeline → split each cost into sub-periods with an INTEGER
   //    person count, so every interval renders on its own (÷3 while everyone is
   //    there, ÷2 during a vacancy) and the parts sum. Reuses the existing
@@ -480,38 +822,64 @@ export default function NebenkostenabrechnungPage() {
     });
   });
 
+  // ── expansion pipeline ──
+  // Tag every form billing with its index so the expanded rows can be folded back
+  // onto it no matter which splits produced them. Strom expands on two axes:
+  // price periods (Tarifwechsel) first, then occupancy runs inside each.
+  const withSrc = (list: any[]) => list.map((b, i) => ({ ...b, _src: i }));
+  const expandTariff = (list: any[]) => list.flatMap((b: any) => tariffSegments(b, stromAnchorsFor(b)));
+  const expStrom = () => expandMetered(expandTariff(withSrc(stromB)));
+  const expGas = () => expandMetered(withSrc(gasB));
+  const expWater = () => expandMetered(withSrc(waterB));
+  const expWarm = () => expandMetered(withSrc(warmB));
+  const expHeiz = () => expandMetered(withSrc(heizB));
+  const expBk = () => expandBK(withSrc(bkB));
+
   // The calc returns one result per expanded interval; fold them back to one per
-  // form billing (summing the tenant-side amounts) so the on-screen preview total
-  // matches the PDF. The PDF itself keeps the per-interval breakdown.
-  const _ADD = ["cost_tenant", "prepay", "nach", "period_cost", "limit_period"];
-  const foldResults = (slice: any[]) => {
+  // form billing so the on-screen preview total matches the PDF. The PDF itself
+  // keeps the per-interval breakdown.
+  //
+  // Two stages, because the two axes fold differently: occupancy runs inside one
+  // price period all carry the SAME meter readings (only the divisor changes), so
+  // only money may be summed there. Price periods carry their own readings, so
+  // their consumption sums too.
+  const _ADD_MONEY = ["cost_tenant", "prepay", "nach", "period_cost", "limit_period"];
+  const _ADD_USAGE = ["verbrauch", "verbrauch_tenant", "arbeitskosten", "grundkosten"];
+  const foldResults = (slice: any[], fields: string[]) => {
     if (slice.length <= 1) return slice[0];
     const base = { ...slice[0] };
-    for (const f of _ADD)
-      if (slice.some((r) => r && r[f] != null)) base[f] = slice.reduce((s, r) => s + (r?.[f] || 0), 0);
+    for (const f of fields)
+      if (slice.some((r) => r && r[f] != null))
+        base[f] = Math.round(slice.reduce((s, r) => s + (r?.[f] || 0), 0) * 1000) / 1000;
     return base;
   };
-  function foldPreview(calc: any) {
-    if (occSegs().length === 0) return calc;
-    const fold = (formList: any[], results: any[], isBK: boolean) => {
-      if (!results) return results;
-      const out: any[] = [];
-      let idx = 0;
-      for (const b of formList) {
-        const es = b.eff_start || (isBK ? b.bk_start : b.bill_start);
-        const ee = b.eff_end || (isBK ? b.bk_end : b.bill_end);
-        const base = isBK ? (b.tenants ?? numTenants) : numTenants;
-        const n = es && ee ? occRuns(es, ee, base).length : 1;
-        out.push(foldResults(results.slice(idx, idx + Math.max(1, n))));
-        idx += Math.max(1, n);
+  // Rows come out of the pipeline in source order, so every group is contiguous.
+  const foldRows = (rows: any[], results: any[]) => {
+    if (!results) return results;
+    const out: any[] = [];
+    let i = 0;
+    while (i < rows.length) {
+      const src = rows[i]._src;
+      const parts: any[] = [];
+      let j = i;
+      while (j < rows.length && rows[j]._src === src) {
+        const seg = rows[j]._tseg;
+        let k = j;
+        while (k < rows.length && rows[k]._src === src && rows[k]._tseg === seg) k++;
+        parts.push(foldResults(results.slice(j, k), _ADD_MONEY));
+        j = k;
       }
-      return out;
-    };
+      out.push(parts.length <= 1 ? parts[0] : foldResults(parts, [..._ADD_MONEY, ..._ADD_USAGE]));
+      i = j;
+    }
+    return out;
+  };
+  function foldPreview(calc: any) {
     return {
       ...calc,
-      strom: fold(stromB, calc.strom, false), gas: fold(gasB, calc.gas, false),
-      water: fold(waterB, calc.water, false), warmwater: fold(warmB, calc.warmwater, false),
-      heizung: fold(heizB, calc.heizung, false), bk: fold(bkB, calc.bk, true),
+      strom: foldRows(expStrom(), calc.strom), gas: foldRows(expGas(), calc.gas),
+      water: foldRows(expWater(), calc.water), warmwater: foldRows(expWarm(), calc.warmwater),
+      heizung: foldRows(expHeiz(), calc.heizung), bk: foldRows(expBk(), calc.bk),
     };
   }
 
@@ -529,12 +897,12 @@ export default function NebenkostenabrechnungPage() {
       eff_days: effDays(b),
     });
     const p: any = {};
-    if (useStrom) p.strom = expandMetered(stromB).map(mk);
-    if (useGas) p.gas = expandMetered(gasB).map(mk);
-    if (useWater) p.water = expandMetered(waterB).map(mk);
-    if (useWarmwater) p.warmwater = expandMetered(warmB).map((b: any) => ({ ...mk(b), meters: b.meters }));
-    if (useHeizung) p.heizung = expandMetered(heizB).map((b: any) => ({ ...mk(b), meters: b.meters }));
-    if (useBK) p.bk = expandBK(bkB).map((b: any) => ({
+    if (useStrom) p.strom = expStrom().map(mk);
+    if (useGas) p.gas = expGas().map(mk);
+    if (useWater) p.water = expWater().map(mk);
+    if (useWarmwater) p.warmwater = expWarm().map((b: any) => ({ ...mk(b), meters: b.meters }));
+    if (useHeizung) p.heizung = expHeiz().map((b: any) => ({ ...mk(b), meters: b.meters }));
+    if (useBK) p.bk = expBk().map((b: any) => ({
       cost_flat: b.cost_flat, tenants: b.tenants,
       bk_start: b.bk_start, bk_end: b.bk_end, limit_per_month: b.limit_per_month,
       // effective living months drive the proration on the backend; occupancy runs
@@ -566,21 +934,26 @@ export default function NebenkostenabrechnungPage() {
         monthly_limit: b._prepay_base ?? b.prepay_monthly,
         prepay_tenants: b._base_tenants ?? (b.num_tenants ?? numTenants),
         cost: c.cost_tenant, limit: c.prepay, is_pauschale: b.is_pauschale, mode: b.mode,
+        // Tarifwechsel: label the price period and flag interpolated readings, so
+        // the tenant can see which Zählerstand was measured and which was computed.
+        tariff_label: b._tariff_label, start_estimated: !!b._start_estimated,
+        end_estimated: !!b._end_estimated,
+        start_note: b._start_note_pdf || "", end_note: b._end_note_pdf || "",
       };
     };
     const zip = (list: any[], res: any[]) =>
       list.map((b, i) => ({ ...(res?.[i] || {}), ...b, ...common(b, res?.[i] || {}) }));
     const payload: any = {};
     // Expand the same way as the calc payload so results line up 1:1.
-    if (useStrom && calc.strom) payload.strom = zip(expandMetered(stromB), calc.strom);
-    if (useGas && calc.gas) payload.gas = zip(expandMetered(gasB), calc.gas);
-    if (useWater && calc.water) payload.water = zip(expandMetered(waterB), calc.water);
-    if (useWarmwater && calc.warmwater) payload.warmwater = zip(expandMetered(warmB), calc.warmwater);
-    if (useHeizung && calc.heizung) payload.heizung = zip(expandMetered(heizB), calc.heizung);
+    if (useStrom && calc.strom) payload.strom = zip(expStrom(), calc.strom);
+    if (useGas && calc.gas) payload.gas = zip(expGas(), calc.gas);
+    if (useWater && calc.water) payload.water = zip(expWater(), calc.water);
+    if (useWarmwater && calc.warmwater) payload.warmwater = zip(expWarm(), calc.warmwater);
+    if (useHeizung && calc.heizung) payload.heizung = zip(expHeiz(), calc.heizung);
     if (useBK && calc.bk) {
       // Map each BK billing's form/calc fields onto the exact keys invoice_pdf expects.
       // Abrechnungszeitraum = full bill period; Ihr Zeitraum = tenant's living period.
-      payload.bk = expandBK(bkB).map((b, i) => {
+      payload.bk = expBk().map((b, i) => {
         const c = calc.bk?.[i] || {};
         const effS = b.eff_start || b.bk_start;
         const effE = b.eff_end || b.bk_end;
@@ -891,6 +1264,8 @@ export default function NebenkostenabrechnungPage() {
               <Num label="Arbeitspreis (€/kWh)" value={b.arbeitspreis} step="0.0001" onChange={(v) => updateAt(setStromB, i, { arbeitspreis: v })} />
               <Num label="Grundpreis (€/month)" value={b.grundpreis_monthly} onChange={(v) => updateAt(setStromB, i, { grundpreis_monthly: v })} />
             </FieldRow>
+            <TariffSplit b={b} anchors={stromAnchorsFor(b)}
+              onChange={(tarife) => updateAt(setStromB, i, { tarife })} />
           </BillingShell>
         ))}
         <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setStromB, defStrom)}>

@@ -51,7 +51,7 @@ class Generator(ABC):
 
 
 class GroqGenerator(Generator):
-    def __init__(self, model: str = "llama-3.3-70b-versatile"):
+    def __init__(self, model: str = "openai/gpt-oss-120b"):
         from groq import Groq
 
         api_key = os.environ.get("GROQ_API_KEY")

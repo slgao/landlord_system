@@ -21,7 +21,12 @@ from __future__ import annotations
 
 # ── Cost / latency circuit-breakers (TRD §2, §8) ────────────────────────────
 MAX_ITERATIONS = 6          # hard stop on the tool loop — cost + latency guard
-MODEL = "llama-3.3-70b-versatile"
+# Groq has retired its Llama chat models. gpt-oss-120b is the strongest
+# general model left on the platform and speaks the same OpenAI tool-calling
+# shape, so the loop below needed no other change. It is a reasoning model,
+# but Groq returns that on a separate `reasoning` field — never in `content`,
+# so the streamed answer stays clean.
+MODEL = "openai/gpt-oss-120b"
 TEMPERATURE = 0.0           # deterministic: this is a facts tool, not a writer
 MAX_HISTORY_TURNS = 10      # bound replayed context (TRD §7)
 

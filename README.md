@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/FastAPI-0.136-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL" />
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker" />
-  <img src="https://img.shields.io/badge/Assistant-Groq%20Llama%203.3-F55036" alt="Groq" />
+  <img src="https://img.shields.io/badge/Assistant-Groq%20gpt--oss--120b-F55036" alt="Groq" />
   <img src="https://img.shields.io/badge/License-BSL%201.1-orange" alt="License" />
 </p>
 
@@ -42,7 +42,7 @@ Also: multi-currency (EUR/CNY/USD/GBP), co-tenants (Mitmieter), fixed-term and o
 | Database | PostgreSQL 16 (Docker locally, Neon in cloud) |
 | Migrations | Alembic |
 | PDFs | ReportLab |
-| Assistant | **Groq** (Llama 3.3 70B) — agentic tool-calling loop, SSE token streaming |
+| Assistant | **Groq** (gpt-oss-120b) — agentic tool-calling loop, SSE token streaming |
 | Legal search | Hybrid RAG — sentence-transformers (e5) + Chroma + BM25, reranked, with citations |
 | Container | Docker Compose |
 
@@ -82,7 +82,7 @@ The database schema is created automatically on first start (Alembic runs at API
 
 The `/ask` page is a read-only assistant that answers questions about your own
 portfolio **and** German tenancy law, citing its sources. It runs an agentic
-tool-calling loop (Groq — Llama 3.3 70B) over read-only data tools plus a hybrid
+tool-calling loop (Groq — gpt-oss-120b) over read-only data tools plus a hybrid
 legal-RAG corpus.
 
 - Set `GROQ_API_KEY` in `.env` — a free key from [console.groq.com](https://console.groq.com).

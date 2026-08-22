@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
 import { Pencil, Trash2 } from "lucide-react";
 
-const EMPTY = { name: "", email: "", gender: "diverse" };
+const EMPTY = { name: "", email: "", phone: "", gender: "diverse" };
 
 export default function TenantsPage() {
   const qc = useQueryClient();
@@ -61,7 +61,7 @@ export default function TenantsPage() {
   function openCreate() { setEditing(null); setForm(EMPTY); setOpen(true); }
   function openEdit(t: Tenant) {
     setEditing(t);
-    setForm({ name: t.name, email: t.email || "", gender: t.gender });
+    setForm({ name: t.name, email: t.email || "", phone: t.phone || "", gender: t.gender });
     setOpen(true);
   }
 
@@ -78,6 +78,7 @@ export default function TenantsPage() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Email</TableHead>
+              <TableHead>Phone</TableHead>
               <TableHead>Salutation</TableHead>
               <TableHead className="w-20" />
             </TableRow>
@@ -85,17 +86,20 @@ export default function TenantsPage() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-10">Loading…</TableCell>
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-10">Loading…</TableCell>
               </TableRow>
             ) : tenants.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-10">No tenants yet.</TableCell>
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-10">No tenants yet.</TableCell>
               </TableRow>
             ) : (
               tenants.map((t) => (
                 <TableRow key={t.id}>
                   <TableCell className="font-medium">{t.name}</TableCell>
                   <TableCell className="text-muted-foreground">{t.email || "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {t.phone ? <a href={`tel:${t.phone}`} className="hover:underline">{t.phone}</a> : "—"}
+                  </TableCell>
                   <TableCell className="text-muted-foreground">{genderLabel(t.gender)}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
@@ -141,6 +145,15 @@ export default function TenantsPage() {
                 value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                 placeholder="max@example.com"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Phone</Label>
+              <Input
+                type="tel"
+                value={form.phone}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                placeholder="+49 170 1234567"
               />
             </div>
             <div className="space-y-1.5">

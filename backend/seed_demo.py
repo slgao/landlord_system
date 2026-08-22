@@ -130,13 +130,13 @@ def seed(cur) -> dict:
 
     # ── Tenants ─────────────────────────────────────────────────────────────
     print("  Tenants …")
-    T = ["name", "email", "gender"]
-    t_anna   = _ins(cur, "tenants", T, ["Anna Müller",      "anna.mueller@example.de",    "female"])
-    t_thomas = _ins(cur, "tenants", T, ["Thomas Schneider", "thomas.schneider@example.de","male"])
-    t_julia  = _ins(cur, "tenants", T, ["Julia Weber",      "julia.weber@example.de",     "female"])
-    t_markus = _ins(cur, "tenants", T, ["Markus Fischer",   "markus.fischer@example.de",  "male"])
-    t_sarah  = _ins(cur, "tenants", T, ["Sarah Koch",       "sarah.koch@example.de",      "female"])
-    t_lukas  = _ins(cur, "tenants", T, ["Lukas Bauer",      "lukas.bauer@example.de",     "male"])
+    T = ["name", "email", "phone", "gender"]
+    t_anna   = _ins(cur, "tenants", T, ["Anna Müller",      "anna.mueller@example.de",    "+49 170 1112201", "female"])
+    t_thomas = _ins(cur, "tenants", T, ["Thomas Schneider", "thomas.schneider@example.de","+49 170 1112202", "male"])
+    t_julia  = _ins(cur, "tenants", T, ["Julia Weber",      "julia.weber@example.de",     "+49 170 1112203", "female"])
+    t_markus = _ins(cur, "tenants", T, ["Markus Fischer",   "markus.fischer@example.de",  "+49 170 1112204", "male"])
+    t_sarah  = _ins(cur, "tenants", T, ["Sarah Koch",       "sarah.koch@example.de",      "+49 170 1112205", "female"])
+    t_lukas  = _ins(cur, "tenants", T, ["Lukas Bauer",      "lukas.bauer@example.de",     "+49 170 1112206", "male"])
 
     # ── Contracts ───────────────────────────────────────────────────────────
     print("  Contracts …")

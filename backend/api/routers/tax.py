@@ -294,6 +294,12 @@ def amortization(owner: int = Depends(require_auth)):
             continue
         scheds = [e["schedule"] for e in entries]
         all_scheds += scheds
+        # What you actually pay each month is the rate on the loans being
+        # serviced *now*. A loan that is paid off — or signed but not yet drawn —
+        # still has a contractual rate (the loan table shows it), but summing it
+        # into the property's rate would invoice you for a loan you no longer
+        # have. balance_now is 0 in both of those cases, which is exactly the test.
+        rate_now = sum(e["monthly_payment"] for e in entries if e["balance_now"] > 0)
         props.append({
             "property_id": pid,
             "property_name": names.get(pid, f"Property #{pid}"),
@@ -305,7 +311,7 @@ def amortization(owner: int = Depends(require_auth)):
             "interest_since_start": round(sum(e["interest_since_start"] for e in entries), 2),
             "tilgung_since_start": round(sum(e["tilgung_since_start"] for e in entries), 2),
             "interest_lifetime": round(sum(e["interest_lifetime"] for e in entries), 2),
-            "monthly_payment": round(sum(e["monthly_payment"] for e in entries), 2),
+            "monthly_payment": round(rate_now, 2),
             "paid_off_year": max(e["paid_off_year"] for e in entries),
         })
 

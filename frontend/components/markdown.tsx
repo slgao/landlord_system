@@ -46,16 +46,16 @@ function MarkdownBody({ children }: { children: string }) {
             {children}
           </a>
         ),
-        code: ({ className, children }) => {
-          const block = /language-/.test(className || "");
-          return block ? (
-            <code className="block font-mono text-xs">{children}</code>
-          ) : (
-            <code className="rounded bg-foreground/10 px-1 py-0.5 font-mono text-[0.85em]">{children}</code>
-          );
-        },
+        // Styled for the inline case; the `pre` below strips the chip back off
+        // for fenced blocks. Sniffing `className` for "language-" instead would
+        // misread a fence opened without a language — it carries no class at all.
+        code: ({ children }) => (
+          <code className="rounded bg-foreground/10 px-1 py-0.5 font-mono text-[0.85em]">{children}</code>
+        ),
         pre: ({ children }) => (
-          <pre className="my-1.5 overflow-x-auto rounded-md bg-foreground/5 p-2.5">{children}</pre>
+          <pre className="my-1.5 overflow-x-auto rounded-md bg-foreground/5 p-2.5 text-xs [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-xs">
+            {children}
+          </pre>
         ),
         // A wide table must scroll inside its own bubble rather than stretching it.
         table: ({ children }) => (

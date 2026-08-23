@@ -336,9 +336,20 @@ export default function FinancingPage() {
         <MetricCard label="Zins so far" value={fmt(view.interest_since_start)} icon={Percent}
           tone="interest" sub={`${fmt(view.interest_lifetime)} over the full term`} />
         <MetricCard label="Rate" value={fmt(view.monthly_payment)} icon={Banknote}
-          sub="per month, all loans" />
-        <MetricCard label="Paid off" value={String(view.paid_off_year)} icon={CalendarCheck}
-          sub={`${view.paid_off_year - thisYear} years to go`} />
+          sub="per month, loans still running" />
+        <MetricCard
+          label={view.paid_off_year < thisYear ? "Cleared" : "Paid off"}
+          value={String(view.paid_off_year)}
+          icon={CalendarCheck}
+          // A loan settled in the past must not advertise negative years to go.
+          sub={
+            view.paid_off_year < thisYear
+              ? `${thisYear - view.paid_off_year} years ago`
+              : view.paid_off_year === thisYear
+                ? "this year"
+                : `${view.paid_off_year - thisYear} years to go`
+          }
+        />
       </div>
 
       <Charts rows={view.rows} thisYear={thisYear} />

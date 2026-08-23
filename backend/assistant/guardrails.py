@@ -10,11 +10,10 @@ Three jobs live here, all cheap and all load-bearing:
 2. Cost caps — `MAX_ITERATIONS` (the loop's circuit-breaker) and a per-request
    token budget live as constants the loop reads. Per-tenant daily quota (R9) is
    Phase 2 and hooks in at the router, not here.
-3. `BOOTSTRAP_LANDLORD_ID` + `require_scope` — the single-tenant stand-in for the
-   Phase-2 `landlord_id` predicate. Until the schema carries `landlord_id`
-   (TRD §11), there is exactly one real landlord (id 1); a request scoped to any
-   other id must see nothing. That gives us a *testable* isolation property today
-   and a clean seam to swap for real RLS later.
+3. `require_scope` — a validity gate on the scope itself. The real isolation is
+   the `owner_id = ?` predicate every tool query in tools.py now carries; this
+   only rejects a missing or nonsensical scope so a tool can never run unscoped.
+   `BOOTSTRAP_LANDLORD_ID` survives as the dev REPL's default owner, nothing more.
 """
 
 from __future__ import annotations
@@ -30,12 +29,10 @@ MODEL = "openai/gpt-oss-120b"
 TEMPERATURE = 0.0           # deterministic: this is a facts tool, not a writer
 MAX_HISTORY_TURNS = 10      # bound replayed context (TRD §7)
 
-# ── Single-tenant scope stand-in (TRD §6, §11) ──────────────────────────────
-# Phase 1 has no `landlord_id` column yet, so tool SQL cannot say
-# `WHERE landlord_id = ?`. Instead every tool asserts the scope is the one real
-# landlord. Phase 2 deletes this guard and replaces it with the WHERE predicate +
-# Postgres RLS. The important invariant — "a tool refuses to serve a foreign
-# scope" — holds in both phases; only the mechanism changes.
+# ── Default scope for the dev REPL (TRD §6, §11) ────────────────────────────
+# Every owned table carries owner_id and every tool query filters on it, so
+# isolation is enforced in SQL, not by this constant. It remains only as the
+# owner assistant/repl.py runs as when driving the agent from a shell.
 BOOTSTRAP_LANDLORD_ID = 1
 
 

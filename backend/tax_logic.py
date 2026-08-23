@@ -56,6 +56,16 @@ def annuity_year_breakdown(
     # Simulate month by month from the first payment through `end_month` of `year`.
     m = start.year * 12 + (start.month - 1)
     end_m = year * 12 + (max(1, min(12, end_month)) - 1)
+    if m > end_m:
+        # The loan has not been drawn yet as of this year/month. Nothing has been
+        # paid — and, the part that is easy to get wrong, nothing is *owed*: the
+        # principal only becomes debt on disbursement. Falling through would leave
+        # `balance` at its initial value and report the whole principal as
+        # outstanding, which is what made a balance sheet for a year before a
+        # purchase show that property's mortgage.
+        return {"interest": 0.0, "tilgung": 0.0, "balance_end": 0.0,
+                "monthly_payment": round(payment, 2),
+                "interest_total": 0.0, "equity_total": 0.0}
     while m <= end_m and balance > 0.005:
         interest = balance * monthly_rate
         # Tilgung 0 (interest-only) legitimately amortizes nothing; never negative.

@@ -185,3 +185,20 @@ def test_expense_spread_remainder_lands_in_final_year():
 def test_contract_months():
     assert contract_months_in_year("2024-05-01", None, 2025) == 12
     assert contract_months_in_year("2025-09-01", "2026-03-31", 2025) == 4  # Sep–Dec
+
+
+def test_annuity_before_start_owes_nothing():
+    """A loan not yet drawn is not yet debt.
+
+    Falling through the simulation used to leave the balance at the full
+    principal, so a balance sheet for a year before the purchase reported that
+    property's whole mortgage as outstanding.
+    """
+    r = annuity_year_breakdown(120_000, 4.0, 2.0, "2025-10-15", 2024)
+    assert r["interest"] == 0.0 and r["tilgung"] == 0.0
+    assert r["balance_end"] == 0.0
+    assert r["equity_total"] == 0.0 and r["interest_total"] == 0.0
+    # The month cut-off applies too: September is still before an October start.
+    assert annuity_year_breakdown(120_000, 4.0, 2.0, "2025-10-15", 2025, 9)["balance_end"] == 0.0
+    # ...and October itself is not.
+    assert annuity_year_breakdown(120_000, 4.0, 2.0, "2025-10-15", 2025, 10)["balance_end"] > 0

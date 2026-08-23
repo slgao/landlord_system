@@ -55,3 +55,26 @@ def test_paid_off_loan_keeps_its_totals_in_the_running_sum():
 
 def test_merge_of_nothing_is_empty():
     assert _merge_schedules([]) == []
+
+
+def test_as_of_ignores_a_loan_not_yet_drawn():
+    """A loan signed for next year is not debt today, and you are not paying its
+    rate yet — the Financing page's Restschuld and Rate both key off this."""
+    from api.routers.tax import _as_of
+    m = {"principal": 100_000, "interest_rate_pct": 3.0, "tilgung_rate_pct": 2.0,
+         "start_date": "2030-01-01"}
+    r = _as_of(m, 2026, 8)
+    assert r["balance_now"] == 0.0
+    assert r["interest_since_start"] == 0.0 and r["tilgung_since_start"] == 0.0
+    # The contractual rate is still reported; it is the caller that filters on
+    # balance_now before summing it into a property's monthly payment.
+    assert r["monthly_payment"] > 0
+
+
+def test_as_of_on_a_settled_loan():
+    from api.routers.tax import _as_of
+    m = {"principal": 50_000, "interest_rate_pct": 5.0, "tilgung_rate_pct": 5.0,
+         "start_date": "1980-01-01"}
+    r = _as_of(m, 2026, 8)
+    assert r["balance_now"] == 0.0
+    assert r["tilgung_since_start"] == pytest.approx(50_000, abs=1.0)

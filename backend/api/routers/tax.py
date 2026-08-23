@@ -6,6 +6,7 @@ Sondertilgung-affected interest) are overridable per (property, year, field)
 via tax_year_overrides. Manual always wins over computed.
 """
 import json
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -203,6 +204,123 @@ def delete_mortgage(mortgage_id: int, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM mortgages WHERE id=? AND owner_id=?", (mortgage_id, owner)):
         raise HTTPException(status_code=404, detail="Mortgage not found")
     execute("DELETE FROM mortgages WHERE id=? AND owner_id=?", (mortgage_id, owner))
+
+
+# ── Amortisation (Zins/Tilgung development) ──────────────────────────────────
+
+def _merge_schedules(schedules: list[list[dict]]) -> list[dict]:
+    """Sum several loan schedules onto one calendar-year timeline.
+
+    Loans on the same property rarely start together (a KfW tranche typically
+    lands a year after the main loan) and never finish together, so the merged
+    range spans the earliest start to the latest payoff. Outside a loan's own
+    life it contributes nothing to that year's interest/Tilgung and nothing to
+    the outstanding debt — but its cumulative totals must *persist* after payoff,
+    or the portfolio's "interest paid so far" would drop back to zero the year a
+    loan ends.
+    """
+    if not schedules:
+        return []
+    years = sorted({r["year"] for s in schedules for r in s})
+    out = []
+    for y in years:
+        acc = {"year": y, "interest": 0.0, "tilgung": 0.0, "payment": 0.0,
+               "balance_end": 0.0, "interest_cum": 0.0, "tilgung_cum": 0.0}
+        for sched in schedules:
+            row = next((r for r in sched if r["year"] == y), None)
+            if row is not None:
+                for k in ("interest", "tilgung", "payment", "balance_end",
+                          "interest_cum", "tilgung_cum"):
+                    acc[k] += row[k]
+            elif y > sched[-1]["year"]:      # paid off — carry the totals forward
+                acc["interest_cum"] += sched[-1]["interest_cum"]
+                acc["tilgung_cum"] += sched[-1]["tilgung_cum"]
+            # y < sched[0]["year"] — the loan does not exist yet, contributes 0
+        out.append({k: (v if k == "year" else round(v, 2)) for k, v in acc.items()})
+    return out
+
+
+def _as_of(m: dict, year: int, month: int) -> dict:
+    """What has actually been paid on this loan through `month` of `year`.
+
+    Same convention as the balance sheet's _financing: the current year stops at
+    the current month, so these are figures to date, not a projected year-end.
+    """
+    b = tax_logic.annuity_year_breakdown(
+        m["principal"], m["interest_rate_pct"], m["tilgung_rate_pct"],
+        m["start_date"], year, month)
+    return {"balance_now": b["balance_end"], "interest_since_start": b["interest_total"],
+            "tilgung_since_start": b["equity_total"], "monthly_payment": b["monthly_payment"]}
+
+
+@router.get("/amortization")
+def amortization(owner: int = Depends(require_auth)):
+    """Zins/Tilgung development over the whole life of every loan.
+
+    One entry per property that actually carries a mortgage — properties without
+    one are omitted rather than returned empty, so the page has nothing to filter.
+    Each loan carries its full year-by-year schedule (past *and* projected), and
+    the property's `combined` timeline sums them.
+    """
+    today = date.today()
+    mortgages: dict[int, list] = {}
+    for r in fetch("SELECT id, property_id, label, principal, interest_rate_pct,"
+                   "       tilgung_rate_pct, start_date, note FROM mortgages "
+                   "WHERE owner_id=? ORDER BY start_date, id", (owner,)):
+        mortgages.setdefault(r[1], []).append(_mortgage_row(r))
+    if not mortgages:
+        return {"as_of": str(today), "properties": [], "totals": None}
+
+    names = {r[0]: r[1] for r in fetch(
+        "SELECT id, name FROM properties WHERE owner_id=? ", (owner,))}
+    flats: dict[int, list] = {}
+    for pid, label in fetch("SELECT property_id, name FROM apartments WHERE owner_id=? "
+                            "ORDER BY name", (owner,)):
+        flats.setdefault(pid, []).append(label)
+
+    props, all_scheds = [], []
+    for pid, loans in mortgages.items():
+        entries = []
+        for m in loans:
+            sched = tax_logic.annuity_schedule(
+                m["principal"], m["interest_rate_pct"], m["tilgung_rate_pct"], m["start_date"])
+            if not sched:                     # unusable terms — skip, never crash the page
+                continue
+            entries.append({**m, "schedule": sched,
+                            "paid_off_year": sched[-1]["year"],
+                            "interest_lifetime": sched[-1]["interest_cum"],
+                            **_as_of(m, today.year, today.month)})
+        if not entries:
+            continue
+        scheds = [e["schedule"] for e in entries]
+        all_scheds += scheds
+        props.append({
+            "property_id": pid,
+            "property_name": names.get(pid, f"Property #{pid}"),
+            "apartments": flats.get(pid, []),
+            "mortgages": entries,
+            "combined": _merge_schedules(scheds),
+            "principal_total": round(sum(e["principal"] for e in entries), 2),
+            "balance_now": round(sum(e["balance_now"] for e in entries), 2),
+            "interest_since_start": round(sum(e["interest_since_start"] for e in entries), 2),
+            "tilgung_since_start": round(sum(e["tilgung_since_start"] for e in entries), 2),
+            "interest_lifetime": round(sum(e["interest_lifetime"] for e in entries), 2),
+            "monthly_payment": round(sum(e["monthly_payment"] for e in entries), 2),
+            "paid_off_year": max(e["paid_off_year"] for e in entries),
+        })
+
+    props.sort(key=lambda p: p["property_name"])
+    totals = {
+        "principal_total": round(sum(p["principal_total"] for p in props), 2),
+        "balance_now": round(sum(p["balance_now"] for p in props), 2),
+        "interest_since_start": round(sum(p["interest_since_start"] for p in props), 2),
+        "tilgung_since_start": round(sum(p["tilgung_since_start"] for p in props), 2),
+        "interest_lifetime": round(sum(p["interest_lifetime"] for p in props), 2),
+        "monthly_payment": round(sum(p["monthly_payment"] for p in props), 2),
+        "paid_off_year": max((p["paid_off_year"] for p in props), default=None),
+        "combined": _merge_schedules(all_scheds),
+    }
+    return {"as_of": str(today), "properties": props, "totals": totals}
 
 
 # ── Expenses ─────────────────────────────────────────────────────────────────

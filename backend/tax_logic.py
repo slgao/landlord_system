@@ -78,6 +78,76 @@ def annuity_year_breakdown(
     }
 
 
+def annuity_schedule(
+    principal: float,
+    interest_rate_pct: float,
+    tilgung_rate_pct: float,
+    start_date: str,
+    max_years: int = 60,
+) -> list[dict]:
+    """Year-by-year life of an annuity loan, from the first payment to payoff.
+
+    Same month-by-month simulation as `annuity_year_breakdown` — the two agree
+    year for year (there is a test pinning that) — but walked once instead of
+    re-simulated per year, so a 30-year loan costs one pass rather than thirty.
+
+    Each row is a calendar year: `interest` and `tilgung` are what is paid
+    *within* that year (they sum to the annuity payments made in it, which is
+    less than 12 × payment in the first and last years), `balance_end` is the
+    Restschuld once December is booked, and the `*_cum` fields run from the
+    loan's start. `paid_off_year` is therefore just the last row's year.
+
+    `max_years` is a termination guard, not a business rule: a loan with 0%
+    Tilgung amortizes nothing and would otherwise loop forever.
+    """
+    start = _parse(start_date)
+    payment = float(principal) * (interest_rate_pct + tilgung_rate_pct) / 100.0 / 12.0
+    if start is None or payment <= 0 or float(principal) <= 0:
+        return []
+
+    monthly_rate = interest_rate_pct / 100.0 / 12.0
+    balance = float(principal)
+    interest_cum = tilgung_cum = 0.0
+    rows: list[dict] = []
+    year = start.year
+    interest_y = tilgung_y = 0.0
+    months_y = 0
+
+    def flush():
+        rows.append({
+            "year": year,
+            "interest": round(interest_y, 2),
+            "tilgung": round(tilgung_y, 2),
+            "payment": round(interest_y + tilgung_y, 2),
+            "balance_end": round(max(balance, 0.0), 2),
+            "interest_cum": round(interest_cum, 2),
+            "tilgung_cum": round(tilgung_cum, 2),
+            "months": months_y,
+        })
+
+    m = start.year * 12 + (start.month - 1)
+    last_m = (start.year + max_years) * 12 + (start.month - 1)
+    while balance > 0.005 and m <= last_m:
+        if m // 12 != year:
+            flush()
+            year = m // 12
+            interest_y = tilgung_y = 0.0
+            months_y = 0
+        interest = balance * monthly_rate
+        # Tilgung 0 (interest-only) legitimately amortizes nothing; never negative.
+        # The final payment is capped at the balance so it cannot overshoot.
+        amortize = max(min(payment - interest, balance), 0.0)
+        balance -= amortize
+        interest_y += interest
+        tilgung_y += amortize
+        interest_cum += interest
+        tilgung_cum += amortize
+        months_y += 1
+        m += 1
+    flush()
+    return rows
+
+
 # ── AfA (linear building depreciation, §7 Abs. 4 EStG) ───────────────────────
 
 def afa_for_year(

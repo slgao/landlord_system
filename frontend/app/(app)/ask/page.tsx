@@ -5,6 +5,7 @@ import { streamAssistant, ASSISTANT_CACHE_KEY } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Sparkles, Send, User, AlertTriangle, Check, Loader2, Plus } from "lucide-react";
+import { Markdown } from "@/components/markdown";
 
 // One tool call the agent made, as shown in the live trace.
 interface ToolStep {
@@ -315,13 +316,14 @@ export default function AskPage() {
                 ) : (
                   m.content && (
                     <div
-                      className={`rounded-2xl rounded-tl-sm px-3.5 py-2 text-sm whitespace-pre-wrap ${
+                      className={`rounded-2xl rounded-tl-sm px-3.5 py-2 text-sm ${
                         m.error
-                          ? "bg-destructive/10 text-destructive"
+                          ? "bg-destructive/10 text-destructive whitespace-pre-wrap"
                           : "bg-muted text-foreground"
                       }`}
                     >
-                      {m.content}
+                      {/* Error text is ours and plain; only model output is Markdown. */}
+                      {m.error ? m.content : <Markdown>{m.content}</Markdown>}
                       {m.streaming && (
                         <span className="inline-block w-1.5 h-4 -mb-0.5 ml-0.5 bg-foreground/60 animate-pulse" />
                       )}

@@ -632,12 +632,20 @@ export default function ContractsPage() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5"><Label>Monthly Rent</Label><Input type="number" step="0.01" value={form.rent} onChange={(e) => setForm((f) => ({ ...f, rent: Number(e.target.value) }))} /></div>
-              <div className="space-y-1.5"><Label>Currency</Label>
-                <Select value={form.currency} onValueChange={(v) => setForm((f) => ({ ...f, currency: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                </Select>
+              <div className="space-y-1.5"><Label>Monthly Rent (€)</Label><Input type="number" step="0.01" value={form.rent} onChange={(e) => setForm((f) => ({ ...f, rent: Number(e.target.value) }))} /></div>
+              {/* The rent owed is always EUR — no picker, because a foreign rent
+                  would be compared against EUR payments everywhere downstream.
+                  A tenant paying in another currency is recorded on the payment
+                  itself under Rent Tracking. */}
+              <div className="space-y-1.5">
+                <Label>Currency</Label>
+                <div className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                  EUR
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Rent is always agreed in euro. If a tenant transfers in another currency,
+                  record that on the payment in Rent Tracking.
+                </p>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">

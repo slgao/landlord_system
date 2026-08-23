@@ -108,6 +108,15 @@ def get_contract(contract_id: int, owner: int = Depends(require_auth)):
     return _row(_get(contract_id, owner))
 
 
+# The rent obligation is always in EUR. A tenant may *transfer* in another
+# currency — that is recorded per payment as orig_amount/orig_currency, a note
+# alongside the EUR value that actually settles the debt (see payments.py).
+# Letting the contract itself carry a foreign rent would break every place that
+# compares rent against payments: detect_overdue would weigh e.g. a CNY rent
+# against EUR receipts and dun the tenant for the exchange rate.
+RENT_CURRENCY = "EUR"
+
+
 @router.post("/", response_model=ContractOut, status_code=201)
 def create_contract(body: ContractIn, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM tenants WHERE id=? AND owner_id=?", (body.tenant_id, owner)):
@@ -121,7 +130,7 @@ def create_contract(body: ContractIn, owner: int = Depends(require_auth)):
            kaution_returned_date, kaution_returned_amount, terminated, owner_id)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         RETURNING id
-    """, (body.tenant_id, body.apartment_id, body.rent, body.currency,
+    """, (body.tenant_id, body.apartment_id, body.rent, RENT_CURRENCY,
           body.start_date, body.end_date or None,
           body.kaution_amount, body.kaution_currency,
           body.kaution_paid_date or None,
@@ -145,7 +154,7 @@ def update_contract(contract_id: int, body: ContractIn, owner: int = Depends(req
           kaution_amount=?, kaution_currency=?, kaution_paid_date=?,
           kaution_returned_date=?, kaution_returned_amount=?, terminated=?
         WHERE id=? AND owner_id=?
-    """, (body.tenant_id, body.apartment_id, body.rent, body.currency,
+    """, (body.tenant_id, body.apartment_id, body.rent, RENT_CURRENCY,
           body.start_date, body.end_date or None,
           body.kaution_amount, body.kaution_currency,
           body.kaution_paid_date or None,
@@ -278,7 +287,9 @@ def renew_contract(contract_id: int, body: RenewIn, owner: int = Depends(require
         # Close the old term the day before the new one begins.
         execute("UPDATE contracts SET end_date=? WHERE id=? AND owner_id=?",
                 (old_end, contract_id, owner))
-        # Clone tenant/apartment/currency into a new term; deposit carries over (0).
+        # Clone tenant/apartment into a new term; deposit carries over (0). The
+        # rent currency is not cloned — it is EUR by the rule above, so a legacy
+        # row with a foreign currency does not propagate it into a fresh term.
         new_id = execute_returning("""
             INSERT INTO contracts
               (tenant_id, apartment_id, rent, currency, start_date, end_date,
@@ -286,7 +297,7 @@ def renew_contract(contract_id: int, body: RenewIn, owner: int = Depends(require
                kaution_returned_date, kaution_returned_amount, terminated, owner_id)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             RETURNING id
-        """, (old[1], old[3], new_rent, old[7] or "EUR",
+        """, (old[1], old[3], new_rent, RENT_CURRENCY,
               new_start, new_end,
               0, old[11] or "EUR", None,
               None, None, 0, owner))[0][0]

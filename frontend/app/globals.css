@@ -36,6 +36,13 @@
   --seal-bright: 150 49% 32%;
   --ink-faint: 104 4% 50%;
 
+  /* Charts: interest paid, against the pine seal for principal repaid.
+     Accounting red would be the obvious cost colour, but red-vs-green is the
+     one pairing protanopes cannot separate (ΔE 2.3) — this orange clears the
+     CVD gate against --primary in both themes while staying in the ledger's
+     warm/earth register. */
+  --chart-interest: 17 82% 56%;
+
   /* Type roles. Fonts load via <link> in layout; families fall back cleanly. */
   --font-sans: 'Archivo', system-ui, -apple-system, sans-serif;
   --font-display: 'Archivo', system-ui, sans-serif;
@@ -67,6 +74,9 @@
 
   --seal-bright: 143 44% 69%;
   --ink-faint: 88 8% 47%;
+
+  /* Re-stepped for the dark surface, not an automatic flip. */
+  --chart-interest: 17 70% 50%;
 }
 
 @layer base {

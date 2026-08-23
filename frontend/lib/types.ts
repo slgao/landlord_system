@@ -324,3 +324,57 @@ export interface TaxReport {
   excluded_properties: string[];
   totals: { income: number; werbungskosten: number; result: number };
 }
+
+// ── Financing (Zins/Tilgung development) ─────────────────────────────────────
+
+export interface AmortRow {
+  year: number;
+  interest: number;      // Zins paid within this year
+  tilgung: number;       // principal repaid within this year
+  payment: number;       // interest + tilgung — the annuity paid this year
+  balance_end: number;   // Restschuld once December is booked
+  interest_cum: number;  // both cumulative since the loan started
+  tilgung_cum: number;
+  months?: number;       // present per loan, absent on merged timelines
+}
+
+export interface AmortMortgage {
+  id: number;
+  property_id: number;
+  label: string | null;
+  principal: number;
+  interest_rate_pct: number;
+  tilgung_rate_pct: number;
+  start_date: string;
+  note: string | null;
+  schedule: AmortRow[];
+  paid_off_year: number;
+  interest_lifetime: number;
+  balance_now: number;
+  interest_since_start: number;
+  tilgung_since_start: number;
+  monthly_payment: number;
+}
+
+export interface AmortProperty {
+  property_id: number;
+  property_name: string;
+  apartments: string[];
+  mortgages: AmortMortgage[];
+  combined: AmortRow[];
+  principal_total: number;
+  balance_now: number;
+  interest_since_start: number;
+  tilgung_since_start: number;
+  interest_lifetime: number;
+  monthly_payment: number;
+  paid_off_year: number;
+}
+
+export interface Amortization {
+  as_of: string;
+  properties: AmortProperty[];
+  totals: (Omit<AmortProperty, "property_id" | "property_name" | "apartments" | "mortgages"> & {
+    combined: AmortRow[];
+  }) | null;
+}

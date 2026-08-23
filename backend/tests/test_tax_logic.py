@@ -3,6 +3,7 @@ import pytest
 
 from tax_logic import (
     annuity_year_breakdown,
+    annuity_schedule,
     afa_for_year,
     months_active_in_year,
     expense_share_for_year,
@@ -55,6 +56,66 @@ def test_annuity_interest_only_loan_terminates():
     r = annuity_year_breakdown(100_000, 3.0, 0.0, "2025-01-01", 2026)
     assert r["interest"] == pytest.approx(3_000.0, abs=0.01)
     assert r["balance_end"] == 100_000.0
+
+
+# ── Annuity schedule ─────────────────────────────────────────────────────────
+
+def test_schedule_agrees_with_year_breakdown():
+    """The schedule is a single pass; annuity_year_breakdown re-simulates per
+    year. They must not drift — this is the contract the charts depend on."""
+    args = (145_000, 2.19, 2.0, "2022-04-01")
+    rows = annuity_schedule(*args)
+    assert rows, "a real loan must produce a schedule"
+    for row in rows:
+        b = annuity_year_breakdown(*args, row["year"])
+        assert row["interest"] == pytest.approx(b["interest"], abs=0.02)
+        assert row["tilgung"] == pytest.approx(b["tilgung"], abs=0.02)
+        assert row["balance_end"] == pytest.approx(b["balance_end"], abs=0.02)
+        assert row["interest_cum"] == pytest.approx(b["interest_total"], abs=0.02)
+        assert row["tilgung_cum"] == pytest.approx(b["equity_total"], abs=0.02)
+
+
+def test_schedule_starts_at_start_year_and_pays_off():
+    rows = annuity_schedule(100_000, 3.0, 2.0, "2020-01-01")
+    assert rows[0]["year"] == 2020
+    assert rows[-1]["balance_end"] == 0.0
+    # 3% + 2% amortizes in ~30 years; the last row is the payoff year.
+    assert 2040 < rows[-1]["year"] < 2060
+
+
+def test_schedule_partial_first_year_has_fewer_months():
+    rows = annuity_schedule(100_000, 3.0, 2.0, "2020-10-31")
+    assert rows[0]["months"] == 3       # Oct, Nov, Dec
+    assert rows[1]["months"] == 12
+
+
+def test_schedule_interest_declines_tilgung_grows():
+    rows = annuity_schedule(200_000, 3.5, 2.0, "2020-01-01")
+    # Skip the payoff year: its last payment is capped at the remaining balance,
+    # so both its Tilgung and its annual payment are legitimately smaller.
+    full = [r for r in rows[:-1] if r["months"] == 12]
+    interest = [r["interest"] for r in full]
+    tilgung = [r["tilgung"] for r in full]
+    assert interest == sorted(interest, reverse=True)
+    assert tilgung == sorted(tilgung)
+    # The split shifts but the annual payment stays constant — that is what
+    # makes it an annuity, and what the stacked bars show.
+    payments = {round(r["payment"]) for r in full}
+    assert len(payments) == 1
+
+
+def test_schedule_interest_only_loan_is_capped():
+    """0% Tilgung never amortizes; the guard stops it rather than looping."""
+    rows = annuity_schedule(100_000, 2.0, 0.0, "2020-01-01", max_years=10)
+    assert rows[-1]["year"] == 2030
+    assert rows[-1]["balance_end"] == pytest.approx(100_000, abs=0.01)
+    assert all(r["tilgung"] == 0.0 for r in rows)
+
+
+def test_schedule_rejects_nonsense():
+    assert annuity_schedule(0, 3.0, 2.0, "2020-01-01") == []
+    assert annuity_schedule(100_000, 0.0, 0.0, "2020-01-01") == []
+    assert annuity_schedule(100_000, 3.0, 2.0, None) == []
 
 
 # ── AfA ──────────────────────────────────────────────────────────────────────

@@ -12,6 +12,12 @@ export const C = {
   actual: "hsl(var(--primary))",
   costs: "hsl(var(--destructive))",
   net: "hsl(var(--foreground))", // quiet ink line — the bottom line
+  // Financing: interest burned vs principal repaid. `interest` is deliberately
+  // NOT `costs` — accounting red against the pine `actual` is the one pair
+  // protanopes cannot separate, so the orange carries that job on charts where
+  // the two sit side by side. See --chart-interest in globals.css.
+  interest: "hsl(var(--chart-interest))",
+  principal: "hsl(var(--primary))",
 };
 
 export const SERIES_COLOR: Record<string, string> = {
@@ -22,6 +28,12 @@ export const SERIES_COLOR: Record<string, string> = {
   Net: C.net,
   "Expected net": C.net,
   "Actual net": C.actual,
+  Zins: C.interest,
+  Interest: C.interest,
+  Tilgung: C.principal,
+  Principal: C.principal,
+  Restschuld: C.net,
+  "Debt remaining": C.net,
 };
 
 export const swatch = (key: string, fallback?: string) =>

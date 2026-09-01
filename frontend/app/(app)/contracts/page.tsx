@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment } from "@/lib/types";
+import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,7 +37,7 @@ export default function ContractsPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"contracts" | "detail" | "kaution-overview">("contracts");
-  const [kautionReturnForm, setKautionReturnForm] = useState({ date: new Date().toISOString().split("T")[0], amount: 0 });
+  const [kautionReturnForm, setKautionReturnForm] = useState({ date: new Date().toISOString().split("T")[0], amount: 0, note: "" });
   const [renewOpen, setRenewOpen] = useState(false);
   const [renewForm, setRenewForm] = useState<{ mode: "extend" | "new_term"; end_date: string; start_date: string; rent: number }>(
     { mode: "extend", end_date: "", start_date: "", rent: 0 });
@@ -85,6 +85,12 @@ export default function ContractsPage() {
     enabled: !!selectedContract,
   });
 
+  const { data: kautionReturns = [] } = useQuery<KautionReturn[]>({
+    queryKey: ["kaution-returns", selectedContract?.id],
+    queryFn: () => api.get(`/api/kaution-returns/?contract_id=${selectedContract!.id}`).then((r) => r.data),
+    enabled: !!selectedContract,
+  });
+
   const { data: kautionOverview = [] } = useQuery({
     queryKey: ["kaution-overview"],
     queryFn: () => api.get("/api/contracts/kaution-overview").then((r) => r.data),
@@ -100,6 +106,39 @@ export default function ContractsPage() {
   const reopen = useMutation({
     mutationFn: (id: number) => api.post(`/api/contracts/${id}/reopen`),
     onSuccess: (res, id) => { qc.invalidateQueries({ queryKey: ["contracts"] }); if (selectedContract?.id === id) setSelectedContract(res.data); toast.success("Contract reopened"); },
+  });
+
+  const invalidateKaution = () => {
+    qc.invalidateQueries({ queryKey: ["kaution-returns", selectedContract?.id] });
+    qc.invalidateQueries({ queryKey: ["kaution-overview"] });
+    qc.invalidateQueries({ queryKey: ["contracts"] });
+  };
+
+  const addReturn = useMutation({
+    mutationFn: () => api.post("/api/kaution-returns/", {
+      contract_id: selectedContract!.id,
+      date: kautionReturnForm.date,
+      amount: kautionReturnForm.amount || stillHeld,
+      note: kautionReturnForm.note || null,
+    }),
+    onSuccess: async () => {
+      invalidateKaution();
+      // The contract row carries the derived settled flag; refresh the open one.
+      const fresh = await api.get(`/api/contracts/${selectedContract!.id}`);
+      setSelectedContract(fresh.data);
+      setKautionReturnForm({ date: new Date().toISOString().split("T")[0], amount: 0, note: "" });
+      toast.success("Repayment recorded");
+    },
+  });
+
+  const removeReturn = useMutation({
+    mutationFn: (id: number) => api.delete(`/api/kaution-returns/${id}`),
+    onSuccess: async () => {
+      invalidateKaution();
+      const fresh = await api.get(`/api/contracts/${selectedContract!.id}`);
+      setSelectedContract(fresh.data);
+      toast.success("Repayment removed");
+    },
   });
 
   const markKautionReturned = useMutation({
@@ -120,7 +159,7 @@ export default function ContractsPage() {
 
   const clearKautionReturn = useMutation({
     mutationFn: () => api.post(`/api/contracts/${selectedContract!.id}/kaution-return/clear`),
-    onSuccess: (res) => { qc.invalidateQueries({ queryKey: ["contracts"] }); setSelectedContract(res.data); toast.success("Kaution return cleared"); },
+    onSuccess: (res) => { invalidateKaution(); setSelectedContract(res.data); toast.success("Kaution return cleared"); },
   });
 
   const renew = useMutation({
@@ -246,6 +285,13 @@ export default function ContractsPage() {
   const legacyFullyPaid = kautionPayments.length === 0 && !!selectedContract?.kaution_paid_date;
   const totalPaid = legacyFullyPaid ? (selectedContract?.kaution_amount || 0) : installmentsPaid;
   const kautionOutstanding = (selectedContract?.kaution_amount || 0) - totalPaid;
+  // The deposit's closing arithmetic: what is owed back, less what has gone
+  // back. `stillHeld` is the number that matters on a partial release — the
+  // money still with the landlord, pending the handover or the final
+  // Nebenkostenabrechnung.
+  const totalReturned = kautionReturns.reduce((s2, r) => s2 + r.amount, 0);
+  const stillHeld = kautionBalance - totalReturned;
+  const fullySettled = totalReturned > 0 && stillHeld <= 0.005;
 
   const statusColor = (c: Contract) => {
     if (c.terminated) return "bg-secondary text-secondary-foreground";
@@ -392,9 +438,40 @@ export default function ContractsPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 text-sm border-t border-border pt-3">
-                  <div><p className="text-xs text-muted-foreground">Deducted</p><p className="font-semibold text-destructive">{totalDeducted.toFixed(2)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Balance (after deductions)</p><p className={`font-semibold ${kautionBalance >= 0 ? "text-primary" : "text-destructive"}`}>{kautionBalance.toFixed(2)}</p></div>
+                {/* The closing arithmetic, read top to bottom: what was held,
+                    what was kept back and why, what has gone back, what is left.
+                    "Still held" is the line that matters after a part-release. */}
+                <div className="border-t border-border pt-3 space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Deposit</span>
+                    <span className="font-mono tabular-nums">{(selectedContract?.kaution_amount || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Deducted</span>
+                    <span className={`font-mono tabular-nums ${totalDeducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                      {totalDeducted > 0 ? `−${totalDeducted.toFixed(2)}` : "0.00"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Returned to tenant</span>
+                    <span className="font-mono tabular-nums">
+                      {totalReturned > 0 ? `−${totalReturned.toFixed(2)}` : "0.00"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-t border-border pt-1.5 font-semibold">
+                    <span>Still held</span>
+                    <span className={`font-mono tabular-nums ${stillHeld <= 0.005 ? "text-muted-foreground" : "text-amber-500"}`}>
+                      {stillHeld.toFixed(2)} {selectedContract?.kaution_currency}
+                    </span>
+                  </div>
+                  {fullySettled ? (
+                    <p className="text-xs text-primary">Deposit fully settled — nothing left to return.</p>
+                  ) : totalReturned > 0 ? (
+                    <p className="text-xs text-amber-500">
+                      Part of the deposit has been returned. The rest is still held — release it below
+                      once the handover and the Nebenkostenabrechnung are settled.
+                    </p>
+                  ) : null}
                 </div>
                 {kautionDeductions.length > 0 && (
                   <Table>
@@ -431,31 +508,79 @@ export default function ContractsPage() {
                     </TableBody>
                   </Table>
                 )}
-                {/* Kaution return section */}
-                {selectedContract?.kaution_amount && !selectedContract.kaution_returned_date && (
+                {/* Repayments — a ledger, because a deposit is usually released
+                    in two goes: part at the handover, the rest after the final
+                    Nebenkostenabrechnung. */}
+                {selectedContract?.kaution_amount ? (
                   <div className="border-t border-border pt-3 space-y-2">
-                    <p className="text-xs font-medium text-primary">Mark Kaution as Returned</p>
-                    <div className="flex gap-2">
-                      <Input type="date" className="h-8 text-sm" value={kautionReturnForm.date}
-                        onChange={(e) => setKautionReturnForm((f) => ({ ...f, date: e.target.value }))} />
-                      <Input type="number" step="0.01" className="h-8 text-sm w-32" placeholder="Amount"
-                        value={kautionReturnForm.amount || kautionBalance}
-                        onChange={(e) => setKautionReturnForm((f) => ({ ...f, amount: Number(e.target.value) }))} />
-                      <Button size="sm" variant="outline" className="text-primary border-primary/30"
-                        onClick={() => markKautionReturned.mutate()} disabled={markKautionReturned.isPending}>
-                        Mark Returned
-                      </Button>
-                    </div>
+                    <p className="text-xs font-medium">Repayments to the tenant</p>
+                    {kautionReturns.length > 0 && (
+                      <Table>
+                        <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Note</TableHead><TableHead className="text-right">Amount</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
+                        <TableBody>
+                          {kautionReturns.map((r) => (
+                            <TableRow key={r.id}>
+                              <TableCell className="text-muted-foreground">{r.date}</TableCell>
+                              <TableCell className="text-muted-foreground text-xs">{r.note || "—"}</TableCell>
+                              <TableCell className="text-right font-mono">{r.amount.toFixed(2)}</TableCell>
+                              <TableCell>
+                                <ConfirmButton onConfirm={() => removeReturn.mutate(r.id)} title="Delete repayment?" message={`Delete the ${r.amount.toFixed(2)} repayment of ${r.date}?`}>
+                                  <Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button>
+                                </ConfirmButton>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                    {stillHeld > 0.005 ? (
+                      <>
+                        <div className="flex gap-2">
+                          <Input type="date" className="h-8 text-sm" value={kautionReturnForm.date}
+                            onChange={(e) => setKautionReturnForm((f) => ({ ...f, date: e.target.value }))} />
+                          <Input type="number" step="0.01" className="h-8 text-sm w-28" placeholder="Amount"
+                            value={kautionReturnForm.amount || ""}
+                            onChange={(e) => setKautionReturnForm((f) => ({ ...f, amount: Number(e.target.value) }))} />
+                          <Input className="h-8 text-sm" placeholder="Note (e.g. Teilrückzahlung nach Übergabe)"
+                            value={kautionReturnForm.note}
+                            onChange={(e) => setKautionReturnForm((f) => ({ ...f, note: e.target.value }))} />
+                          <Button size="sm" onClick={() => addReturn.mutate()} disabled={addReturn.isPending}>
+                            <Plus className="size-4 mr-1" />Return
+                          </Button>
+                        </div>
+                        {/* One tap for each half of the usual workflow. */}
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" variant="outline"
+                            onClick={() => setKautionReturnForm((f) => ({ ...f, amount: Number(stillHeld.toFixed(2)), note: f.note || (totalReturned > 0 ? "Restbetrag nach Abrechnung" : "Vollständige Rückzahlung") }))}>
+                            Return everything still held ({stillHeld.toFixed(2)})
+                          </Button>
+                          {totalReturned === 0 && stillHeld > 0.005 && (
+                            <Button size="sm" variant="outline"
+                              onClick={() => setKautionReturnForm((f) => ({ ...f, amount: Number((stillHeld / 2).toFixed(2)), note: f.note || "Teilrückzahlung nach Übergabe" }))}>
+                              Return half now ({(stillHeld / 2).toFixed(2)})
+                            </Button>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Returning only part is fine — the remainder stays on the books as still held,
+                          and can still be offset against a Nebenkosten-Nachzahlung.
+                        </p>
+                      </>
+                    ) : totalReturned > 0 ? (
+                      <div className="rounded-md bg-primary/10 border border-primary/20 p-3 flex justify-between items-center">
+                        <p className="text-sm text-primary">
+                          Fully settled — {totalReturned.toFixed(2)} returned
+                          {selectedContract?.kaution_returned_date ? ` by ${selectedContract.kaution_returned_date}` : ""}.
+                        </p>
+                        <Button size="sm" variant="ghost" onClick={() => clearKautionReturn.mutate()}>Clear all</Button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Nothing to return — the deductions account for the whole deposit.
+                      </p>
+                    )}
                   </div>
-                )}
-                {selectedContract?.kaution_returned_date && (
-                  <div className="rounded-md bg-primary/10 border border-primary/20 p-3 flex justify-between items-center">
-                    <p className="text-sm text-primary">
-                      Returned {selectedContract.kaution_returned_amount?.toFixed(2)} on {selectedContract.kaution_returned_date}
-                    </p>
-                    <Button size="sm" variant="ghost" onClick={() => clearKautionReturn.mutate()}>Clear</Button>
-                  </div>
-                )}
+                ) : null}
 
                 <div className="border-t border-border pt-3 space-y-2">
                   <p className="text-xs font-medium">Add deduction</p>
@@ -565,6 +690,12 @@ export default function ContractsPage() {
                       <TableCell className="text-muted-foreground">
                         {r.kaution_returned_date ? (
                           <span className="text-primary text-xs">{r.kaution_returned_amount?.toFixed(2)} on {r.kaution_returned_date}</span>
+                        ) : (r.returned_total ?? 0) > 0 ? (
+                          // Part-released: show what went back and what is left.
+                          <span className="text-amber-500 text-xs">
+                            {r.returned_total.toFixed(2)} returned<br />
+                            <span className="text-muted-foreground">{r.still_held?.toFixed(2)} still held</span>
+                          </span>
                         ) : "—"}
                       </TableCell>
                     </TableRow>

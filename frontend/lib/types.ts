@@ -80,6 +80,17 @@ export interface KautionPayment {
   note?: string;
 }
 
+/** One repayment of the deposit. A deposit is often released in two steps —
+ *  part after the handover, the rest once the Nebenkostenabrechnung is settled —
+ *  so this is a ledger, not a single field on the contract. */
+export interface KautionReturn {
+  id: number;
+  contract_id: number;
+  date: string;
+  amount: number;
+  note?: string;
+}
+
 export interface Payment {
   id: number;
   contract_id: number;

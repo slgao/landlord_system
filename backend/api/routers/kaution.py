@@ -141,3 +141,107 @@ def delete_payment(pay_id: int, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM kaution_payments WHERE id=? AND owner_id=?", (pay_id, owner)):
         raise HTTPException(404, "Payment not found")
     execute("DELETE FROM kaution_payments WHERE id=? AND owner_id=?", (pay_id, owner))
+
+
+# ---------------------------------------------------------------------------
+# Kaution returns (deposit money paid back to the tenant)
+# ---------------------------------------------------------------------------
+# A deposit is often released in two steps: part right after the handover once
+# the flat is seen to be undamaged, the rest once the final Nebenkostenabrechnung
+# is settled. Hence a ledger rather than the single date/amount pair that used to
+# live on the contract — those two columns are now derived from these rows by
+# _sync_contract_return below.
+
+returns_router = APIRouter(prefix="/kaution-returns", tags=["Kaution"])
+
+
+class KautionReturnIn(BaseModel):
+    contract_id: int
+    date: str
+    amount: float
+    note: Optional[str] = None
+
+
+class KautionReturnOut(BaseModel):
+    id: int
+    contract_id: int
+    date: str
+    amount: float
+    note: Optional[str] = None
+
+
+def _return_row(r) -> KautionReturnOut:
+    return KautionReturnOut(id=r[0], contract_id=r[1], date=r[2],
+                            amount=float(r[3]), note=r[4])
+
+
+def _sync_contract_return(contract_id: int, owner: int) -> None:
+    """Mirror the ledger back onto contracts.kaution_returned_*.
+
+    `kaution_returned_amount` becomes the running total returned.
+    `kaution_returned_date` — the app's "is this deposit settled?" flag, read by
+    the Nebenkosten deposit offset, the Mahnung/invoice PDF and the Kaution
+    overview — is set to the last return only once nothing is still held. While a
+    release is partial the flag stays NULL, so the remainder is still treated as
+    money in hand, which is what it is.
+
+    Called after every mutation so the two representations cannot drift.
+    """
+    row = fetch("""
+        SELECT COALESCE(c.kaution_amount, 0),
+               COALESCE((SELECT SUM(amount) FROM kaution_deductions d WHERE d.contract_id = c.id), 0),
+               COALESCE((SELECT SUM(amount) FROM kaution_returns r WHERE r.contract_id = c.id), 0),
+               (SELECT MAX(date) FROM kaution_returns r WHERE r.contract_id = c.id)
+        FROM contracts c WHERE c.id=? AND c.owner_id=?
+    """, (contract_id, owner))
+    if not row:
+        return
+    amount, deducted, returned, last_date = row[0]
+    still_held = float(amount) - float(deducted) - float(returned)
+    settled = returned and still_held <= 0.005
+    execute("UPDATE contracts SET kaution_returned_amount=?, kaution_returned_date=? "
+            "WHERE id=? AND owner_id=?",
+            (float(returned) if returned else None,
+             last_date if settled else None, contract_id, owner))
+
+
+@returns_router.get("/", response_model=list[KautionReturnOut])
+def list_returns(contract_id: int, owner: int = Depends(require_auth)):
+    rows = fetch("""
+        SELECT id,contract_id,date,amount,note
+        FROM kaution_returns WHERE contract_id=? AND owner_id=? ORDER BY date, id
+    """, (contract_id, owner))
+    return [_return_row(r) for r in rows]
+
+
+@returns_router.post("/", response_model=KautionReturnOut, status_code=201)
+def create_return(body: KautionReturnIn, owner: int = Depends(require_auth)):
+    _own_contract(body.contract_id, owner)
+    new_id = execute_returning("""
+        INSERT INTO kaution_returns (contract_id,date,amount,note,owner_id)
+        VALUES (?,?,?,?,?) RETURNING id
+    """, (body.contract_id, body.date, body.amount, body.note, owner))[0][0]
+    _sync_contract_return(body.contract_id, owner)
+    rows = fetch("SELECT id,contract_id,date,amount,note FROM kaution_returns WHERE id=?", (new_id,))
+    return _return_row(rows[0])
+
+
+@returns_router.put("/{ret_id}", response_model=KautionReturnOut)
+def update_return(ret_id: int, body: KautionReturnIn, owner: int = Depends(require_auth)):
+    old = fetch("SELECT contract_id FROM kaution_returns WHERE id=? AND owner_id=?", (ret_id, owner))
+    if not old:
+        raise HTTPException(404, "Return not found")
+    execute("UPDATE kaution_returns SET date=?, amount=?, note=? WHERE id=? AND owner_id=?",
+            (body.date, body.amount, body.note, ret_id, owner))
+    _sync_contract_return(old[0][0], owner)
+    rows = fetch("SELECT id,contract_id,date,amount,note FROM kaution_returns WHERE id=?", (ret_id,))
+    return _return_row(rows[0])
+
+
+@returns_router.delete("/{ret_id}", status_code=204)
+def delete_return(ret_id: int, owner: int = Depends(require_auth)):
+    old = fetch("SELECT contract_id FROM kaution_returns WHERE id=? AND owner_id=?", (ret_id, owner))
+    if not old:
+        raise HTTPException(404, "Return not found")
+    execute("DELETE FROM kaution_returns WHERE id=? AND owner_id=?", (ret_id, owner))
+    _sync_contract_return(old[0][0], owner)

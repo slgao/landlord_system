@@ -237,18 +237,23 @@ def settle_rent(contract_id: int, body: RentSettleIn, owner: int = Depends(requi
 @router.post("/{contract_id}/kaution-return", response_model=ContractOut)
 def mark_kaution_returned(contract_id: int, body: KautionReturnIn,
                           owner: int = Depends(require_auth)):
+    """Record a repayment. Kept as a convenience wrapper over the returns ledger
+    so the contract's derived kaution_returned_* can never be written directly
+    and drift from the rows behind it."""
+    from api.routers.kaution import KautionReturnIn as LedgerReturnIn, create_return
     _assert_own(contract_id, owner)
-    execute("UPDATE contracts SET kaution_returned_date=?, kaution_returned_amount=? "
-            "WHERE id=? AND owner_id=?",
-            (body.returned_date, body.returned_amount, contract_id, owner))
+    create_return(LedgerReturnIn(contract_id=contract_id, date=body.returned_date,
+                                 amount=body.returned_amount, note=None), owner=owner)
     return _row(_get(contract_id, owner))
 
 
 @router.post("/{contract_id}/kaution-return/clear", response_model=ContractOut)
 def clear_kaution_return(contract_id: int, owner: int = Depends(require_auth)):
+    """Undo every recorded repayment on this deposit."""
+    from api.routers.kaution import _sync_contract_return
     _assert_own(contract_id, owner)
-    execute("UPDATE contracts SET kaution_returned_date=NULL, kaution_returned_amount=NULL "
-            "WHERE id=? AND owner_id=?", (contract_id, owner))
+    execute("DELETE FROM kaution_returns WHERE contract_id=? AND owner_id=?", (contract_id, owner))
+    _sync_contract_return(contract_id, owner)
     return _row(_get(contract_id, owner))
 
 
@@ -313,7 +318,8 @@ def kaution_overview(owner: int = Depends(require_auth)):
                c.kaution_amount, COALESCE(c.kaution_currency,'EUR'),
                c.kaution_paid_date, c.kaution_returned_date, c.kaution_returned_amount,
                COALESCE((SELECT SUM(amount) FROM kaution_deductions WHERE contract_id=c.id), 0),
-               COALESCE((SELECT SUM(amount) FROM kaution_payments WHERE contract_id=c.id), 0)
+               COALESCE((SELECT SUM(amount) FROM kaution_payments WHERE contract_id=c.id), 0),
+               COALESCE((SELECT SUM(amount) FROM kaution_returns WHERE contract_id=c.id), 0)
         FROM contracts c
         JOIN tenants t ON t.id=c.tenant_id
         JOIN apartments a ON a.id=c.apartment_id
@@ -339,6 +345,9 @@ def kaution_overview(owner: int = Depends(require_auth)):
             "deducted": deducted, "paid": paid,
             "outstanding": round(k_amt - paid, 2),
             "balance": round(k_amt - deducted, 2),
+            "returned_total": round(float(r[11]) if r[11] else 0.0, 2),
+            # What is still with the landlord: owed back, less what has gone back.
+            "still_held": round(k_amt - deducted - (float(r[11]) if r[11] else 0.0), 2),
         })
     return result
 

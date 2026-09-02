@@ -180,9 +180,10 @@ export interface MeterReading {
   reading_date: string;
   reading: number;
   note?: string;
-  // Set when the reading was taken at a handover. The reading is a normal
-  // reading either way — this only records where it came from.
-  protocol_id?: number | null;
+  // The handovers this reading was taken at, e.g. ["Auszug · Zhenwu Wei",
+  // "Einzug · Yunkun Rui"]. A same-day changeover reads the meter once and both
+  // protocols point at that one reading.
+  taken_at?: string[];
 }
 
 // ── Übergabeprotokoll ────────────────────────────────────────────────────────
@@ -243,6 +244,10 @@ export interface ProtocolReading {
   note?: string | null;
   serial_number?: string | null;
   description?: string | null;
+  // Other handovers sharing this same reading.
+  also_at?: string[];
+  // True when saving joined an existing reading whose value already matched.
+  merged?: boolean;
 }
 
 export interface Config {

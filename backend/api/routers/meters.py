@@ -422,6 +422,10 @@ class MeterReadingOut(BaseModel):
     reading_date: str
     reading: float
     note: Optional[str] = None
+    # The handovers this reading was taken at, e.g. ["Auszug · Zhenwu Wei",
+    # "Einzug · Yunkun Rui"]. A same-day changeover reads the meter once, and
+    # this is what says so instead of the page showing the observation twice.
+    taken_at: list[str] = []
 
 
 @router.get("/readings", response_model=list[MeterReadingOut])
@@ -438,8 +442,26 @@ def list_readings(meter_type: str | None = None, meter_id: int | None = None,
         FROM meter_readings {where}
         ORDER BY reading_date DESC, id DESC
     """, tuple(params))
+    if not rows:
+        return []
+
+    # One query for the whole page rather than one per reading.
+    links = fetch("""
+        SELECT mrp.reading_id, p.kind, t.name
+        FROM meter_reading_protocols mrp
+        JOIN handover_protocols p ON p.id = mrp.protocol_id
+        LEFT JOIN contracts c ON c.id = p.contract_id
+        LEFT JOIN tenants   t ON t.id = c.tenant_id
+        WHERE mrp.owner_id=? ORDER BY p.date, p.id
+    """, (owner,))
+    from api.routers.handover import protocol_label
+    taken: dict[int, list[str]] = {}
+    for reading_id, kind, tenant in links:
+        taken.setdefault(reading_id, []).append(protocol_label(kind, tenant))
+
     return [MeterReadingOut(id=r[0], meter_type=r[1], meter_id=r[2],
-                            reading_date=r[3], reading=float(r[4]), note=r[5]) for r in rows]
+                            reading_date=r[3], reading=float(r[4]), note=r[5],
+                            taken_at=taken.get(r[0], [])) for r in rows]
 
 
 @router.post("/readings", response_model=MeterReadingOut, status_code=201)

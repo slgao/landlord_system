@@ -1,0 +1,33 @@
+[Unit]
+Description=Landlord system database backup
+Documentation=https://github.com/slgao/landlord_system
+
+[Service]
+Type=oneshot
+
+# backup.sh shells out to `docker run … pg_dump`. When Persistent=true fires a
+# missed run right after boot, the Docker daemon is often not accepting
+# connections yet — without this wait the catch-up run would fail and raise a
+# notification saying the backup broke, when in truth it was simply early.
+# A user unit cannot order itself After=docker.service (that lives in the system
+# manager), so the wait is explicit here.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do /usr/bin/docker info >/dev/null 2>&1 && exit 0; sleep 5; done; echo "docker did not become ready within 5 minutes" >&2; exit 1'
+
+ExecStart=@PROJECT_DIR@/scripts/backup.sh
+
+# The script resolves the desktop session itself (see notify()), but PATH must
+# carry docker, gzip and stat — a user unit starts with a minimal one.
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Generous: the wait above can take 5 minutes, and a slow dump adds to it.
+TimeoutStartSec=15min
+
+# Append to the same log the cron job wrote, so the existing history stays in one
+# file rather than splitting across the journal at the moment of the switchover.
+# (`append:` replaces journal capture rather than adding to it — `systemctl
+# --user status` will show the exit result but no output; the output is here.)
+StandardOutput=append:%h/landlord_backups/backup.log
+StandardError=append:%h/landlord_backups/backup.log
+
+[Install]
+WantedBy=default.target

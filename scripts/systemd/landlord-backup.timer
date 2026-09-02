@@ -1,0 +1,21 @@
+[Unit]
+Description=Nightly landlord system database backup
+Documentation=https://github.com/slgao/landlord_system
+
+[Timer]
+# Local time. The host is Europe/Berlin, which is what the old CRON_TZ said.
+OnCalendar=*-*-* 22:00:00
+
+# The point of moving off cron: this machine is a laptop and is frequently off
+# at 22:00, and cron simply skips those nights — the backup log showed gaps of
+# up to five consecutive days. Persistent records the last run and fires the
+# missed one on the next boot instead of silently losing the night.
+Persistent=true
+
+# Spread the catch-up run a little so a boot does not start the dump in the same
+# instant as everything else the machine is bringing up.
+RandomizedDelaySec=2min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

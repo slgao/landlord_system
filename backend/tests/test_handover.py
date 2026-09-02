@@ -174,3 +174,33 @@ def test_pdf_handles_a_defect_without_an_estimate():
     out = _pdf(conditions=[{"area": "Fenster", "condition": "defect",
                             "estimated_cost": None, "note": "Griff lose"}])
     assert out[:4] == b"%PDF"
+
+
+# ── Readings shared between two handovers ─────────────────────────────────────
+# When a tenancy is handed straight on, the outgoing tenant's Auszug and the
+# incoming tenant's Einzug are the same afternoon at the same meter: one
+# observation, which the app keeps as one row linked to both protocols.
+
+from api.routers.handover import protocol_label, same_reading_value
+
+
+def test_protocol_label_names_the_handover_and_the_tenant():
+    assert protocol_label("move_in", "Yunkun Rui") == "Einzug · Yunkun Rui"
+    assert protocol_label("move_out", "Zhenwu Wei") == "Auszug · Zhenwu Wei"
+
+
+def test_protocol_label_without_a_tenant_still_says_which_handover():
+    assert protocol_label("move_in", None) == "Einzug"
+    assert protocol_label("move_out", "") == "Auszug"
+
+
+def test_equal_values_survive_the_numeric_round_trip():
+    # Readings come back from Numeric(12,3) as 10229.0 having gone in as 10229;
+    # an exact comparison would report the merge as a correction.
+    assert same_reading_value(10229, 10229.000) is True
+    assert same_reading_value(342.517, 342.517) is True
+
+
+def test_a_real_difference_is_not_a_merge():
+    assert same_reading_value(10229, 10240) is False
+    assert same_reading_value(342.517, 342.518) is False

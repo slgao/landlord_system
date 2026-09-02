@@ -141,8 +141,23 @@ const MeterBlock = memo(function MeterBlock({
                     <TableCell className="text-muted-foreground">{r.reading_date}</TableCell>
                     <TableCell className="text-right font-mono">{r.reading.toFixed(3)}</TableCell>
                     <TableCell className="text-right font-mono text-muted-foreground">{delta}</TableCell>
-                    <TableCell className="text-muted-foreground text-xs">{r.note || "—"}</TableCell>
-                    <TableCell><ConfirmButton onConfirm={() => onDeleteReading(r.id)} title="Delete reading?" message={`Delete the reading of ${r.reading.toFixed(3)} from ${r.reading_date}?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
+                    <TableCell className="text-muted-foreground text-xs">
+                      {r.note || (r.taken_at?.length ? "" : "—")}
+                      {/* A reading taken at a handover says so here. When a
+                          tenancy is handed straight on, the outgoing Auszug and
+                          the incoming Einzug are one reading — both are listed
+                          on this single row rather than duplicating it. */}
+                      {!!r.taken_at?.length && (
+                        <span className={`block text-primary ${r.note ? "mt-0.5" : ""}`}>
+                          {/* Comma between handovers, since "·" already
+                              separates the handover from the tenant inside
+                              each label. */}
+                          {r.taken_at.join(", ")}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell><ConfirmButton onConfirm={() => onDeleteReading(r.id)} title="Delete reading?" message={`Delete the reading of ${r.reading.toFixed(3)} from ${r.reading_date}?`
+  + (r.taken_at?.length ? ` It is the Zählerstand recorded on ${r.taken_at.join(" and ")}.` : "")}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
                   </TableRow>
                 );
               })}

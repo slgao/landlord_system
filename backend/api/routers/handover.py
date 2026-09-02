@@ -6,7 +6,8 @@ Zählerstände read on the day.
 
 The Zählerstände deliberately do not live here. They are written into
 meter_readings — the same store the Nebenkostenabrechnung reads — and merely
-tagged with protocol_id. See the e2a9c4b17d53 migration for why.
+linked to the protocols that witnessed them via meter_reading_protocols.
+See the e2a9c4b17d53 and f4b6d82e05a1 migrations for why.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -105,6 +106,11 @@ class ProtocolReadingOut(BaseModel):
     # Denormalised for display, so the UI need not join four meter tables.
     serial_number: Optional[str] = None
     description: Optional[str] = None
+    # Other handovers this same reading was taken at, e.g. ["Einzug · Yunkun Rui"].
+    also_at: list[str] = []
+    # True when this save joined an existing reading rather than creating one,
+    # and the value already matched — so the UI can say it merged.
+    merged: bool = False
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -117,7 +123,7 @@ _SELECT = """
              WHERE i.protocol_id = p.id AND i.condition = 'defect'),
            COALESCE((SELECT SUM(i.estimated_cost) FROM protocol_items i
                       WHERE i.protocol_id = p.id AND i.condition = 'defect'), 0),
-           (SELECT COUNT(*) FROM meter_readings m WHERE m.protocol_id = p.id)
+           (SELECT COUNT(*) FROM meter_reading_protocols mrp WHERE mrp.protocol_id = p.id)
     FROM handover_protocols p
 """
 
@@ -205,6 +211,75 @@ def create_protocol(body: ProtocolIn, owner: int = Depends(require_auth)):
     return get_protocol(new_id, owner)
 
 
+def _move_readings_to(protocol_id: int, new_date: str, owner: int) -> None:
+    """Re-date this handover's Zählerstände when the handover itself is re-dated.
+
+    A reading is dated by the meeting it was taken at, so a corrected protocol
+    date has to carry its readings along — otherwise they sit at a date the
+    meeting never happened on and the Nebenkostenabrechnung interpolates from it.
+
+    Two things stop this being a plain UPDATE, and both would corrupt a
+    neighbouring tenancy's record:
+
+    - A reading shared with the other half of a same-day changeover belongs to
+      that handover too. Dragging it would move a reading out from under a
+      protocol whose date never changed, so it is left where it is and this
+      protocol takes a reading at the new date instead.
+
+    - Something may already stand at the new date for that meter. This protocol
+      joins it rather than adding a second row for one observation — and joins it
+      *without rewriting its value*, because the number there was recorded by
+      whoever read the meter that day. Only an explicit save from the reading
+      field changes a value.
+    """
+    rows = fetch("""
+        SELECT m.id, m.meter_type, m.meter_id, m.reading, m.note,
+               (SELECT COUNT(*) FROM meter_reading_protocols x WHERE x.reading_id = m.id)
+        FROM meter_readings m
+        JOIN meter_reading_protocols mrp ON mrp.reading_id = m.id
+        WHERE mrp.protocol_id=? AND m.owner_id=?
+    """, (protocol_id, owner))
+
+    for rid, mtype, mid, value, note, holders in rows:
+        target = fetch("""
+            SELECT id FROM meter_readings
+            WHERE meter_type=? AND meter_id=? AND reading_date=? AND owner_id=? AND id<>?
+            ORDER BY id LIMIT 1
+        """, (mtype, mid, new_date, owner, rid))
+
+        # Nothing in the way and nobody else holding it: the reading simply moves.
+        if not target and int(holders) <= 1:
+            execute("UPDATE meter_readings SET reading_date=? WHERE id=? AND owner_id=?",
+                    (new_date, rid, owner))
+            continue
+
+        execute("DELETE FROM meter_reading_protocols WHERE reading_id=? AND protocol_id=?",
+                (rid, protocol_id))
+        if target:
+            new_id = target[0][0]
+        else:
+            # The note is deliberately not carried over: it describes the
+            # observation being left behind ("Yunkun Rui - Einzugsablesung"), not
+            # a new reading on a different day. Copying it would also make this
+            # row look hand-annotated, and the cleanup below spares those.
+            new_id = execute_returning("""
+                INSERT INTO meter_readings
+                  (meter_type, meter_id, reading_date, reading, note, owner_id)
+                VALUES (?,?,?,?,NULL,?) RETURNING id
+            """, (mtype, mid, new_date, value, owner))[0][0]
+        if not fetch("SELECT id FROM meter_reading_protocols WHERE reading_id=? AND protocol_id=?",
+                     (new_id, protocol_id)):
+            execute("INSERT INTO meter_reading_protocols (reading_id, protocol_id, owner_id) "
+                    "VALUES (?,?,?)", (new_id, protocol_id, owner))
+
+        # The row this protocol just vacated: drop it only if no handover still
+        # holds it and nobody wrote anything on it. A note means a human put it
+        # there by hand on the Meter Readings page, and that is not ours to bin.
+        orphaned = not fetch("SELECT 1 FROM meter_reading_protocols WHERE reading_id=?", (rid,))
+        if orphaned and not (note or "").strip():
+            execute("DELETE FROM meter_readings WHERE id=? AND owner_id=?", (rid, owner))
+
+
 @router.put("/{protocol_id}", response_model=ProtocolOut)
 def update_protocol(protocol_id: int, body: ProtocolPatch, owner: int = Depends(require_auth)):
     _own_protocol(protocol_id, owner)
@@ -215,21 +290,17 @@ def update_protocol(protocol_id: int, body: ProtocolPatch, owner: int = Depends(
         WHERE id=? AND owner_id=?
     """, (body.date, body.time or None, body.present_persons, body.note,
           int(body.signed), protocol_id, owner))
-    # The readings taken at this handover are dated by the handover, so a
-    # corrected protocol date has to carry them along — otherwise a reading
-    # would sit at a date the meeting never happened on, and the
-    # Nebenkostenabrechnung would interpolate from it.
-    execute("UPDATE meter_readings SET reading_date=? WHERE protocol_id=? AND owner_id=?",
-            (body.date, protocol_id, owner))
+    _move_readings_to(protocol_id, body.date, owner)
     return get_protocol(protocol_id, owner)
 
 
 @router.delete("/{protocol_id}", status_code=204)
 def delete_protocol(protocol_id: int, owner: int = Depends(require_auth)):
     _own_protocol(protocol_id, owner)
-    # Items go with it (FK CASCADE). Readings do not: they are billing data that
-    # outlives the document, so the FK sets protocol_id to NULL and they stay
-    # visible on the Meter Readings page.
+    # Items go with it (FK CASCADE), and so do its links to readings. The
+    # readings themselves do not: they are billing data that outlives the
+    # document, and one of them may still be held by the other handover of a
+    # same-day changeover. They stay visible on the Meter Readings page.
     execute("DELETE FROM handover_protocols WHERE id=? AND owner_id=?", (protocol_id, owner))
 
 
@@ -296,26 +367,77 @@ def delete_item(item_id: int, owner: int = Depends(require_auth)):
 
 # ── Zählerstände ─────────────────────────────────────────────────────────────
 # Readings taken at the handover. Stored in meter_readings so the
-# Nebenkostenabrechnung sees them; protocol_id only records where they came from.
+# Nebenkostenabrechnung sees them; meter_reading_protocols records which
+# handovers witnessed each one.
+#
+# The invariant: one reading per meter per date. When a tenancy is handed
+# straight on, the outgoing tenant's Auszug and the incoming tenant's Einzug are
+# the same afternoon at the same meter — one observation, and two rows for it
+# would leave the Nebenkostenabrechnung to choose between them.
+
+
+def _reading_protocols(reading_id: int, owner: int):
+    """Every handover this reading was taken at, oldest first."""
+    return fetch("""
+        SELECT p.id, p.kind, p.date, t.name
+        FROM meter_reading_protocols mrp
+        JOIN handover_protocols p ON p.id = mrp.protocol_id
+        LEFT JOIN contracts c ON c.id = p.contract_id
+        LEFT JOIN tenants   t ON t.id = c.tenant_id
+        WHERE mrp.reading_id=? AND mrp.owner_id=?
+        ORDER BY p.date, p.id
+    """, (reading_id, owner))
+
+
+def protocol_label(kind: str, tenant_name: str | None) -> str:
+    """How a handover is named where a reading points back at it."""
+    label = "Einzug" if kind == "move_in" else "Auszug"
+    return f"{label} · {tenant_name}" if tenant_name else label
+
+
+def same_reading_value(a: float, b: float) -> bool:
+    """Whether two recorded values are the same number.
+
+    Readings are Numeric(12,3), so an exact float comparison would call
+    10229.000 and 10229.0 different and report a merge as a correction.
+    """
+    return abs(float(a) - float(b)) < 0.0005
+
+
+def _attribution(reading_id: int, owner: int, exclude: int | None = None) -> list[str]:
+    """Human labels for the other handovers sharing this reading, e.g.
+    'Einzug · Yunkun Rui'. Shown wherever the reading appears, so a merged one
+    says where it came from instead of looking like it was entered twice."""
+    return [protocol_label(kind, tenant)
+            for pid, kind, _date, tenant in _reading_protocols(reading_id, owner)
+            if exclude is None or pid != exclude]
+
+
+def _meter_meta(meter_type: str, meter_id: int):
+    table = _METER_TABLES.get(meter_type)
+    if not table:
+        return (None, None)
+    rows = fetch(f"SELECT serial_number, description FROM {table} WHERE id=?", (meter_id,))
+    return (rows[0][0], rows[0][1]) if rows else (None, None)
+
 
 @router.get("/{protocol_id}/readings", response_model=list[ProtocolReadingOut])
 def list_protocol_readings(protocol_id: int, owner: int = Depends(require_auth)):
     _own_protocol(protocol_id, owner)
     rows = fetch("""
-        SELECT id, meter_type, meter_id, reading_date, reading, note
-        FROM meter_readings WHERE protocol_id=? AND owner_id=?
-        ORDER BY meter_type, meter_id
+        SELECT m.id, m.meter_type, m.meter_id, m.reading_date, m.reading, m.note
+        FROM meter_readings m
+        JOIN meter_reading_protocols mrp ON mrp.reading_id = m.id
+        WHERE mrp.protocol_id=? AND m.owner_id=?
+        ORDER BY m.meter_type, m.meter_id
     """, (protocol_id, owner))
     out = []
     for r in rows:
-        table = _METER_TABLES.get(r[1])
-        meta = fetch(f"SELECT serial_number, description FROM {table} WHERE id=?",
-                     (r[2],)) if table else []
+        serial, desc = _meter_meta(r[1], r[2])
         out.append(ProtocolReadingOut(
             id=r[0], meter_type=r[1], meter_id=r[2], reading_date=r[3],
-            reading=float(r[4]), note=r[5],
-            serial_number=meta[0][0] if meta else None,
-            description=meta[0][1] if meta else None,
+            reading=float(r[4]), note=r[5], serial_number=serial, description=desc,
+            also_at=_attribution(r[0], owner, exclude=protocol_id),
         ))
     return out
 
@@ -323,7 +445,7 @@ def list_protocol_readings(protocol_id: int, owner: int = Depends(require_auth))
 @router.post("/{protocol_id}/readings", response_model=ProtocolReadingOut, status_code=201)
 def add_protocol_reading(protocol_id: int, body: ProtocolReadingIn,
                          owner: int = Depends(require_auth)):
-    contract_id, prot_date = _own_protocol(protocol_id, owner)
+    _contract_id, prot_date = _own_protocol(protocol_id, owner)
     prot_date = _require_date(prot_date)
     table = _METER_TABLES.get(body.meter_type)
     if not table:
@@ -331,38 +453,67 @@ def add_protocol_reading(protocol_id: int, body: ProtocolReadingIn,
     if not fetch(f"SELECT id FROM {table} WHERE id=? AND owner_id=?", (body.meter_id, owner)):
         raise HTTPException(404, "Meter not found")
 
-    # One reading per meter per protocol: re-submitting corrects the number
-    # instead of stacking a second row on the same date, which would leave the
-    # Nebenkostenabrechnung to pick between two readings for the same day.
-    existing = fetch("SELECT id FROM meter_readings "
-                     "WHERE protocol_id=? AND meter_type=? AND meter_id=? AND owner_id=?",
-                     (protocol_id, body.meter_type, body.meter_id, owner))
+    # Adopt whatever already stands for this meter on this date, whoever wrote
+    # it — the other handover of a same-day changeover, or the landlord typing it
+    # on the Meter Readings page beforehand. Adding a second row instead is how
+    # one observation ended up recorded three times.
+    existing = fetch("""
+        SELECT id, reading FROM meter_readings
+        WHERE meter_type=? AND meter_id=? AND reading_date=? AND owner_id=?
+        ORDER BY id LIMIT 1
+    """, (body.meter_type, body.meter_id, prot_date, owner))
+
     if existing:
-        rid = existing[0][0]
-        execute("UPDATE meter_readings SET reading=?, note=?, reading_date=? WHERE id=? AND owner_id=?",
-                (body.reading, body.note, prot_date, rid, owner))
+        rid, old_value = existing[0][0], float(existing[0][1])
+        # A note the landlord wrote by hand stays; only overwrite it with one
+        # actually supplied here.
+        if body.note:
+            execute("UPDATE meter_readings SET reading=?, note=? WHERE id=? AND owner_id=?",
+                    (body.reading, body.note, rid, owner))
+        else:
+            execute("UPDATE meter_readings SET reading=? WHERE id=? AND owner_id=?",
+                    (body.reading, rid, owner))
+        merged = same_reading_value(old_value, body.reading)
     else:
         rid = execute_returning("""
             INSERT INTO meter_readings
-              (meter_type, meter_id, reading_date, reading, note, owner_id, protocol_id)
-            VALUES (?,?,?,?,?,?,?) RETURNING id
+              (meter_type, meter_id, reading_date, reading, note, owner_id)
+            VALUES (?,?,?,?,?,?) RETURNING id
         """, (body.meter_type, body.meter_id, prot_date, body.reading,
-              body.note, owner, protocol_id))[0][0]
+              body.note, owner))[0][0]
+        merged = False
 
-    meta = fetch(f"SELECT serial_number, description FROM {table} WHERE id=?", (body.meter_id,))
-    return ProtocolReadingOut(id=rid, meter_type=body.meter_type, meter_id=body.meter_id,
-                              reading_date=prot_date, reading=body.reading, note=body.note,
-                              serial_number=meta[0][0] if meta else None,
-                              description=meta[0][1] if meta else None)
+    if not fetch("SELECT id FROM meter_reading_protocols WHERE reading_id=? AND protocol_id=?",
+                 (rid, protocol_id)):
+        execute("INSERT INTO meter_reading_protocols (reading_id, protocol_id, owner_id) "
+                "VALUES (?,?,?)", (rid, protocol_id, owner))
+
+    row = fetch("SELECT reading, note FROM meter_readings WHERE id=?", (rid,))[0]
+    serial, desc = _meter_meta(body.meter_type, body.meter_id)
+    return ProtocolReadingOut(
+        id=rid, meter_type=body.meter_type, meter_id=body.meter_id,
+        reading_date=prot_date, reading=float(row[0]), note=row[1],
+        serial_number=serial, description=desc,
+        also_at=_attribution(rid, owner, exclude=protocol_id),
+        merged=bool(existing) and merged,
+    )
 
 
 @router.delete("/{protocol_id}/readings/{reading_id}", status_code=204)
 def delete_protocol_reading(protocol_id: int, reading_id: int, owner: int = Depends(require_auth)):
     _own_protocol(protocol_id, owner)
-    if not fetch("SELECT id FROM meter_readings WHERE id=? AND protocol_id=? AND owner_id=?",
+    if not fetch("""SELECT 1 FROM meter_reading_protocols
+                    WHERE reading_id=? AND protocol_id=? AND owner_id=?""",
                  (reading_id, protocol_id, owner)):
         raise HTTPException(404, "Reading not found")
-    execute("DELETE FROM meter_readings WHERE id=? AND owner_id=?", (reading_id, owner))
+    execute("DELETE FROM meter_reading_protocols WHERE reading_id=? AND protocol_id=? AND owner_id=?",
+            (reading_id, protocol_id, owner))
+    # Clearing it here retracts this handover's claim on the reading. The reading
+    # itself only goes when no handover is left holding it — the other tenancy's
+    # protocol, or a manual entry, still needs it.
+    still_used = fetch("SELECT 1 FROM meter_reading_protocols WHERE reading_id=?", (reading_id,))
+    if not still_used:
+        execute("DELETE FROM meter_readings WHERE id=? AND owner_id=?", (reading_id, owner))
 
 
 # ── PDF ──────────────────────────────────────────────────────────────────────

@@ -475,8 +475,15 @@ function ProtocolDialog({
   });
   const saveReading = useMutation({
     mutationFn: (body: { meter_type: string; meter_id: number; reading: number }) =>
-      api.post(`/api/handover-protocols/${pid}/readings`, body),
-    onSuccess: invalidateReadings,
+      api.post(`/api/handover-protocols/${pid}/readings`, body).then((r) => r.data as ProtocolReading),
+    onSuccess: (r) => {
+      invalidateReadings();
+      // A same-day changeover reads the meter once. Saying so is the difference
+      // between "it merged" and "my entry vanished".
+      if (r.merged && r.also_at?.length) {
+        toast.success(`Same reading as ${r.also_at.join(", ")} — kept as one`);
+      }
+    },
     onError: () => toast.error("Could not save the reading"),
   });
   const dropReading = useMutation({
@@ -706,6 +713,13 @@ function MeterRow({
         {!meter.own && (
           <p className="text-xs text-muted-foreground truncate">
             shared with the flat{meter.apartment_name ? ` · registered on ${meter.apartment_name}` : ""}
+          </p>
+        )}
+        {/* One physical reading, two handovers. Without this the number looks
+            like it was typed here and nowhere else. */}
+        {!!existing?.also_at?.length && (
+          <p className="text-xs text-primary truncate">
+            same reading as {existing.also_at.join(", ")}
           </p>
         )}
       </div>

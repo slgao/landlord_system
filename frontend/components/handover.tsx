@@ -12,7 +12,7 @@
  * Nebenkostenabrechnung uses. Nothing has to be typed twice.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import {
@@ -69,6 +69,63 @@ function fmt(n: number) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Editing a row without losing the edit
+// ─────────────────────────────────────────────────────────────────────────────
+// These rows used to persist on blur alone, which quietly dropped an edit
+// whenever the field never blurred: pressing Enter did nothing (the meter rows
+// took Enter, these did not), and Escape closed the dialog and threw the change
+// away. Both left the typed value sitting on screen, so a correction — three
+// keys down to two — looked saved and was not.
+//
+// So the draft now owns its own persistence: it autosaves shortly after typing
+// stops, commits immediately on Enter or blur, and flushes whatever is still
+// pending when the row unmounts, which covers Escape, Close and the dialog
+// being torn down.
+
+function useRowDraft<T>(item: T, deps: unknown[], save: (v: T) => void, delay = 600) {
+  const [draft, setDraft] = useState<T>(item);
+  const draftRef = useRef<T>(item);
+  const dirty = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveRef = useRef(save);
+  saveRef.current = save;
+
+  const flush = useCallback(() => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    if (!dirty.current) return;
+    dirty.current = false;
+    saveRef.current(draftRef.current);
+  }, []);
+
+  const edit = useCallback((patch: Partial<T>) => {
+    dirty.current = true;
+    setDraft((d) => {
+      const next = { ...d, ...patch };
+      draftRef.current = next;
+      return next;
+    });
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(flush, delay);
+  }, [delay, flush]);
+
+  // Take the server's version only when nothing local is pending — a refetch
+  // landing between two keystrokes must not overwrite what is being typed.
+  useEffect(() => {
+    if (dirty.current) return;
+    setDraft(item);
+    draftRef.current = item;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+
+  // Anything still pending when the row goes away has to be written, or closing
+  // the dialog right after typing would discard it.
+  useEffect(() => () => flush(), [flush]);
+
+  return { draft, edit, flush };
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Card — two slots on the contract detail page
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -109,6 +166,7 @@ export function HandoverCard({
   const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/api/handover-protocols/${id}`),
     onSuccess: () => { invalidate(); toast.success("Protocol deleted"); },
+    onError: () => toast.error("Could not delete the protocol"),
   });
 
   async function downloadPdf(p: HandoverProtocol) {
@@ -368,10 +426,27 @@ function ProtocolDialog({
   const meters = metersQ.data || [];
 
   const saveHead = useMutation({
-    mutationFn: () => api.put(`/api/handover-protocols/${pid}`, head),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["handover-protocols", contract.id] }); toast.success("Saved"); },
+    mutationFn: (h: typeof head) => api.put(`/api/handover-protocols/${pid}`, h),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["handover-protocols", contract.id] }); },
     onError: () => toast.error("Could not save"),
   });
+
+  // The header had no autosave of its own: only the footer button wrote it, so
+  // Escape threw away a corrected date or attendee list exactly as it did an
+  // edited key count. Committed on blur rather than per keystroke — the date
+  // field passes through valid-but-wrong dates while being typed (0002-08-31),
+  // and the protocol's date drags its Zählerstände along with it.
+  const headRef = useRef(head);
+  headRef.current = head;
+  const savedHead = useRef(JSON.stringify(head));
+  const flushHead = useCallback(() => {
+    const now = JSON.stringify(headRef.current);
+    if (now === savedHead.current) return;
+    savedHead.current = now;
+    saveHead.mutate(headRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => () => flushHead(), [flushHead]);
 
   const invalidateItems = () => qc.invalidateQueries({ queryKey: ["protocol-items", pid] });
   const invalidateReadings = () => {
@@ -384,14 +459,19 @@ function ProtocolDialog({
     mutationFn: (body: Partial<ProtocolItem>) =>
       api.post("/api/protocol-items/", { protocol_id: pid, sort_order: 0, ...body }),
     onSuccess: invalidateItems,
+    onError: () => toast.error("Could not add the entry"),
   });
   const patchItem = useMutation({
     mutationFn: (it: ProtocolItem) => api.put(`/api/protocol-items/${it.id}`, it),
     onSuccess: invalidateItems,
+    // Without this a rejected save was completely silent — the row went on
+    // showing the edited value, so a change that never landed looked applied.
+    onError: () => toast.error("Could not save that change"),
   });
   const dropItem = useMutation({
     mutationFn: (id: number) => api.delete(`/api/protocol-items/${id}`),
     onSuccess: invalidateItems,
+    onError: () => toast.error("Could not delete the entry"),
   });
   const saveReading = useMutation({
     mutationFn: (body: { meter_type: string; meter_id: number; reading: number }) =>
@@ -402,6 +482,7 @@ function ProtocolDialog({
   const dropReading = useMutation({
     mutationFn: (id: number) => api.delete(`/api/handover-protocols/${pid}/readings/${id}`),
     onSuccess: invalidateReadings,
+    onError: () => toast.error("Could not remove the reading"),
   });
 
   const conditions = (items.data || []).filter((i) => i.kind === "condition");
@@ -433,21 +514,29 @@ function ProtocolDialog({
               <div>
                 <Label className="text-xs">Date</Label>
                 <Input type="date" value={head.date}
-                       onChange={(e) => setHead({ ...head, date: e.target.value })} />
+                       onChange={(e) => setHead({ ...head, date: e.target.value })}
+                       onBlur={flushHead} />
               </div>
               <div>
                 <Label className="text-xs">Time</Label>
                 <Input type="time" value={head.time}
-                       onChange={(e) => setHead({ ...head, time: e.target.value })} />
+                       onChange={(e) => setHead({ ...head, time: e.target.value })}
+                       onBlur={flushHead} />
               </div>
               <div className="col-span-2">
                 <Label className="text-xs">Present (Anwesend)</Label>
                 <Input placeholder="Landlord, tenant, witness…" value={head.present_persons}
-                       onChange={(e) => setHead({ ...head, present_persons: e.target.value })} />
+                       onChange={(e) => setHead({ ...head, present_persons: e.target.value })}
+                       onBlur={flushHead} />
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
               Changing the date moves the Zählerstände with it — they are dated by the handover.
+            </p>
+            {/* The rows write themselves; saying so stops the guessing that made
+                a silently-dropped edit look like a saved one. */}
+            <p className="text-xs text-muted-foreground">
+              Entries below save as you go — Enter commits immediately.
             </p>
           </section>
 
@@ -560,11 +649,12 @@ function ProtocolDialog({
             <Label className="text-xs">Sonstige Vereinbarungen</Label>
             <Textarea rows={3} value={head.note}
                       placeholder="Agreements made at the handover…"
-                      onChange={(e) => setHead({ ...head, note: e.target.value })} />
+                      onChange={(e) => setHead({ ...head, note: e.target.value })}
+                      onBlur={flushHead} />
             <Button
               type="button" size="sm"
               variant={head.signed ? "default" : "outline"}
-              onClick={() => setHead({ ...head, signed: !head.signed })}
+              onClick={() => { setHead({ ...head, signed: !head.signed }); }}
             >
               <CheckCircle2 className="size-4 mr-1" />
               {head.signed ? "Signed by both parties" : "Mark as signed"}
@@ -574,7 +664,8 @@ function ProtocolDialog({
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Close</Button>
-          <Button onClick={() => saveHead.mutate()} disabled={saveHead.isPending}>Save</Button>
+          <Button onClick={() => { flushHead(); toast.success("Saved"); }}
+                  disabled={saveHead.isPending}>Save</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -643,24 +734,26 @@ function ConditionRow({
   onChange: (v: ProtocolItem) => void;
   onDelete: () => void;
 }) {
-  const [draft, setDraft] = useState(item);
-  useEffect(() => { setDraft(item); }, [item.id, item.area, item.condition, item.note, item.estimated_cost]);
-
-  const commit = (v: ProtocolItem) => { setDraft(v); onChange(v); };
+  const { draft, edit, flush } = useRowDraft(
+    item,
+    [item.id, item.area, item.condition, item.note, item.estimated_cost],
+    onChange,
+  );
+  const commitKeys = (e: React.KeyboardEvent) => { if (e.key === "Enter") flush(); };
 
   return (
     <div className="rounded-md border border-border p-2 space-y-2">
       <div className="flex items-center gap-2">
         <Input className="h-8 text-sm flex-1" placeholder="Area (e.g. Küche)"
                value={draft.area || ""}
-               onChange={(e) => setDraft({ ...draft, area: e.target.value })}
-               onBlur={() => draft.area !== item.area && onChange(draft)} />
+               onChange={(e) => edit({ area: e.target.value })}
+               onKeyDown={commitKeys} onBlur={flush} />
         <div className="flex gap-1">
           {CONDITIONS.map((c) => (
             <Button
               key={c.value} size="sm" variant="outline" title={c.hint}
               className={`h-8 text-xs ${draft.condition === c.value ? c.cls : "text-muted-foreground"}`}
-              onClick={() => commit({ ...draft, condition: c.value })}
+              onClick={() => { edit({ condition: c.value }); }}
             >
               {c.label}
             </Button>
@@ -673,20 +766,21 @@ function ConditionRow({
       <div className="flex items-center gap-2">
         <Input className="h-8 text-sm flex-1" placeholder="Note"
                value={draft.note || ""}
-               onChange={(e) => setDraft({ ...draft, note: e.target.value })}
-               onBlur={() => draft.note !== item.note && onChange(draft)} />
+               onChange={(e) => edit({ note: e.target.value })}
+               onKeyDown={commitKeys} onBlur={flush} />
         {/* Only a Mangel carries a cost — asking for one next to "normale
             Abnutzung" would invite charging for exactly what may not be charged. */}
         {draft.condition === "defect" && (
           <Input type="number" step="0.01" className="h-8 w-32 text-sm" placeholder="Est. cost"
                  value={draft.estimated_cost ?? ""}
-                 onChange={(e) => setDraft({ ...draft, estimated_cost: e.target.value === "" ? null : Number(e.target.value) })}
-                 onBlur={() => draft.estimated_cost !== item.estimated_cost && onChange(draft)} />
+                 onChange={(e) => edit({ estimated_cost: e.target.value === "" ? null : Number(e.target.value) })}
+                 onKeyDown={commitKeys} onBlur={flush} />
         )}
       </div>
     </div>
   );
 }
+
 
 function KeyRow({
   item, onChange, onDelete,
@@ -695,23 +789,27 @@ function KeyRow({
   onChange: (v: ProtocolItem) => void;
   onDelete: () => void;
 }) {
-  const [draft, setDraft] = useState(item);
-  useEffect(() => { setDraft(item); }, [item.id, item.area, item.quantity, item.note]);
+  const { draft, edit, flush } = useRowDraft(
+    item,
+    [item.id, item.area, item.quantity, item.note],
+    onChange,
+  );
+  const commitKeys = (e: React.KeyboardEvent) => { if (e.key === "Enter") flush(); };
 
   return (
     <div className="flex items-center gap-2">
       <Input className="h-8 text-sm flex-1" placeholder="Key type"
              value={draft.area || ""}
-             onChange={(e) => setDraft({ ...draft, area: e.target.value })}
-             onBlur={() => draft.area !== item.area && onChange(draft)} />
+             onChange={(e) => edit({ area: e.target.value })}
+             onKeyDown={commitKeys} onBlur={flush} />
       <Input type="number" min="0" className="h-8 w-20 text-sm" placeholder="Qty"
              value={draft.quantity ?? ""}
-             onChange={(e) => setDraft({ ...draft, quantity: e.target.value === "" ? null : Number(e.target.value) })}
-             onBlur={() => draft.quantity !== item.quantity && onChange(draft)} />
+             onChange={(e) => edit({ quantity: e.target.value === "" ? null : Number(e.target.value) })}
+             onKeyDown={commitKeys} onBlur={flush} />
       <Input className="h-8 text-sm flex-1" placeholder="Note"
              value={draft.note || ""}
-             onChange={(e) => setDraft({ ...draft, note: e.target.value })}
-             onBlur={() => draft.note !== item.note && onChange(draft)} />
+             onChange={(e) => edit({ note: e.target.value })}
+             onKeyDown={commitKeys} onBlur={flush} />
       <Button size="sm" variant="ghost" className="h-8 px-2" onClick={onDelete}>
         <Trash2 className="size-3 text-destructive" />
       </Button>

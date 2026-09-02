@@ -173,6 +173,21 @@ Update `DATABASE_URL` in `.env`. Alembic runs automatically on startup.
 (crontab -l 2>/dev/null; echo "CRON_TZ=Europe/Berlin"; echo "0 22 * * * $PWD/scripts/backup.sh >> $HOME/landlord_backups/backup.log 2>&1") | crontab -
 ```
 
+**Checking it worked.** `~/landlord_backups/STATUS` holds one line — the result of
+the last run:
+
+```bash
+cat ~/landlord_backups/STATUS      # OK   2026-09-02 14:48  …/landlord_20260902_144842.sql.gz  (21942 bytes)
+```
+
+A failed run also raises a desktop notification, so it does not wait to be
+noticed. The full history is in `backup.log`, trimmed to the last 2000 lines.
+
+A dump that fails now *fails*: the script sets `pipefail` (without it the exit
+status came from `gzip`, which returns 0 on empty input) and rejects any archive
+under 1 KB. Before that, four failed dumps were saved as valid 20-byte empty
+archives and logged as successes.
+
 ---
 
 ## Project layout

@@ -167,11 +167,26 @@ Update `DATABASE_URL` in `.env`. Alembic runs automatically on startup.
 
 ## Backups
 
-`scripts/backup.sh` dumps Neon to gzip and retains 30 days. Set up with cron:
+`scripts/backup.sh` dumps Neon to gzip and retains 30 days. Schedule it with the
+systemd user timer:
 
 ```bash
-(crontab -l 2>/dev/null; echo "CRON_TZ=Europe/Berlin"; echo "0 22 * * * $PWD/scripts/backup.sh >> $HOME/landlord_backups/backup.log 2>&1") | crontab -
+./scripts/install-timer.sh          # idempotent; re-run after moving the checkout
+loginctl enable-linger "$USER"      # so it also runs when you are not logged in
 ```
+
+Nightly at 22:00 local, and — the reason for a timer rather than cron —
+`Persistent=true` means a night the machine was **off** is not lost: the missed
+run fires on the next boot. Cron simply skips those, and the backup log showed
+gaps of up to five consecutive days.
+
+```bash
+systemctl --user list-timers landlord-backup.timer   # when it last ran, when it runs next
+systemctl --user start landlord-backup.service       # run one now
+```
+
+If you are migrating from the old cron entry, remove it so the two do not both
+fire: `crontab -l | grep -v 'scripts/backup.sh' | crontab -`
 
 **Checking it worked.** `~/landlord_backups/STATUS` holds one line — the result of
 the last run:

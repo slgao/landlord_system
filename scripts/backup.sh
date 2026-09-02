@@ -11,8 +11,33 @@ ENV_FILE="$PROJECT_DIR/.env"
 BACKUP_DIR="$HOME/landlord_backups"
 DATE=$(date +%Y%m%d_%H%M%S)
 FILE="$BACKUP_DIR/landlord_$DATE.sql.gz"
+STATUS_FILE="$BACKUP_DIR/STATUS"
+LOG_FILE="$BACKUP_DIR/backup.log"
+LOG_MAX_LINES=2000
 
 mkdir -p "$BACKUP_DIR"
+
+# ── Making a failure visible ─────────────────────────────────────────────────
+# The log was never the problem: cron has always redirected into backup.log, and
+# all four silently-empty dumps are in there — logged as "Backup successful",
+# because the old exit-status check could not tell a failed dump from a good one.
+# A log nobody reads also cannot raise an alarm, so a failure now pushes a
+# desktop notification and leaves a one-line STATUS file to glance at.
+
+notify() {
+    # cron has no desktop environment; point notify-send at the live X session
+    # and its D-Bus socket, or it exits silently and the alarm never appears.
+    command -v notify-send >/dev/null 2>&1 || return 0
+    local uid; uid=$(id -u)
+    [ -S "/run/user/$uid/bus" ] || return 0
+    DISPLAY="${DISPLAY:-:0}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    notify-send --urgency="$1" --icon=drive-harddisk "$2" "$3" 2>/dev/null || true
+}
+
+write_status() {
+    printf '%s\n' "$1" > "$STATUS_FILE"
+}
 
 # ── Read DATABASE_URL from .env ───────────────────────────────────────────────
 if [ ! -f "$ENV_FILE" ]; then
@@ -47,14 +72,24 @@ SIZE=$(stat -c %s "$FILE" 2>/dev/null || echo 0)
 
 if [ $STATUS -eq 0 ] && [ "$SIZE" -ge "$MIN_BYTES" ]; then
     echo "$(date): Backup successful → $FILE ($SIZE bytes)"
+    write_status "OK   $(date '+%Y-%m-%d %H:%M')  $FILE  ($SIZE bytes)"
 else
-    echo "$(date): Backup FAILED — pg_dump exit $STATUS, $SIZE bytes (need >= $MIN_BYTES)" >&2
+    REASON="pg_dump exit $STATUS, $SIZE bytes (need >= $MIN_BYTES)"
+    echo "$(date): Backup FAILED — $REASON" >&2
+    write_status "FAIL $(date '+%Y-%m-%d %H:%M')  $REASON"
+    notify critical "Landlord backup FAILED" "$REASON — see $LOG_FILE"
     rm -f "$FILE"
     exit 1
 fi
 
 # ── Retain last 30 backups ────────────────────────────────────────────────────
 find "$BACKUP_DIR" -name "landlord_*.sql.gz" -mtime +30 -delete
+
+# ── Keep the log from growing without bound ───────────────────────────────────
+# It had reached 1200+ lines with no rotation configured anywhere.
+if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE")" -gt "$LOG_MAX_LINES" ]; then
+    tail -n "$LOG_MAX_LINES" "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
+fi
 
 echo "$(date): Done. Current backups:"
 ls -lh "$BACKUP_DIR"/landlord_*.sql.gz 2>/dev/null

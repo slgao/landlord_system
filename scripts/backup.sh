@@ -28,12 +28,27 @@ fi
 
 # ── Dump using a postgres:18 container (matches Neon's server version) ────────
 # docker run --rm pulls the image once then reuses it; no persistent container needed.
-docker run --rm postgres:18 pg_dump "$DATABASE_URL" --no-owner --no-acl | gzip > "$FILE"
+#
+# pipefail is essential here, not decoration: without it `$?` is *gzip's* status,
+# and gzip exits 0 on empty input. A failed pg_dump therefore produced a valid
+# 20-byte empty archive, passed the `-s` non-empty test, and was reported as a
+# success — while still counting toward the retention below that deletes the good
+# ones. Four such phantom backups accumulated before this was caught.
+set -o pipefail
 
-if [ $? -eq 0 ] && [ -s "$FILE" ]; then
-    echo "$(date): Backup successful → $FILE"
+docker run --rm postgres:18 pg_dump "$DATABASE_URL" --no-owner --no-acl | gzip > "$FILE"
+STATUS=$?
+
+# An empty gzip stream is 20 bytes; a real dump of this database is tens of KB.
+# The floor is a sanity check on top of the exit status, catching a dump that
+# "succeeded" but produced nothing usable.
+MIN_BYTES=1024
+SIZE=$(stat -c %s "$FILE" 2>/dev/null || echo 0)
+
+if [ $STATUS -eq 0 ] && [ "$SIZE" -ge "$MIN_BYTES" ]; then
+    echo "$(date): Backup successful → $FILE ($SIZE bytes)"
 else
-    echo "$(date): Backup FAILED" >&2
+    echo "$(date): Backup FAILED — pg_dump exit $STATUS, $SIZE bytes (need >= $MIN_BYTES)" >&2
     rm -f "$FILE"
     exit 1
 fi

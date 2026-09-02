@@ -315,6 +315,92 @@ def delete_heizung_meter(meter_id: int, owner: int = Depends(require_auth)):
     execute("DELETE FROM heizung_meters WHERE id=? AND owner_id=?", (meter_id, owner))
 
 
+
+# ── Meters relevant to one apartment (WG-aware) ──────────────────────────────
+# A WG is modelled as one `apartments` row per room, all sharing the same
+# property_id + `flat` value. The flat's Strom/Gas/Wasser meters are registered
+# on whichever room happened to be entered first, so asking for "the meters of
+# room 1" by apartment_id alone returns nothing for the other two rooms — which
+# is why a WG Übergabeprotokoll came up with no Zählerstände at all.
+#
+# What a room actually needs is: everything shared by its flat, plus whatever is
+# metered per room — and the `scope` column already says which is which
+# ('shared' by default for Strom/Gas/Wasser, 'room' for a Heizkostenverteiler).
+
+
+def meter_belongs_to_room(meter_apartment_id: int, scope: str | None,
+                          room_apartment_id: int) -> bool:
+    """Should this meter appear on `room_apartment_id`'s protocol?
+
+    Your own meters always count, whatever their scope — a room-scoped
+    Heizkostenverteiler is yours precisely because it is registered on you.
+    A sibling room's meter counts only if it is shared, which is what keeps
+    each room's own Heizkostenverteiler off its flatmates' sheets.
+    """
+    if meter_apartment_id == room_apartment_id:
+        return True
+    return (scope or "shared") == "shared"
+
+
+class ApartmentMeterOut(BaseModel):
+    meter_type: str
+    id: int
+    apartment_id: int
+    apartment_name: Optional[str] = None
+    serial_number: Optional[str] = None
+    description: Optional[str] = None
+    scope: str
+    # False when the meter is registered on a flatmate's room rather than this
+    # one — the UI says so, because the landlord did not enter it here.
+    own: bool
+
+
+_TYPE_SELECTS = {
+    "strom":   "SELECT id, apartment_id, serial_number, description, COALESCE(scope,'shared') FROM strom_meters",
+    "gas":     "SELECT id, apartment_id, serial_number, description, COALESCE(scope,'shared') FROM gas_meters",
+    "wasser":  "SELECT id, apartment_id, serial_number, COALESCE(description, type), COALESCE(scope,'shared') FROM wasser_meters",
+    "heizung": "SELECT id, apartment_id, serial_number, description, COALESCE(scope,'room')   FROM heizung_meters",
+}
+
+
+@router.get("/for-apartment", response_model=list[ApartmentMeterOut])
+def meters_for_apartment(apartment_id: int, owner: int = Depends(require_auth)):
+    """Every meter a given room should be read for, across all four types."""
+    row = fetch("SELECT property_id, flat FROM apartments WHERE id=? AND owner_id=?",
+                (apartment_id, owner))
+    if not row:
+        raise HTTPException(404, "Apartment not found")
+    property_id, flat = row[0]
+
+    # The rooms of this flat. A blank `flat` means the apartment stands alone —
+    # grouping those together would pool every unassigned apartment in the
+    # building into one imaginary shared flat.
+    if flat:
+        siblings = fetch("SELECT id, name FROM apartments "
+                         "WHERE property_id=? AND flat=? AND owner_id=?",
+                         (property_id, flat, owner))
+    else:
+        siblings = fetch("SELECT id, name FROM apartments WHERE id=? AND owner_id=?",
+                         (apartment_id, owner))
+    names = {r[0]: r[1] for r in siblings}
+    if not names:
+        return []
+
+    out: list[ApartmentMeterOut] = []
+    for mtype, sel in _TYPE_SELECTS.items():
+        placeholders = ",".join("?" for _ in names)
+        rows = fetch(f"{sel} WHERE apartment_id IN ({placeholders}) AND owner_id=? ORDER BY id",
+                     (*names.keys(), owner))
+        for r in rows:
+            if not meter_belongs_to_room(r[1], r[4], apartment_id):
+                continue
+            out.append(ApartmentMeterOut(
+                meter_type=mtype, id=r[0], apartment_id=r[1],
+                apartment_name=names.get(r[1]), serial_number=r[2],
+                description=r[3], scope=r[4], own=(r[1] == apartment_id),
+            ))
+    return out
+
 # ── Meter Readings ────────────────────────────────────────────────────────────
 
 _METER_TABLES = {"strom": "strom_meters", "gas": "gas_meters",

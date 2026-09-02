@@ -219,6 +219,21 @@ export interface ProtocolItem {
   sort_order: number;
 }
 
+// One meter a given room should be read for. Comes from /meters/for-apartment,
+// which resolves the WG rule server-side: the flat's shared meters plus this
+// room's own room-scoped ones (a Heizkostenverteiler).
+export interface ApartmentMeter {
+  meter_type: "strom" | "gas" | "wasser" | "heizung";
+  id: number;
+  apartment_id: number;
+  apartment_name?: string | null;
+  serial_number?: string | null;
+  description?: string | null;
+  scope: string;
+  // False when registered on a flatmate's room rather than this one.
+  own: boolean;
+}
+
 export interface ProtocolReading {
   id: number;
   meter_type: string;

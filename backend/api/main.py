@@ -14,7 +14,7 @@ import users_db
 from api.routers import (
     properties, buildings, apartments, tenants, contracts, payments,
     dashboard, flat_costs, meters, config, reports,
-    co_tenants, kaution, billing_profiles, rag, tax, assistant,
+    co_tenants, kaution, billing_profiles, rag, tax, assistant, handover,
 )
 
 
@@ -68,6 +68,8 @@ app.include_router(co_tenants.router,       prefix="/api", dependencies=_auth)
 app.include_router(kaution.router,          prefix="/api", dependencies=_auth)
 app.include_router(kaution.payments_router, prefix="/api", dependencies=_auth)
 app.include_router(kaution.returns_router,  prefix="/api", dependencies=_auth)
+app.include_router(handover.router,         prefix="/api", dependencies=_auth)
+app.include_router(handover.items_router,   prefix="/api", dependencies=_auth)
 app.include_router(billing_profiles.router, prefix="/api", dependencies=_auth)
 app.include_router(rag.router,              prefix="/api", dependencies=_auth)
 app.include_router(tax.router,              prefix="/api", dependencies=_auth)

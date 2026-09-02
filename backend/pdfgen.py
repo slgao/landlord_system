@@ -1713,3 +1713,265 @@ def generate_expense_inventory(year, groups, grand_total):
     )
     doc.build(story, onFirstPage=_inv_footer, onLaterPages=_inv_footer)
     return buf.getvalue()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Wohnungsübergabeprotokoll (handover protocol)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Condition vocabulary. The wording matters: "normale Abnutzung" is the phrase
+# that says the landlord may not charge for it, and printing it next to every
+# such finding is what makes the signed sheet worth having in a dispute.
+_COND_DE = {
+    "ok":     ("in Ordnung",        C_GREEN),
+    "wear":   ("normale Abnutzung", C_MUTED),
+    "defect": ("Mangel",            C_RED),
+}
+
+_METER_DE = {"strom": "Strom", "gas": "Gas", "wasser": "Wasser", "heizung": "Heizung"}
+
+
+def _prot_table(data, col_widths, right_cols=(), total_row=False):
+    """Findings table for the protocol.
+
+    Deliberately not _calc_table: that one is shaped for a Nebenkostenabrechnung
+    and highlights its last row as the Nachzahlung total. Here the last row is
+    just the last finding, and shading it like a sum implies an arithmetic that
+    is not there. Only the keys table opts into a real total row.
+
+    repeatRows=1 because a findings list can run over a page break and a headerless
+    continuation column of bare numbers is unreadable on a sheet being signed.
+    """
+    t = Table(data, colWidths=col_widths, repeatRows=1)
+    style = [
+        ("BACKGROUND",     (0, 0), (-1, 0),  C_NAVY),
+        ("TEXTCOLOR",      (0, 0), (-1, 0),  C_WHITE),
+        ("FONTNAME",       (0, 0), (-1, 0),  "Helvetica-Bold"),
+        ("FONTSIZE",       (0, 0), (-1, -1), 9),
+        ("VALIGN",         (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_LGRAY]),
+        ("LINEBELOW",      (0, 0), (-1, -1), 0.4, C_MGRAY),
+        ("TOPPADDING",     (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1), 7),
+        ("LEFTPADDING",    (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING",   (0, 0), (-1, -1), 10),
+    ]
+    for c in right_cols:
+        style.append(("ALIGN", (c, 0), (c, -1), "RIGHT"))
+    if total_row:
+        style += [("BACKGROUND", (0, -1), (-1, -1), C_LBLUE),
+                  ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold")]
+    t.setStyle(TableStyle(style))
+    return t
+
+
+def _reading_str(v):
+    """Meter reading for print. Stored as Numeric(12,3) because gas and water
+    meters have decimal digits, but an electricity meter reads a whole number —
+    printing it as 12345.000 on a sheet someone signs looks like a typo, so
+    trailing zeros go."""
+    try:
+        f = float(v or 0)
+    except (TypeError, ValueError):
+        return str(v or "")
+    txt = f"{f:.3f}".rstrip("0").rstrip(".")
+    return txt or "0"
+
+
+def uebergabeprotokoll_pdf(protocol, tenant_name, co_tenant_names, apartment_name,
+                           property_name, address, conditions, keys, readings,
+                           landlord_name="Hausverwaltung"):
+    """Signable Einzugs-/Auszugsprotokoll. Returns PDF bytes.
+
+    protocol   : {kind, date, time, present_persons, note, signed, ...}
+    conditions : [{area, condition, estimated_cost, note}]
+    keys       : [{area, quantity, note}]
+    readings   : [{meter_type, reading, serial_number, description, note}]
+    """
+    import io as _io
+
+    buf = _io.BytesIO()
+    s = _styles()
+    story = []
+
+    is_in = protocol.get("kind") == "move_in"
+    kind_de = "Einzugsprotokoll" if is_in else "Auszugsprotokoll"
+    prot_date = protocol.get("date") or ""
+    try:
+        date_de = date.fromisoformat(prot_date).strftime("%d.%m.%Y")
+    except (TypeError, ValueError):
+        date_de = prot_date
+
+    # ── Header ───────────────────────────────────────────────────────────────
+    where = " · ".join(x for x in [property_name, apartment_name] if x)
+    story.append(_header_banner("Wohnungsübergabeprotokoll", where,
+                                landlord_name, date_de,
+                                accent=C_NAVY))
+    story.append(_accent_line())
+    story.append(Spacer(1, 16))
+
+    # ── 1. Die Übergabe ──────────────────────────────────────────────────────
+    story.append(_section_header(1, kind_de, s))
+    story.append(Spacer(1, 8))
+
+    parties = tenant_name or ""
+    if co_tenant_names:
+        parties = ", ".join([parties] + list(co_tenant_names))
+
+    facts = [
+        ("Art der Übergabe", "Einzug (Wohnungsübernahme)" if is_in
+                             else "Auszug (Wohnungsrückgabe)"),
+        ("Datum", date_de + (f", {protocol['time']} Uhr" if protocol.get("time") else "")),
+        ("Objekt", where or "—"),
+    ]
+    if address:
+        facts.append(("Anschrift", address))
+    facts.append(("Mieter", parties or "—"))
+    facts.append(("Vermieter", landlord_name))
+    if protocol.get("present_persons"):
+        facts.append(("Anwesend", protocol["present_persons"]))
+
+    t = Table([[Paragraph(f"<b>{k}</b>", s["body"]), Paragraph(str(v), s["body"])]
+               for k, v in facts], colWidths=[120, W - 120])
+    t.setStyle(TableStyle([
+        ("VALIGN",         (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 0), (-1, -1), [C_WHITE, C_LGRAY]),
+        ("LINEBELOW",      (0, 0), (-1, -2), 0.4, C_MGRAY),
+        ("TOPPADDING",     (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",    (0, 0), (-1, -1), 8),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 16))
+
+    # ── 2. Zählerstände ──────────────────────────────────────────────────────
+    story.append(_section_header(2, "Zählerstände", s))
+    story.append(_info_box(
+        "Abgelesen am Tag der Übergabe. Diese Stände sind die Grundlage der "
+        "Nebenkostenabrechnung.", s))
+    story.append(Spacer(1, 8))
+
+    if readings:
+        data = [["Zähler", "Zählernummer", "Stand"]]
+        for r in readings:
+            label = _METER_DE.get(r.get("meter_type"), r.get("meter_type") or "")
+            if r.get("description"):
+                label = f"{label} — {r['description']}"
+            data.append([
+                Paragraph(label, s["body"]),
+                Paragraph(r.get("serial_number") or "—", s["body"]),
+                Paragraph(f"<b>{_reading_str(r.get('reading'))}</b>", s["body"]),
+            ])
+        story.append(_prot_table(data, [228, 140, 100], right_cols=(2,)))
+    else:
+        # Blank rows so the sheet can still be filled in by hand on site.
+        data = [["Zähler", "Zählernummer", "Stand"]] + [["", "", ""] for _ in range(4)]
+        story.append(_prot_table(data, [228, 140, 100], right_cols=(2,)))
+    story.append(Spacer(1, 16))
+
+    # ── 3. Zustand der Wohnung ───────────────────────────────────────────────
+    story.append(_section_header(3, "Zustand der Wohnung", s))
+    story.append(_info_box(
+        "Normale Abnutzung durch vertragsgemäßen Gebrauch geht zu Lasten des "
+        "Vermieters und wird dem Mieter nicht in Rechnung gestellt.", s))
+    story.append(Spacer(1, 8))
+
+    if conditions:
+        data = [["Bereich", "Zustand", "Bemerkung", "geschätzt"]]
+        for c in conditions:
+            label, col = _COND_DE.get(c.get("condition") or "ok", ("—", C_TEXT))
+            cost = c.get("estimated_cost")
+            data.append([
+                Paragraph(c.get("area") or "—", s["body"]),
+                Paragraph(f'<font color="{col.hexval()}"><b>{label}</b></font>', s["body"]),
+                Paragraph(c.get("note") or "", s["body"]),
+                Paragraph(f"{float(cost):,.2f} €" if cost else "", s["body"]),
+            ])
+        story.append(_prot_table(data, [115, 120, 158, 75], right_cols=(3,)))
+
+        defects = [c for c in conditions if c.get("condition") == "defect"]
+        if defects:
+            total = sum(float(c.get("estimated_cost") or 0) for c in defects)
+            story.append(Spacer(1, 8))
+            story.append(_info_box(
+                f"<b>{len(defects)} {'Mangel' if len(defects) == 1 else 'Mängel'} festgestellt</b>"
+                + (f" · geschätzter Aufwand {total:,.2f} €" if total else "")
+                + ". Über eine Verrechnung mit der Kaution wird gesondert "
+                  "abgerechnet.", s))
+    else:
+        data = [["Bereich", "Zustand", "Bemerkung", "geschätzt"]] + \
+               [["", "", "", ""] for _ in range(6)]
+        story.append(_prot_table(data, [115, 120, 158, 75], right_cols=(3,)))
+    story.append(Spacer(1, 16))
+
+    # ── 4. Schlüssel ─────────────────────────────────────────────────────────
+    story.append(_section_header(4, "Schlüssel", s))
+    story.append(Spacer(1, 8))
+    handed = "übergeben an den Mieter" if is_in else "zurückgegeben an den Vermieter"
+    if keys:
+        data = [["Schlüssel", "Anzahl", "Bemerkung"]]
+        for k in keys:
+            data.append([
+                Paragraph(k.get("area") or "—", s["body"]),
+                Paragraph(f"<b>{int(k.get('quantity') or 0)}</b>", s["body"]),
+                Paragraph(k.get("note") or "", s["body"]),
+            ])
+        total_keys = sum(int(k.get("quantity") or 0) for k in keys)
+        data.append([Paragraph("<b>Gesamt</b>", s["body"]),
+                     Paragraph(f"<b>{total_keys}</b>", s["body"]),
+                     Paragraph(handed, s["caption"])])
+        story.append(_prot_table(data, [188, 80, 200], right_cols=(1,), total_row=True))
+    else:
+        data = [["Schlüssel", "Anzahl", "Bemerkung"]] + [["", "", ""] for _ in range(4)]
+        story.append(_prot_table(data, [188, 80, 200], right_cols=(1,)))
+    story.append(Spacer(1, 16))
+
+    # ── 5. Sonstige Vereinbarungen ───────────────────────────────────────────
+    if protocol.get("note"):
+        story.append(_section_header(5, "Sonstige Vereinbarungen", s))
+        story.append(Spacer(1, 8))
+        for para in str(protocol["note"]).split("\n"):
+            story.append(Paragraph(para or "&nbsp;", s["body"]))
+        story.append(Spacer(1, 16))
+
+    # ── Unterschriften ───────────────────────────────────────────────────────
+    # Two real signature lines, not a closing greeting: this sheet is only worth
+    # anything once both parties have signed the same finding list.
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(
+        "Beide Parteien bestätigen mit ihrer Unterschrift die Richtigkeit und "
+        "Vollständigkeit der vorstehenden Feststellungen.", s["caption"]))
+    story.append(Spacer(1, 40))
+
+    line = "_" * 34
+    sig = Table([
+        [Paragraph(line, s["body"]), "", Paragraph(line, s["body"])],
+        [Paragraph(f"Ort, Datum, Unterschrift Vermieter<br/>{landlord_name}", s["small"]), "",
+         Paragraph(f"Ort, Datum, Unterschrift Mieter<br/>{parties or ''}", s["small"])],
+    ], colWidths=[214, 40, 214])
+    sig.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("TOPPADDING",    (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    story.append(sig)
+
+    def _page_footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColorRGB(0.514, 0.584, 0.655)
+        canvas.drawString(25 * mm, 10 * mm,
+                          f"Übergabeprotokoll {'Einzug' if is_in else 'Auszug'}  ·  "
+                          f"{where}  ·  {date_de}")
+        canvas.drawRightString(A4[0] - 20 * mm, 10 * mm, f"Seite {doc.page}")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        title=f"Uebergabeprotokoll_{'Einzug' if is_in else 'Auszug'}",
+        leftMargin=25 * mm, rightMargin=20 * mm,
+        topMargin=20 * mm, bottomMargin=20 * mm,
+    )
+    doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
+    return buf.getvalue()

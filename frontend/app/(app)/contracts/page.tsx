@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
+import { HandoverCard } from "@/components/handover";
 import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X } from "lucide-react";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
@@ -638,6 +639,12 @@ export default function ContractsPage() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Übergabeprotokoll — full width: it holds two handovers side by
+                side, and each one needs the room. */}
+            <div className="md:col-span-2">
+              <HandoverCard contract={selectedContract} onKautionChanged={invalidateKaution} />
+            </div>
           </div>
         </>
       ) : null}

@@ -180,6 +180,54 @@ export interface MeterReading {
   reading_date: string;
   reading: number;
   note?: string;
+  // Set when the reading was taken at a handover. The reading is a normal
+  // reading either way — this only records where it came from.
+  protocol_id?: number | null;
+}
+
+// ── Übergabeprotokoll ────────────────────────────────────────────────────────
+
+export type ProtocolKind = "move_in" | "move_out";
+export type ItemCondition = "ok" | "wear" | "defect";
+
+export interface HandoverProtocol {
+  id: number;
+  contract_id: number;
+  kind: ProtocolKind;
+  date: string;
+  time?: string | null;
+  present_persons?: string | null;
+  note?: string | null;
+  signed: boolean;
+  // Rolled up by the API so the contract page can summarise without
+  // fetching every item of every protocol.
+  item_count: number;
+  defect_count: number;
+  defect_cost: number;
+  reading_count: number;
+}
+
+export interface ProtocolItem {
+  id: number;
+  protocol_id: number;
+  kind: "condition" | "key";
+  area?: string | null;
+  condition?: ItemCondition | null;
+  quantity?: number | null;
+  estimated_cost?: number | null;
+  note?: string | null;
+  sort_order: number;
+}
+
+export interface ProtocolReading {
+  id: number;
+  meter_type: string;
+  meter_id: number;
+  reading_date: string;
+  reading: number;
+  note?: string | null;
+  serial_number?: string | null;
+  description?: string | null;
 }
 
 export interface Config {

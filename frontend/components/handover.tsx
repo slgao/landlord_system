@@ -17,7 +17,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import {
   Contract, HandoverProtocol, ProtocolItem, ProtocolReading, ProtocolKind,
-  ItemCondition, StromMeter, GasMeter, WasserMeter, HeizungMeter,
+  ItemCondition, ApartmentMeter,
 } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -354,21 +354,18 @@ function ProtocolDialog({
     queryFn: () => api.get(`/api/handover-protocols/${pid}/readings`).then((r) => r.data),
   });
 
-  // Every meter registered on this flat, so the Zählerstand section is a
-  // ready-made checklist instead of a blank form the landlord has to remember
-  // the meters for.
+  // Every meter this room should be read for, so the Zählerstand section is a
+  // ready-made checklist rather than a blank form. One WG-aware endpoint rather
+  // than four per-type queries: in a shared flat the Stromzähler is registered
+  // on whichever room was entered first, so asking per apartment_id showed the
+  // other rooms nothing at all. The backend applies the scope rule — the flat's
+  // shared meters plus this room's own Heizkostenverteiler.
   const aid = contract.apartment_id;
-  const strom = useQuery<StromMeter[]>({ queryKey: ["strom-meters", aid], queryFn: () => api.get(`/api/meters/strom?apartment_id=${aid}`).then((r) => r.data) });
-  const gas = useQuery<GasMeter[]>({ queryKey: ["gas-meters", aid], queryFn: () => api.get(`/api/meters/gas?apartment_id=${aid}`).then((r) => r.data) });
-  const wasser = useQuery<WasserMeter[]>({ queryKey: ["wasser-meters", aid], queryFn: () => api.get(`/api/meters/wasser?apartment_id=${aid}`).then((r) => r.data) });
-  const heizung = useQuery<HeizungMeter[]>({ queryKey: ["heizung-meters", aid], queryFn: () => api.get(`/api/meters/heizung?apartment_id=${aid}`).then((r) => r.data) });
-
-  const meters = [
-    ...(strom.data || []).map((m) => ({ type: "strom", ...m })),
-    ...(gas.data || []).map((m) => ({ type: "gas", ...m })),
-    ...(wasser.data || []).map((m: any) => ({ type: "wasser", ...m, description: m.description || m.type })),
-    ...(heizung.data || []).map((m) => ({ type: "heizung", ...m })),
-  ];
+  const metersQ = useQuery<ApartmentMeter[]>({
+    queryKey: ["apartment-meters", aid],
+    queryFn: () => api.get(`/api/meters/for-apartment?apartment_id=${aid}`).then((r) => r.data),
+  });
+  const meters = metersQ.data || [];
 
   const saveHead = useMutation({
     mutationFn: () => api.put(`/api/handover-protocols/${pid}`, head),
@@ -459,22 +456,24 @@ function ProtocolDialog({
             <h3 className="text-sm font-medium flex items-center gap-2">
               <Gauge className="size-4" />Zählerstände
             </h3>
-            {meters.length === 0 ? (
+            {metersQ.isLoading ? (
+              <p className="text-xs text-muted-foreground">Loading meters…</p>
+            ) : meters.length === 0 ? (
               <p className="text-xs text-muted-foreground">
                 No meters registered for this flat. Add them under Meter Readings first,
                 then they appear here as a checklist.
               </p>
             ) : (
               <div className="space-y-1.5">
-                {meters.map((m: any) => {
+                {meters.map((m) => {
                   const existing = (readings.data || []).find(
-                    (r) => r.meter_type === m.type && r.meter_id === m.id);
+                    (r) => r.meter_type === m.meter_type && r.meter_id === m.id);
                   return (
                     <MeterRow
-                      key={`${m.type}:${m.id}`}
+                      key={`${m.meter_type}:${m.id}`}
                       meter={m}
                       existing={existing}
-                      onSave={(v) => saveReading.mutate({ meter_type: m.type, meter_id: m.id, reading: v })}
+                      onSave={(v) => saveReading.mutate({ meter_type: m.meter_type, meter_id: m.id, reading: v })}
                       onClear={() => existing && dropReading.mutate(existing.id)}
                     />
                   );
@@ -587,7 +586,7 @@ function ProtocolDialog({
 function MeterRow({
   meter, existing, onSave, onClear,
 }: {
-  meter: any;
+  meter: ApartmentMeter;
   existing?: ProtocolReading;
   onSave: (v: number) => void;
   onClear: () => void;
@@ -601,12 +600,22 @@ function MeterRow({
   const dirty = value !== "" && Number(value) !== (existing?.reading ?? NaN);
 
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <div className="flex-1 min-w-0">
-        <span className="font-medium">{METER_LABEL[meter.type] || meter.type}</span>
-        {meter.description && <span className="text-muted-foreground"> — {meter.description}</span>}
-        {meter.serial_number && (
-          <span className="text-xs text-muted-foreground font-mono"> · {meter.serial_number}</span>
+    <div className="flex items-start gap-2 text-sm">
+      <div className="flex-1 min-w-0 pt-1.5">
+        <div className="truncate">
+          <span className="font-medium">{METER_LABEL[meter.meter_type] || meter.meter_type}</span>
+          {meter.description && <span className="text-muted-foreground"> — {meter.description}</span>}
+          {meter.serial_number && (
+            <span className="text-xs text-muted-foreground font-mono"> · {meter.serial_number}</span>
+          )}
+        </div>
+        {/* Registered on a flatmate's room, so the landlord will not recognise it
+            from this room's own setup — say where it comes from, on its own line
+            rather than wrapping the meter name. */}
+        {!meter.own && (
+          <p className="text-xs text-muted-foreground truncate">
+            shared with the flat{meter.apartment_name ? ` · registered on ${meter.apartment_name}` : ""}
+          </p>
         )}
       </div>
       <Input

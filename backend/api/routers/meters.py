@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 from db import fetch, execute, execute_returning
 from auth import require_auth
+from api.schemas.common import IsoDate
 
 router = APIRouter(prefix="/meters", tags=["Meters"])
 
@@ -410,7 +411,7 @@ _METER_TABLES = {"strom": "strom_meters", "gas": "gas_meters",
 class MeterReadingIn(BaseModel):
     meter_type: str
     meter_id: int
-    reading_date: str
+    reading_date: IsoDate
     reading: float
     note: Optional[str] = None
 

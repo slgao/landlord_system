@@ -32,33 +32,12 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _insert_returning_id(sql: str, params: tuple) -> int:
-    """INSERT ... RETURNING id in one committed round-trip.
-
-    db.insert() assumes a positional VALUES tuple and returns nothing; db.execute
-    commits but discards rows; db.fetch returns rows but doesn't commit. We need
-    commit *and* the new id, so we drive a pooled connection directly (same
-    borrow/return discipline as db.py)."""
-    conn = db.get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        new_id = cur.fetchone()[0]
-        conn.commit()
-        return int(new_id)
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        db.put_conn(conn)
-
-
 def create_thread(landlord_id: int, title: str | None = None) -> int:
-    return _insert_returning_id(
+    return int(db.execute_returning(
         """INSERT INTO assistant_threads (landlord_id, title, created_at)
-           VALUES (%s, %s, %s) RETURNING id""",
+           VALUES (?, ?, ?) RETURNING id""",
         (landlord_id, title, _now()),
-    )
+    )[0][0])
 
 
 def thread_belongs_to(landlord_id: int, thread_id: int) -> bool:

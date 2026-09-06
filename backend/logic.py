@@ -280,8 +280,11 @@ def sum_cost_calc(cost_flat, num_tenants, bill_days, eff_days, prepay_monthly,
 
 def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end, limit_per_month=206):
     num_months = (bk_end.year - bk_start.year) * 12 + (bk_end.month - bk_start.month + 1)
-    if num_months == 0:
+    if num_months <= 0:
         num_months = 1
+    # A zero person count is a form left blank, not a flat nobody lives in —
+    # the utilities above already treat it as one tenant.
+    tenants = max(1, tenants)
     cost_per_tenant = cost_flat / tenants
     period_cost = cost_per_tenant / num_months * months
     limit_month = limit_per_month / tenants
@@ -361,9 +364,14 @@ def detect_overdue(default_months_back=12, owner=None):
     results = []
     for row in contracts:
         cid, t_name, t_email, apt_name, rent, start_str, end_str, prop_name, currency, settled = row
-        contract_start = _date.fromisoformat(start_str)
-        contract_end   = (_date.fromisoformat(end_str)
-                          if end_str and str(end_str) != "None" else None)
+        # The API now refuses malformed dates, but a row that predates that
+        # check must not take the whole reminders page down with it.
+        try:
+            contract_start = _date.fromisoformat(str(start_str))
+            contract_end   = (_date.fromisoformat(str(end_str))
+                              if end_str and str(end_str) != "None" else None)
+        except ValueError:
+            continue
 
         # Complete months in [window start, last complete month] the contract is active.
         months = []
@@ -428,17 +436,3 @@ def detect_overdue(default_months_back=12, owner=None):
 
     return results
 
-
-def tenant_ledger(tenant_id):
-
-    payments = fetch(
-        """
-    SELECT amount, payment_date, COALESCE(payments.currency, 'EUR')
-    FROM payments
-    JOIN contracts ON payments.contract_id = contracts.id
-    WHERE contracts.tenant_id = ?
-    """,
-        (tenant_id,),
-    )
-
-    return payments

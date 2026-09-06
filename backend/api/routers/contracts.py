@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from db import fetch, execute, execute_returning
 from auth import require_auth
 from api.schemas.contract import ContractIn, ContractOut
+from api.schemas.common import IsoDate, OptIsoDate, parse_iso_date
 
 router = APIRouter(prefix="/contracts", tags=["Contracts"])
 
@@ -174,6 +175,10 @@ def terminate_contract(contract_id: int, end_date: str | None = None,
     from datetime import date as _date
     existing = rows[0][0]
     existing = existing if (existing and str(existing) != "None") else None
+    try:
+        end_date = parse_iso_date(end_date)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"end_date {e}")
     if end_date:
         ed = end_date
     elif existing:
@@ -211,18 +216,18 @@ from pydantic import BaseModel as _BM
 from typing import Optional as _Opt
 
 class KautionReturnIn(_BM):
-    returned_date: str
+    returned_date: IsoDate
     returned_amount: float
 
 
 class RentSettleIn(_BM):
-    settled_until: _Opt[str] = None   # ISO date, or null/empty to clear
+    settled_until: OptIsoDate = None   # ISO date, or null/empty to clear
 
 
 class RenewIn(_BM):
     mode: str                       # "extend" | "new_term"
-    end_date: _Opt[str] = None      # new end date; null/empty = open-ended
-    start_date: _Opt[str] = None    # new_term only: start of the new contract
+    end_date: OptIsoDate = None     # new end date; null/empty = open-ended
+    start_date: OptIsoDate = None   # new_term only: start of the new contract
     rent: _Opt[float] = None        # new_term only: new rent (defaults to current)
 
 
@@ -290,6 +295,14 @@ def renew_contract(contract_id: int, body: RenewIn, owner: int = Depends(require
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid start date (expected YYYY-MM-DD)")
         new_rent = body.rent if body.rent is not None else float(old[6])
+        # The new term has to begin after the old one did, or closing the old
+        # term "the day before" would give it an end date before its start.
+        if new_start <= str(old[8]):
+            raise HTTPException(status_code=400,
+                                detail="The new term must start after the current term began")
+        if new_end and new_end < new_start:
+            raise HTTPException(status_code=400,
+                                detail="The new end date must not be before the new start date")
         # Close the old term the day before the new one begins.
         execute("UPDATE contracts SET end_date=? WHERE id=? AND owner_id=?",
                 (old_end, contract_id, owner))

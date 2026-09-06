@@ -1,11 +1,13 @@
 from pydantic import BaseModel
 from typing import Optional
 
+from api.schemas.common import IsoDate
+
 
 class PaymentIn(BaseModel):
     contract_id: int
     amount: float                              # EUR value that counts as income
-    payment_date: str
+    payment_date: IsoDate
     currency: str = "EUR"
     # Foreign tender note: what the tenant actually paid, if not in EUR.
     orig_amount: Optional[float] = None

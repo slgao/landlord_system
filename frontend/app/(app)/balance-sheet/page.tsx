@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -75,11 +76,16 @@ export default function BalanceSheetPage() {
         `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/reports/balance-sheet/${year}/pdf`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      // Without this an API error came down as a file named Bilanz_<year>.pdf
+      // holding a JSON body, and no one was told anything went wrong.
+      if (!res.ok) { toast.error(`Could not generate the PDF (HTTP ${res.status})`); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = `Bilanz_${year}.pdf`; a.click();
       URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not reach the API"));
     } finally { setDownloading(false); }
   }
 

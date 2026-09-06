@@ -28,12 +28,15 @@ const FREQ = ["monthly", "quarterly", "annually", "one-time"];
 const EMPTY = { apartment_id: 0, cost_type: "", amount: 0, frequency: "monthly", valid_from: "", valid_to: "" };
 
 // Normalise any frequency to a monthly-equivalent amount for the summary.
+// Mirrors tax_logic.monthly_equivalent: a NULL or unknown frequency is
+// monthly (what every consumer assumed before frequencies were honoured),
+// and the legacy "annual"/"yearly" spellings mean annually.
 function monthlyEquivalent(fc: FlatCost): number {
   switch (fc.frequency) {
-    case "monthly": return fc.amount;
     case "quarterly": return fc.amount / 3;
-    case "annually": return fc.amount / 12;
-    default: return 0; // one-time not counted in the recurring monthly figure
+    case "annually": case "annual": case "yearly": return fc.amount / 12;
+    case "one-time": return 0; // not part of the recurring monthly figure
+    default: return fc.amount;
   }
 }
 

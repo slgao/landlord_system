@@ -8,16 +8,20 @@ via tax_year_overrides. Manual always wins over computed.
 import json
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
 
 from db import fetch, execute, insert
 from auth import require_auth
+from api.schemas.common import IsoDate, OptIsoDate
 import tax_logic
 
 router = APIRouter(prefix="/tax", tags=["Tax"])
+
+# A tax year outside this range is a typo; the date arithmetic would throw.
+_Year = Query(ge=1900, le=2200)
 
 # Which recurring flat_costs count as Werbungskosten by default.
 # "Miete" is the landlord's own rent cost type (not a letting expense);
@@ -36,7 +40,7 @@ EXPENSE_CATEGORIES = [
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 class TaxProfileIn(BaseModel):
-    purchase_date: Optional[str] = None
+    purchase_date: OptIsoDate = None
     purchase_price: Optional[float] = None
     building_share_pct: Optional[float] = None
     afa_rate_pct: Optional[float] = None
@@ -49,14 +53,14 @@ class MortgageIn(BaseModel):
     principal: float
     interest_rate_pct: float
     tilgung_rate_pct: float
-    start_date: str
+    start_date: IsoDate
     note: Optional[str] = None
 
 
 class ExpenseIn(BaseModel):
     property_id: int
     apartment_id: Optional[int] = None
-    expense_date: str
+    expense_date: IsoDate
     amount: float
     category: str
     vendor: Optional[str] = None
@@ -406,7 +410,7 @@ def expense_categories():
 
 
 @router.get("/expenses/inventory/pdf")
-def expense_inventory_pdf(year: int, property_id: int | None = None,
+def expense_inventory_pdf(year: int = _Year, property_id: int | None = None,
                           owner: int = Depends(require_auth)):
     """Belegliste: all bills PAID in `year` (by expense_date, full amounts —
     §82b spreading is noted per row, not applied), grouped per property with
@@ -737,7 +741,7 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
 
 
 @router.get("/report")
-def tax_report(year: int, owner: int = Depends(require_auth)):
+def tax_report(year: int = _Year, owner: int = Depends(require_auth)):
     blocks, excluded = build_report(year, owner)
     return {
         "year": year,
@@ -752,7 +756,7 @@ def tax_report(year: int, owner: int = Depends(require_auth)):
 
 
 @router.get("/report/pdf")
-def tax_report_pdf(year: int, property_id: int | None = None,
+def tax_report_pdf(year: int = _Year, property_id: int | None = None,
                    owner: int = Depends(require_auth)):
     from pdfgen import generate_tax_report
     blocks, _ = build_report(year, owner)

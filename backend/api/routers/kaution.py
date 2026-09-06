@@ -3,13 +3,14 @@ from pydantic import BaseModel
 from typing import Optional
 from db import fetch, execute, execute_returning
 from auth import require_auth
+from api.schemas.common import IsoDate
 
 router = APIRouter(prefix="/kaution-deductions", tags=["Kaution"])
 
 
 class KautionDeductionIn(BaseModel):
     contract_id: int
-    date: str
+    date: IsoDate
     amount: float
     category: str
     reason: Optional[str] = None
@@ -85,7 +86,7 @@ payments_router = APIRouter(prefix="/kaution-payments", tags=["Kaution"])
 
 class KautionPaymentIn(BaseModel):
     contract_id: int
-    date: str
+    date: IsoDate
     amount: float
     note: Optional[str] = None
 
@@ -157,7 +158,7 @@ returns_router = APIRouter(prefix="/kaution-returns", tags=["Kaution"])
 
 class KautionReturnIn(BaseModel):
     contract_id: int
-    date: str
+    date: IsoDate
     amount: float
     note: Optional[str] = None
 

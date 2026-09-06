@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from db import fetch, execute, execute_returning, require_owner
+from db import fetch, execute, execute_returning
 from auth import require_auth
 from api.schemas.property import PropertyIn, PropertyOut
 

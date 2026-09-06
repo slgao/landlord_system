@@ -54,6 +54,11 @@ def require_owner() -> int:
 
 _POOL_MIN = int(os.environ.get("DB_POOL_MIN", "1"))
 _POOL_MAX = int(os.environ.get("DB_POOL_MAX", "10"))
+# How long a request waits for a pooled connection before giving up. The pool
+# raises immediately when every connection is checked out, and with ten
+# connections against uvicorn's forty worker threads a dashboard load (four
+# requests at once) could already trip that under a second visitor.
+_POOL_WAIT_S = float(os.environ.get("DB_POOL_WAIT", "5"))
 _pool: _pg_pool.AbstractConnectionPool | None = None
 
 
@@ -64,8 +69,22 @@ def _get_pool() -> _pg_pool.AbstractConnectionPool:
     return _pool
 
 
+def _checkout():
+    """getconn() that waits (briefly) for a free connection instead of
+    failing the request the instant the pool is fully checked out."""
+    import time
+    deadline = time.monotonic() + _POOL_WAIT_S
+    while True:
+        try:
+            return _get_pool().getconn()
+        except _pg_pool.PoolError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
 def get_conn():
-    conn = _get_pool().getconn()
+    conn = _checkout()
     try:
         # First statement of the transaction: pin the schema search_path so every
         # subsequent query in this checkout resolves unqualified table names,
@@ -196,19 +215,6 @@ def insert(table, values):
         put_conn(conn)
 
 
-def delete(table, entry_id):
-    conn = get_conn()
-    try:
-        c = conn.cursor()
-        c.execute(f"DELETE FROM {table} WHERE id = %s", (entry_id,))
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        put_conn(conn)
-
-
 # Errors that mean the pooled connection is dead/stale (server closed it after
 # an idle timeout, the DB restarted, the TCP link dropped, …). When we hit one
 # we must DISCARD the connection instead of returning it to the pool — otherwise
@@ -275,21 +281,6 @@ def execute_returning(query, params=()):
         return _run_once(query, params, commit=True, returning=True)
     except _CONN_ERRORS:
         return _run_once(query, params, commit=True, returning=True)
-
-
-def get_tenant_address(tenant_name):
-    """Return property address for a tenant via their active contract, or None.
-    Scoped to the current request's owner."""
-    rows = fetch("""
-        SELECT p.address
-        FROM contracts c
-        JOIN tenants t ON t.id = c.tenant_id
-        JOIN apartments a ON a.id = c.apartment_id
-        JOIN properties p ON p.id = a.property_id
-        WHERE t.name = ? AND t.owner_id = ?
-        LIMIT 1
-    """, (tenant_name, current_owner()))
-    return rows[0][0] if rows else None
 
 
 def get_tenant_gender(tenant_name):

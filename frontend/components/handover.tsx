@@ -14,7 +14,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { todayISO } from "@/lib/utils";
 import {
   Contract, HandoverProtocol, ProtocolItem, ProtocolReading, ProtocolKind,
@@ -161,13 +161,13 @@ export function HandoverCard({
         date: (kind === "move_in" ? contract.start_date : contract.end_date) || today(),
       }).then((r) => r.data as HandoverProtocol),
     onSuccess: (p) => { invalidate(); setOpenProtocol(p); },
-    onError: () => toast.error("Could not create the protocol"),
+    onError: (e) => toast.error(errorMessage(e, "Could not create the protocol")),
   });
 
   const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/api/handover-protocols/${id}`),
     onSuccess: () => { invalidate(); toast.success("Protocol deleted"); },
-    onError: () => toast.error("Could not delete the protocol"),
+    onError: (e) => toast.error(errorMessage(e, "Could not delete the protocol")),
   });
 
   async function downloadPdf(p: HandoverProtocol) {
@@ -179,8 +179,8 @@ export function HandoverCard({
       a.download = `Uebergabeprotokoll_${KIND_META[p.kind].german}_${contract.tenant_name || ""}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Could not generate the PDF");
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not generate the PDF"));
     }
   }
 
@@ -354,8 +354,8 @@ function DefectBridge({
       } else {
         toast.info("No Mangel has an estimated cost yet");
       }
-    } catch {
-      toast.error("Could not create the deductions");
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not create the deductions"));
     } finally {
       setBusy(false);
     }
@@ -429,7 +429,7 @@ function ProtocolDialog({
   const saveHead = useMutation({
     mutationFn: (h: typeof head) => api.put(`/api/handover-protocols/${pid}`, h),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["handover-protocols", contract.id] }); },
-    onError: () => toast.error("Could not save"),
+    onError: (e) => toast.error(errorMessage(e, "Could not save")),
   });
 
   // The header had no autosave of its own: only the footer button wrote it, so
@@ -460,19 +460,19 @@ function ProtocolDialog({
     mutationFn: (body: Partial<ProtocolItem>) =>
       api.post("/api/protocol-items/", { protocol_id: pid, sort_order: 0, ...body }),
     onSuccess: invalidateItems,
-    onError: () => toast.error("Could not add the entry"),
+    onError: (e) => toast.error(errorMessage(e, "Could not add the entry")),
   });
   const patchItem = useMutation({
     mutationFn: (it: ProtocolItem) => api.put(`/api/protocol-items/${it.id}`, it),
     onSuccess: invalidateItems,
     // Without this a rejected save was completely silent — the row went on
     // showing the edited value, so a change that never landed looked applied.
-    onError: () => toast.error("Could not save that change"),
+    onError: (e) => toast.error(errorMessage(e, "Could not save that change")),
   });
   const dropItem = useMutation({
     mutationFn: (id: number) => api.delete(`/api/protocol-items/${id}`),
     onSuccess: invalidateItems,
-    onError: () => toast.error("Could not delete the entry"),
+    onError: (e) => toast.error(errorMessage(e, "Could not delete the entry")),
   });
   const saveReading = useMutation({
     mutationFn: (body: { meter_type: string; meter_id: number; reading: number }) =>
@@ -485,12 +485,12 @@ function ProtocolDialog({
         toast.success(`Same reading as ${r.also_at.join(", ")} — kept as one`);
       }
     },
-    onError: () => toast.error("Could not save the reading"),
+    onError: (e) => toast.error(errorMessage(e, "Could not save the reading")),
   });
   const dropReading = useMutation({
     mutationFn: (id: number) => api.delete(`/api/handover-protocols/${pid}/readings/${id}`),
     onSuccess: invalidateReadings,
-    onError: () => toast.error("Could not remove the reading"),
+    onError: (e) => toast.error(errorMessage(e, "Could not remove the reading")),
   });
 
   const conditions = (items.data || []).filter((i) => i.kind === "condition");

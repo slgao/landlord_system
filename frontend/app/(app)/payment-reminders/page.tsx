@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
 import { todayISO } from "@/lib/utils";
-import { PaymentReminder } from "@/lib/types";
+import { PaymentReminder, ReminderHistoryRow } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,7 @@ export default function PaymentRemindersPage() {
     queryFn: () => api.get("/api/reports/payment-reminders").then((r) => r.data),
   });
 
-  const { data: history = [] } = useQuery({
+  const { data: history = [] } = useQuery<ReminderHistoryRow[]>({
     queryKey: ["reminder-history"],
     queryFn: () => api.get("/api/reports/reminders/history").then((r) => r.data),
   });
@@ -52,7 +52,7 @@ export default function PaymentRemindersPage() {
       amount_due: r.amount_due,
       channel: "manual",
     }),
-    onSuccess: () => toast.success("Reminder logged"),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["reminder-history"] }); toast.success("Reminder logged"); },
     onError: (e) => toast.error(errorMessage(e, "Failed to log reminder")),
   });
 
@@ -79,7 +79,11 @@ export default function PaymentRemindersPage() {
       const a = document.createElement("a");
       a.href = url; a.download = `Mahnung_${r.tenant_name}.pdf`; a.click();
       URL.revokeObjectURL(url);
-      await logReminder.mutateAsync(r);
+      // The mutation's own onError shows the toast; the letter is already
+      // downloaded, so a failed log entry must not become an unhandled rejection.
+      await logReminder.mutateAsync(r).catch(() => undefined);
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not reach the API"));
     } finally { setGenerating(null); }
   }
 
@@ -208,7 +212,7 @@ export default function PaymentRemindersPage() {
         </div>
       )}
       {/* Reminder History */}
-      {(history as any[]).length > 0 && (
+      {history.length > 0 && (
         <div className="mt-8">
           <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
             <History className="size-4" /> Reminder History
@@ -227,13 +231,13 @@ export default function PaymentRemindersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(history as any[]).map((h: any) => (
+                {history.map((h) => (
                   <TableRow key={h.id}>
                     <TableCell className="text-muted-foreground">{h.sent_date}</TableCell>
                     <TableCell className="font-medium">{h.tenant_name}</TableCell>
                     <TableCell className="text-muted-foreground">{h.apartment_name}</TableCell>
                     <TableCell className="text-muted-foreground">{h.months_due}</TableCell>
-                    <TableCell className="text-right font-mono">{h.amount_due?.toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-mono">{h.amount_due.toFixed(2)}</TableCell>
                     <TableCell><span className="capitalize text-xs bg-muted px-2 py-0.5 rounded">{h.channel}</span></TableCell>
                     <TableCell className="text-muted-foreground text-sm">{h.note || "—"}</TableCell>
                   </TableRow>

@@ -3,12 +3,13 @@ import functools
 import traceback
 from datetime import date
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional, Any
 from db import get_config, fetch, execute, execute_returning
 from auth import require_auth
+from api.schemas.common import IsoDate
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -40,10 +41,27 @@ def _landlord_name() -> str:
     return get_config("landlord_name", "Hausverwaltung")
 
 
+def _tenant_gender(name: str, contract_id: int | None, owner: int) -> str:
+    """The salutation's gender. By the contract when one is given — two tenants
+    can share a name, and a lookup by name alone picked whichever came first —
+    and only by name for the free-form letters that carry no contract."""
+    if contract_id:
+        rows = fetch("SELECT t.gender FROM contracts c JOIN tenants t ON t.id = c.tenant_id "
+                     "WHERE c.id=? AND c.owner_id=?", (contract_id, owner))
+        if rows and rows[0][0]:
+            return rows[0][0]
+    from db import get_tenant_gender
+    return get_tenant_gender(name) or "diverse"
+
+
+# Years outside this range are typos; date(year, ...) would throw on them.
+_Year = PathParam(ge=1900, le=2200)
+
+
 # ── Balance Sheet ─────────────────────────────────────────────────────────────
 
 @router.get("/balance-sheet/{year}")
-def balance_sheet_data(year: int, owner: int = Depends(require_auth)):
+def balance_sheet_data(year: int = _Year, owner: int = Depends(require_auth)):
     from balance_compute import _compute_snapshot
     snapshot, props = _compute_snapshot(year, owner)
     # serialise Decimal values for JSON
@@ -64,7 +82,7 @@ def balance_sheet_data(year: int, owner: int = Depends(require_auth)):
 
 
 @router.get("/balance-sheet/{year}/pdf")
-def balance_sheet_pdf(year: int, owner: int = Depends(require_auth)):
+def balance_sheet_pdf(year: int = _Year, owner: int = Depends(require_auth)):
     from balance_compute import _compute_snapshot
     from pdfgen import balance_sheet_pdf as gen_pdf
     snapshot, props = _compute_snapshot(year, owner)
@@ -182,10 +200,9 @@ class NKRequest(BaseModel):
 @_surface_errors
 def nebenkostenabrechnung_pdf(body: NKRequest, owner: int = Depends(require_auth)):
     from pdfgen import invoice_pdf
-    from db import get_tenant_gender
     # Resolve the primary tenant's gender for the salutation/honorific (the
     # frontend sends a placeholder "diverse").
-    gender = get_tenant_gender(body.tenant) or body.gender
+    gender = _tenant_gender(body.tenant, body.contract_id, owner)
     # Co-tenants in the contract appear in the salutation/address block
     co_tenants = None
     address = (body.address or "").strip()
@@ -262,8 +279,7 @@ class MahnungRequest(BaseModel):
 @_surface_errors
 def mahnung_pdf(body: MahnungRequest, owner: int = Depends(require_auth)):
     from pdfgen import generate_mahnung
-    from db import get_tenant_gender
-    gender = get_tenant_gender(body.tenant_name)
+    gender = _tenant_gender(body.tenant_name, body.contract_id, owner)
     # Resolve the full property address (street + postcode + city) from the
     # contract. A non-empty body.address is treated as a manual override.
     address = (body.address or "").strip()
@@ -319,7 +335,7 @@ def payment_reminders(owner: int = Depends(require_auth)):
 
 class ReminderIn(BaseModel):
     contract_id: int
-    sent_date: str
+    sent_date: IsoDate
     months_due: str
     amount_due: float
     channel: str = "manual"

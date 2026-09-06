@@ -145,3 +145,9 @@ def test_betriebskosten_calc_partial_period_prorates():
         bk_start=date(2024, 1, 1), bk_end=date(2024, 12, 1),
     )
     assert period_cost == pytest.approx(600.0)
+
+
+def test_betriebskosten_calc_zero_tenants_does_not_divide_by_zero():
+    from datetime import date
+    ct, pc, lp, nach = logic.betriebskosten_calc(1200, 0, 12, date(2025, 1, 1), date(2025, 12, 31))
+    assert ct == 1200 and pc == 1200 and lp == 206 * 12

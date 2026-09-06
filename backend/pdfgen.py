@@ -261,12 +261,20 @@ def _signature_block(landlord_name, signature_path, s):
     story.append(Paragraph("Mit freundlichen Grüßen,", s["body"]))
     story.append(Spacer(1, 10))
 
+    img = None
     if signature_path:
-        img = RLImage(signature_path)
-        nat_w, nat_h = img.imageWidth, img.imageHeight
-        max_w, max_h = 110.0, 45.0
-        scale = min(max_w / nat_w, max_h / nat_h, 1.0)
-        img = RLImage(signature_path, width=nat_w * scale, height=nat_h * scale)
+        # A signature file that will not decode must not take every letter,
+        # Abrechnung and Bilanz down with it; the document goes out with a
+        # blank line to sign by hand instead.
+        try:
+            probe = RLImage(signature_path)
+            nat_w, nat_h = probe.imageWidth, probe.imageHeight
+            max_w, max_h = 110.0, 45.0
+            scale = min(max_w / nat_w, max_h / nat_h, 1.0)
+            img = RLImage(signature_path, width=nat_w * scale, height=nat_h * scale)
+        except Exception:
+            img = None
+    if img is not None:
         usable_w = A4[0] - 25 * mm - 20 * mm
         tbl = Table([[img]], colWidths=[usable_w])
         tbl.setStyle(TableStyle([

@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
 import { todayISO } from "@/lib/utils";
 import { Payment, Contract } from "@/lib/types";
+import { contractStatus, contractStatusSuffix, startsInLabel } from "@/lib/contract-status";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -240,7 +241,7 @@ export default function RentTrackingPage() {
                 <SelectContent>
                   {displayContracts.map((c) => (
                     <SelectItem key={c.id} value={String(c.id)}>
-                      {c.tenant_name} — {c.apartment_name} {c.terminated ? "(inactive)" : ""}
+                      {c.tenant_name} — {c.apartment_name}{contractStatusSuffix(c)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -248,6 +249,11 @@ export default function RentTrackingPage() {
             </div>
             {selectedContract && selectedContract.terminated && (
               <p className="text-xs text-amber-400">⚠ This is an inactive/terminated contract.</p>
+            )}
+            {selectedContract && contractStatus(selectedContract) === "upcoming" && (
+              <p className="text-xs text-sky-700 dark:text-sky-400">
+                ⚠ This contract {startsInLabel(selectedContract.start_date)} ({selectedContract.start_date}) — no rent is due yet.
+              </p>
             )}
             <div className="space-y-1.5">
               <Label>Amount (EUR)</Label>

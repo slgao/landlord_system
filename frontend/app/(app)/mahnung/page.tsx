@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Contract, CoTenant } from "@/lib/types";
+import { contractStatus, contractStatusSuffix, startsInLabel } from "@/lib/contract-status";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -80,7 +81,7 @@ export default function MahnungPage() {
               <SelectContent>
                 {contracts.map((c) => (
                   <SelectItem key={c.id} value={String(c.id)}>
-                    {c.tenant_name} — {c.apartment_name}{c.terminated ? " (terminated)" : ""}
+                    {c.tenant_name} — {c.apartment_name}{contractStatusSuffix(c)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -89,6 +90,11 @@ export default function MahnungPage() {
 
           {selected && selected.terminated && (
             <p className="text-xs text-amber-400">⚠ This is an inactive/terminated contract.</p>
+          )}
+          {selected && contractStatus(selected) === "upcoming" && (
+            <p className="text-xs text-sky-700 dark:text-sky-400">
+              ⚠ This contract {startsInLabel(selected.start_date)} ({selected.start_date}) — no rent can be overdue yet.
+            </p>
           )}
           {selected && (
             <div className="p-3 rounded-md bg-muted/50 text-sm text-muted-foreground space-y-1">

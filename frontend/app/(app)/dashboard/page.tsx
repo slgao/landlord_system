@@ -15,13 +15,14 @@ import { C, fmtAxis, ChartTooltip, ChartLegend } from "@/components/chart";
 const currentYear = new Date().getFullYear();
 const thisMonthKey = new Date().toLocaleString("en", { month: "short", year: "numeric" });
 
-function StatCard({ title, value, icon: Icon }: { title: string; value: number; icon: React.ElementType }) {
+function StatCard({ title, value, icon: Icon, note }: { title: string; value: number; icon: React.ElementType; note?: string }) {
   return (
     <Card>
       <CardContent className="flex items-center justify-between p-5">
         <div>
           <p className="text-xs text-muted-foreground uppercase tracking-wide">{title}</p>
           <p className="text-3xl font-semibold mt-0.5">{value}</p>
+          {note && <p className="text-xs text-sky-700 dark:text-sky-400 mt-0.5">{note}</p>}
         </div>
         <div className="size-10 rounded-lg bg-primary/10 flex items-center justify-center">
           <Icon className="size-5 text-primary" />
@@ -75,7 +76,8 @@ export default function DashboardPage() {
         <StatCard title="Properties" value={stats?.properties ?? 0} icon={Building2} />
         <StatCard title="Apartments" value={stats?.apartments ?? 0} icon={Home} />
         <StatCard title="Tenants" value={stats?.tenants ?? 0} icon={Users} />
-        <StatCard title="Active Contracts" value={stats?.contracts ?? 0} icon={FileText} />
+        <StatCard title="Active Contracts" value={stats?.contracts ?? 0} icon={FileText}
+          note={stats?.upcoming ? `+${stats.upcoming} starting soon` : undefined} />
       </div>
 
       {chartData.length > 0 && (
@@ -111,7 +113,7 @@ export default function DashboardPage() {
         </CardHeader>
         <CardContent>
           {!alerts?.length ? (
-            <p className="text-sm text-muted-foreground py-2">No contracts expiring in the next 90 days.</p>
+            <p className="text-sm text-muted-foreground py-2">No contracts expiring or starting in the next 90 days.</p>
           ) : (
             <div className="space-y-2">
               {alerts.map((a, i) => (
@@ -121,10 +123,17 @@ export default function DashboardPage() {
                     <p className="text-xs text-muted-foreground">{a.apartment_name} · {a.property_name}</p>
                   </div>
                   <div className="text-right space-y-1">
-                    <Badge variant={a.level === "expired" ? "destructive" : "secondary"}>
-                      {a.level === "expired" ? `Expired ${Math.abs(a.days_remaining)}d ago` : `${a.days_remaining}d remaining`}
+                    <Badge
+                      variant={a.level === "expired" ? "destructive" : "secondary"}
+                      className={a.level === "upcoming" ? "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/20" : ""}
+                    >
+                      {a.level === "expired" ? `Expired ${Math.abs(a.days_remaining)}d ago`
+                        : a.level === "upcoming" ? `Starts in ${a.days_remaining}d`
+                        : `${a.days_remaining}d remaining`}
                     </Badge>
-                    <p className="text-xs text-muted-foreground">{a.end_date}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {a.level === "upcoming" ? a.start_date : a.end_date}
+                    </p>
                   </div>
                 </div>
               ))}

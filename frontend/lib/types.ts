@@ -138,16 +138,18 @@ export interface DashboardStats {
   properties: number;
   apartments: number;
   tenants: number;
-  contracts: number;
+  contracts: number;   // running today
+  upcoming: number;    // signed, start date still ahead
 }
 
 export interface ContractAlert {
   tenant_name: string;
   apartment_name: string;
   property_name: string;
-  end_date: string;
-  days_remaining: number;
-  level: "expired" | "warning";
+  start_date: string;
+  end_date: string | null;
+  days_remaining: number;   // until the end date, or until the start for "upcoming"
+  level: "expired" | "warning" | "upcoming";
 }
 
 export interface StromMeter {

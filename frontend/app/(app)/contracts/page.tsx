@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
 import { matchesQuery } from "@/lib/search";
-import { todayISO, isPastDate, daysUntil } from "@/lib/utils";
+import { todayISO } from "@/lib/utils";
+import { contractStatus, contractStatusLabel, contractStatusColor, startsInLabel } from "@/lib/contract-status";
 import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,14 +37,6 @@ const CONTRACT_EMPTY = {
   kaution_amount: 0, kaution_currency: "EUR",
   kaution_paid_date: "",
 };
-
-// What the Status badge says. Kept as a function so the search box can match
-// on it too — typing "expired" finds the contracts that need attention.
-function statusLabel(c: Contract): string {
-  if (c.terminated) return "Terminated";
-  if (isPastDate(c.end_date)) return "Expired";
-  return "Active";
-}
 
 export default function ContractsPage() {
   const qc = useQueryClient();
@@ -316,21 +309,11 @@ export default function ContractsPage() {
   const stillHeld = kautionBalance - totalReturned;
   const fullySettled = totalReturned > 0 && stillHeld <= 0.005;
 
-  const statusColor = (c: Contract) => {
-    if (c.terminated) return "bg-secondary text-secondary-foreground";
-    if (c.end_date) {
-      const days = daysUntil(c.end_date);
-      if (days < 0) return "bg-destructive/15 text-destructive border-destructive/20";
-      if (days <= 90) return "bg-amber-500/15 text-amber-400 border-amber-500/20";
-    }
-    return "bg-primary/15 text-primary border-primary/20";
-  };
-
   // The search matches on everything a row shows, so the landlord can type
   // whatever they remember: a name, the street, the rent, a year, "expired".
   const visibleContracts = contracts.filter((c) => matchesQuery(query, [
     c.tenant_name, c.apartment_name, c.property_name, c.rent.toFixed(2), c.currency,
-    c.start_date, c.end_date ?? "open", statusLabel(c),
+    c.start_date, c.end_date ?? "open", contractStatusLabel(c),
   ]));
   const visibleOverview = kautionOverview.filter((r) => matchesQuery(kautionQuery, [
     r.tenant_name, r.apartment_name, r.property_name, r.kaution_currency,
@@ -377,7 +360,10 @@ export default function ContractsPage() {
                       <TableCell>{c.rent.toFixed(2)} {c.currency}</TableCell>
                       <TableCell className="text-muted-foreground text-sm">{c.start_date}<br />{c.end_date || "open"}</TableCell>
                       <TableCell>
-                        <Badge className={statusColor(c)}>{statusLabel(c)}</Badge>
+                        <Badge className={contractStatusColor(c)}>{contractStatusLabel(c)}</Badge>
+                        {contractStatus(c) === "upcoming" && (
+                          <p className="text-xs text-muted-foreground mt-1">{startsInLabel(c.start_date)}</p>
+                        )}
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1 justify-end">
@@ -421,9 +407,17 @@ export default function ContractsPage() {
         // ── Detail view ──
         <>
           <PageHeader title={`${selectedContract?.tenant_name} — ${selectedContract?.apartment_name}`}>
+            <Badge className={contractStatusColor(selectedContract)}>{contractStatusLabel(selectedContract)}</Badge>
             <Button variant="outline" size="sm" onClick={openRenew}>Renew / extend</Button>
             <Button variant="outline" size="sm" onClick={() => setTab("contracts")}>← Back</Button>
           </PageHeader>
+
+          {contractStatus(selectedContract) === "upcoming" && (
+            <p className="-mt-3 mb-4 text-sm text-sky-700 dark:text-sky-400">
+              This contract has not started yet — it {startsInLabel(selectedContract.start_date)} ({selectedContract.start_date}).
+              Rent is not due before then; the deposit can already be recorded here.
+            </p>
+          )}
 
           <div className="grid md:grid-cols-2 gap-4">
             {/* Kaution overview */}

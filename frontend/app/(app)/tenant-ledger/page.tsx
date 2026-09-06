@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Tenant, Contract, Payment } from "@/lib/types";
+import { contractStatusColor, contractStatusLabel } from "@/lib/contract-status";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -100,9 +101,7 @@ export default function TenantLedgerPage() {
                       <TableCell className="text-muted-foreground">{c.start_date}</TableCell>
                       <TableCell className="text-muted-foreground">{c.end_date || "—"}</TableCell>
                       <TableCell>
-                        <Badge variant={c.terminated ? "secondary" : "default"} className={!c.terminated ? "bg-primary/15 text-primary border-primary/20" : ""}>
-                          {c.terminated ? "Ended" : "Active"}
-                        </Badge>
+                        <Badge className={contractStatusColor(c)}>{contractStatusLabel(c)}</Badge>
                       </TableCell>
                     </TableRow>
                   ))}

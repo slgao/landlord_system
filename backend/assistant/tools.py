@@ -24,6 +24,7 @@ Design rules that make R1/R3 enforceable rather than requested:
 
 from __future__ import annotations
 
+from datetime import date as _date
 from functools import lru_cache
 
 import db
@@ -201,9 +202,25 @@ def _get_contract(landlord_id: int, apartment_id: int) -> dict:
     )
     if not rows:
         return {"error": "no active contract found for that apartment in your portfolio"}
-    name, rent, kaution, start, end, nkv, currency = rows[0]
+    # A flat can have two non-terminated contracts at once: the one running now
+    # and the successor already signed for a later move-in. Answer about the
+    # running one, and say plainly when the only contract has not started yet.
+    today = _date.today().isoformat()
+
+    def _status(row) -> str:
+        start, end = row[3], row[4]
+        if start and start > today:
+            return "upcoming"
+        if end and str(end) != "None" and end < today:
+            return "expired"
+        return "active"
+
+    _RANK = {"active": 0, "upcoming": 1, "expired": 2}
+    row = min(rows, key=lambda r: (_RANK[_status(r)], r[3] or ""))
+    name, rent, kaution, start, end, nkv, currency = row
     return {
         "tenant": name,
+        "status": _status(row),
         "kaltmiete": float(rent),
         "kaution": float(kaution or 0),
         "nebenkosten_vorauszahlung": float(nkv or 0),

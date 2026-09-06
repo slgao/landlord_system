@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { isPastDate } from "@/lib/utils";
 import { Contract, GasMeter, StromMeter, MeterReading, BillingProfile } from "@/lib/types";
+import { contractStatusSuffix } from "@/lib/contract-status";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1160,8 +1160,7 @@ export default function NebenkostenabrechnungPage() {
   }
 
   function contractLabel(c: Contract) {
-    const status = c.terminated ? " (terminated)" : (isPastDate(c.end_date) ? " (expired)" : "");
-    return `${c.tenant_name} — ${c.apartment_name}${status}`;
+    return `${c.tenant_name} — ${c.apartment_name}${contractStatusSuffix(c)}`;
   }
 
   return (

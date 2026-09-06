@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { Property, Building } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
@@ -67,7 +67,7 @@ export default function PropertiesPage() {
       toast.success(editing ? "Property updated" : "Property created");
       setOpen(false);
     },
-    onError: () => toast.error("Failed to save property"),
+    onError: (e) => toast.error(errorMessage(e, "Could not save the property")),
   });
 
   const remove = useMutation({
@@ -76,8 +76,7 @@ export default function PropertiesPage() {
       qc.invalidateQueries({ queryKey: ["properties"] });
       toast.success("Property deleted");
     },
-    onError: (e: any) =>
-      toast.error(e.response?.data?.detail || "Cannot delete — apartments exist"),
+    onError: (e) => toast.error(errorMessage(e, "Cannot delete — apartments exist")),
   });
 
   // Quick-create a building from the property dialog and select it.
@@ -90,7 +89,7 @@ export default function PropertiesPage() {
       setNewBuilding("");
       toast.success("Building created");
     },
-    onError: () => toast.error("Failed to create building"),
+    onError: (e) => toast.error(errorMessage(e, "Could not create the building")),
   });
 
   function openCreate() {

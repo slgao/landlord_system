@@ -125,8 +125,14 @@ export default function TaxReportPage() {
     const token = localStorage.getItem("token");
     const url = `${API}/api/tax/report/pdf?year=${year}` +
       (propertyId ? `&property_id=${propertyId}` : "");
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { toast.error("PDF failed"); return; }
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    } catch {
+      toast.error("Could not reach the API");
+      return;
+    }
+    if (!res.ok) { toast.error(`Could not generate the PDF (HTTP ${res.status})`); return; }
     const blob = await res.blob();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);

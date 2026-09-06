@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from typing import Optional
 from db import fetch, execute, execute_returning
 from auth import require_auth
+from api.schemas.common import IsoDate
 
 router = APIRouter(prefix="/handover-protocols", tags=["Handover"])
 
@@ -33,7 +34,7 @@ _METER_TABLES = {"strom": "strom_meters", "gas": "gas_meters",
 class ProtocolIn(BaseModel):
     contract_id: int
     kind: str
-    date: str
+    date: IsoDate
     time: Optional[str] = None
     present_persons: Optional[str] = None
     note: Optional[str] = None
@@ -42,7 +43,7 @@ class ProtocolIn(BaseModel):
 
 class ProtocolPatch(BaseModel):
     """Everything except contract_id/kind, which identify the protocol."""
-    date: str
+    date: IsoDate
     time: Optional[str] = None
     present_persons: Optional[str] = None
     note: Optional[str] = None

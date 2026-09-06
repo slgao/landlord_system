@@ -299,6 +299,18 @@ export interface PaymentReminder {
   months: { month: string; expected: number; paid: number; balance_after: number }[];
 }
 
+/** One row of GET /reports/reminders/history. */
+export interface ReminderHistoryRow {
+  id: number;
+  tenant_name: string;
+  apartment_name: string;
+  sent_date: string;
+  months_due: string;
+  amount_due: number;
+  channel: string;
+  note?: string | null;
+}
+
 export interface BillingProfile {
   id: number;
   tenant_id: number;

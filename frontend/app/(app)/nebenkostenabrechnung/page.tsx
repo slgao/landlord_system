@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { Contract, GasMeter, StromMeter, MeterReading, BillingProfile } from "@/lib/types";
 import { contractStatusSuffix } from "@/lib/contract-status";
 import { PageHeader } from "@/components/page-header";
@@ -1068,23 +1068,31 @@ export default function NebenkostenabrechnungPage() {
 
   async function saveProfile() {
     if (!selected || !profileLabel) return;
-    const res = await api.post("/api/billing-profiles/", {
-      tenant_id: selected.tenant_id, label: profileLabel, data: profileData(),
-    });
-    setCurrentProfileId(res.data.id);
-    setCurrentProfileLabel(res.data.label);
-    qc.invalidateQueries({ queryKey: ["billing-profiles", selected.tenant_id] });
-    toast.success(`Profile "${res.data.label}" saved`);
-    setProfileLabel("");
+    try {
+      const res = await api.post("/api/billing-profiles/", {
+        tenant_id: selected.tenant_id, label: profileLabel, data: profileData(),
+      });
+      setCurrentProfileId(res.data.id);
+      setCurrentProfileLabel(res.data.label);
+      qc.invalidateQueries({ queryKey: ["billing-profiles", selected.tenant_id] });
+      toast.success(`Profile "${res.data.label}" saved`);
+      setProfileLabel("");
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not save the profile"));
+    }
   }
 
   async function updateProfile() {
     if (!selected || currentProfileId == null) return;
-    const res = await api.put(`/api/billing-profiles/${currentProfileId}`, {
-      tenant_id: selected.tenant_id, label: currentProfileLabel, data: profileData(),
-    });
-    qc.invalidateQueries({ queryKey: ["billing-profiles", selected.tenant_id] });
-    toast.success(`Profile "${res.data.label}" updated`);
+    try {
+      const res = await api.put(`/api/billing-profiles/${currentProfileId}`, {
+        tenant_id: selected.tenant_id, label: currentProfileLabel, data: profileData(),
+      });
+      qc.invalidateQueries({ queryKey: ["billing-profiles", selected.tenant_id] });
+      toast.success(`Profile "${res.data.label}" updated`);
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not update the profile"));
+    }
   }
 
   function loadProfile(profile: BillingProfile) {

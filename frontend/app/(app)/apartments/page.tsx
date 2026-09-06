@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { Apartment, Property } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
@@ -53,7 +53,7 @@ export default function ApartmentsPage() {
       toast.success(editing ? "Apartment updated" : "Apartment created");
       setOpen(false);
     },
-    onError: () => toast.error("Failed to save"),
+    onError: (e) => toast.error(errorMessage(e, "Could not save the apartment")),
   });
 
   const remove = useMutation({
@@ -62,8 +62,7 @@ export default function ApartmentsPage() {
       qc.invalidateQueries({ queryKey: ["apartments"] });
       toast.success("Apartment deleted");
     },
-    onError: (e: any) =>
-      toast.error(e.response?.data?.detail || "Cannot delete"),
+    onError: (e) => toast.error(errorMessage(e, "Cannot delete")),
   });
 
   function openCreate() {

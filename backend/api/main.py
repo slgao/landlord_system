@@ -1,11 +1,14 @@
 import base64
+import binascii
+import logging
 import os
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from pydantic import BaseModel, Field
 from db import migrate_to_head
 from auth import (
     require_auth, create_access_token, verify_startup_config, verify_access_token,
@@ -50,6 +53,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_log = logging.getLogger("uvicorn.error")
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception):
+    """Turn a crash into a JSON 500 that still carries the CORS headers.
+
+    An exception that escapes a route is rendered by Starlette's outermost
+    error middleware — outside CORSMiddleware — so the browser saw a response
+    without Access-Control-Allow-Origin and reported an opaque "NetworkError"
+    with the real cause invisible. Handling it here keeps the response inside
+    the middleware stack, and the message reaches the toast on screen.
+    """
+    _log.error("Unhandled error on %s %s\n%s", request.method, request.url.path,
+               "".join(traceback.format_exception(exc)))
+    return JSONResponse(status_code=500,
+                        content={"detail": f"{type(exc).__name__}: {exc}"})
+
 
 _auth = [Depends(require_auth)]
 
@@ -315,7 +337,9 @@ def signature_pad(request: Request, token: str | None = None):
 
 
 class SignaturePayload(BaseModel):
-    data_url: str
+    # A 600×160 pad crops to a few KB; the cap only has to stop a runaway
+    # upload from landing on disk under the signature's name.
+    data_url: str = Field(max_length=2_000_000)
 
 
 @app.post("/api/signature", tags=["Files"])
@@ -324,9 +348,26 @@ def save_signature(body: SignaturePayload, request: Request, token: str | None =
     _, _, b64 = body.data_url.partition(",")
     if not b64:
         raise HTTPException(status_code=400, detail="Invalid data URL")
+    try:
+        raw = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid data URL")
+    # The file is served back as image/png and drawn into every PDF, so it has
+    # to be a PNG that actually decodes — a truncated one would fail inside
+    # reportlab later, on every letter, long after the upload said "Saved".
+    try:
+        from io import BytesIO
+        from PIL import Image
+        with Image.open(BytesIO(raw)) as img:
+            fmt = img.format
+            img.verify()
+        if fmt != "PNG":
+            raise ValueError(fmt)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Signature must be a valid PNG image")
     dest = _signature_path(owner)
     dest.parent.mkdir(exist_ok=True)
-    dest.write_bytes(base64.b64decode(b64))
+    dest.write_bytes(raw)
     return {"status": "saved"}
 
 

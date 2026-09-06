@@ -371,7 +371,7 @@ export default function MeterReadingsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setReadingOpen(false)}>Cancel</Button>
-            <Button onClick={() => addReading.mutate()} disabled={!readForm.meter_id || addReading.isPending}>Add</Button>
+            <Button onClick={() => addReading.mutate()} disabled={!readForm.meter_id || !readForm.reading_date || addReading.isPending}>Add</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

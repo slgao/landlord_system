@@ -1,19 +1,26 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 from db import fetch, execute, insert
 from auth import require_auth
+from api.schemas.common import OptIsoDate
 
 router = APIRouter(prefix="/flat-costs", tags=["Flat Costs"])
 
 
 class FlatCostIn(BaseModel):
     apartment_id: int
-    cost_type: str
+    cost_type: str = Field(min_length=1)
     amount: float
     frequency: str = "monthly"
-    valid_from: Optional[str] = None
-    valid_to: Optional[str] = None
+    valid_from: OptIsoDate = None
+    valid_to: OptIsoDate = None
+
+    @model_validator(mode="after")
+    def _window_in_order(self):
+        if self.valid_from and self.valid_to and self.valid_to < self.valid_from:
+            raise ValueError("valid_to must not be before valid_from")
+        return self
 
 
 class FlatCostOut(BaseModel):

@@ -124,3 +124,12 @@ def test_future_contract_not_flagged(monkeypatch):
 def test_ended_before_window_not_flagged(monkeypatch):
     _install_fetch(monkeypatch, [_contract(end="2000-01-01")], [])
     assert logic.detect_overdue(default_months_back=3) == []
+
+
+def test_unparsable_contract_dates_skip_only_that_contract(monkeypatch):
+    # A legacy row with a broken start date used to raise ValueError and take
+    # every other tenant's reminder down with it.
+    broken = (2, "Bob", "b@x.de", "Apt 2", 500, "", None, "Haus A", "EUR", None)
+    _install_fetch(monkeypatch, [_contract(), broken], [])
+    res = logic.detect_overdue(default_months_back=3)
+    assert [r["tenant"] for r in res] == ["Alice"]

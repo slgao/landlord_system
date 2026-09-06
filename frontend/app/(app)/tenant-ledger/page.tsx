@@ -32,8 +32,6 @@ export default function TenantLedgerPage() {
     enabled: !!tenantId,
   });
 
-  const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
-  const totalRent = contracts.reduce((s, c) => s + c.rent, 0);
   const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "$", GBP: "£" };
   const perCurrency = payments.reduce((acc, p) => {
     const curr = p.currency || "EUR";

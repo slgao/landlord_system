@@ -15,6 +15,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { todayISO } from "@/lib/utils";
 import {
   Contract, HandoverProtocol, ProtocolItem, ProtocolReading, ProtocolKind,
   ItemCondition, ApartmentMeter,
@@ -60,7 +61,7 @@ const METER_LABEL: Record<string, string> = {
   strom: "Strom", gas: "Gas", wasser: "Wasser", heizung: "Heizung",
 };
 
-const today = () => new Date().toISOString().split("T")[0];
+const today = () => todayISO();
 
 // Matches the Kaution card this sits under. A de-DE locale format would be more
 // correct in isolation but puts "180,00" next to "1000.00" in the same view.

@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useMemo, memo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
+import { todayISO } from "@/lib/utils";
 import { MeterReading, StromMeter, GasMeter, WasserMeter, HeizungMeter, Apartment } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { GroupCard } from "@/components/group-card";
@@ -175,7 +176,7 @@ export default function MeterReadingsPage() {
   const [meterOpen, setMeterOpen] = useState(false);
   const [meterType, setMeterType] = useState<MeterType>("strom");
   const [editingMeter, setEditingMeter] = useState<any>(null);
-  const [readForm, setReadForm] = useState({ meter_type: "strom", meter_id: 0, reading_date: new Date().toISOString().split("T")[0], reading: 0, note: "" });
+  const [readForm, setReadForm] = useState({ meter_type: "strom", meter_id: 0, reading_date: todayISO(), reading: 0, note: "" });
   const [filterProp, setFilterProp] = useState("all");
 
   const [stromForm, setStromForm] = useState({ apartment_id: 0, serial_number: "", description: "", scope: "shared" });
@@ -196,11 +197,12 @@ export default function MeterReadingsPage() {
   const addReading = useMutation({
     mutationFn: () => api.post("/api/meters/readings", readForm),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["meter-readings"] }); setReadingOpen(false); toast.success("Reading added"); },
-    onError: () => toast.error("Failed to add reading"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to add reading")),
   });
   const deleteReading = useMutation({
     mutationFn: (id: number) => api.delete(`/api/meters/readings/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["meter-readings"] }),
+    onError: (e) => toast.error(errorMessage(e, "Could not delete the reading")),
   });
 
   async function saveMeter() {
@@ -212,11 +214,16 @@ export default function MeterReadingsPage() {
       qc.invalidateQueries({ queryKey: [`${meterType}-meters`] });
       toast.success(isEdit ? "Updated" : "Meter created");
       setMeterOpen(false);
-    } catch { toast.error("Failed"); }
+    } catch (e) { toast.error(errorMessage(e, "Could not save the meter")); }
   }
 
   const deleteMeter = useCallback(async (type: string, id: number) => {
-    await api.delete(`/api/meters/${type}/${id}`);
+    try {
+      await api.delete(`/api/meters/${type}/${id}`);
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not delete the meter"));
+      return;
+    }
     qc.invalidateQueries({ queryKey: [`${type}-meters`] });
     qc.invalidateQueries({ queryKey: ["meter-readings"] });
     toast.success("Deleted");
@@ -242,7 +249,7 @@ export default function MeterReadingsPage() {
   }, []);
 
   const openAddReading = useCallback((type: MeterType, meterId: number) => {
-    setReadForm({ meter_type: type, meter_id: meterId, reading_date: new Date().toISOString().split("T")[0], reading: 0, note: "" });
+    setReadForm({ meter_type: type, meter_id: meterId, reading_date: todayISO(), reading: 0, note: "" });
     setReadingOpen(true);
   }, []);
 

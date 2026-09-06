@@ -13,6 +13,16 @@ export function clearAssistantCache() {
 
 export const api = axios.create({ baseURL: BASE });
 
+/** The message to show for a failed request: the API's own `detail` when it
+ *  sent one (a 409 "still has contracts", a 422 field error), otherwise the
+ *  caller's fallback. Without this every failure read "Failed to save". */
+export function errorMessage(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail) && typeof detail[0]?.msg === "string") return detail[0].msg;
+  return fallback;
+}
+
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("token");

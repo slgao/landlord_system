@@ -569,7 +569,8 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
 
     flat: dict[int, list] = {}
     for r in fetch("""
-        SELECT a.property_id, fc.cost_type, fc.amount, fc.valid_from, fc.valid_to
+        SELECT a.property_id, fc.cost_type, fc.amount, fc.valid_from, fc.valid_to,
+               COALESCE(fc.frequency, 'monthly')
         FROM flat_costs fc JOIN apartments a ON a.id = fc.apartment_id
         WHERE fc.owner_id = ?
     """, (owner,)):
@@ -664,14 +665,28 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
 
         # Recurring flat costs
         recurring, recurring_total = [], 0.0
-        for _, cost_type, amount, vf, vt in flat.get(pid, []):
+        for _, cost_type, amount, vf, vt, freq in flat.get(pid, []):
             months = tax_logic.months_active_in_year(_clean(vf), _clean(vt), year)
             if months == 0:
                 continue
             deductible = cost_type not in NON_DEDUCTIBLE_COST_TYPES
-            total = round(float(amount) * months, 2)
-            recurring.append({"cost_type": cost_type, "monthly": float(amount),
-                              "months": months, "total": total, "deductible": deductible})
+            if freq == "one-time":
+                # Paid once, in the year it is dated. Undated: cannot be
+                # attributed to any year, so it is left out rather than
+                # guessed into every year.
+                paid_on = tax_logic._parse(_clean(vf))
+                if paid_on is None or paid_on.year != year:
+                    continue
+                monthly, months = float(amount), 1
+            else:
+                # A quarterly or annual bill is spread over its months; before
+                # this the amount was multiplied by 12 whatever the frequency,
+                # overstating an annual Grundsteuer twelvefold.
+                monthly = tax_logic.monthly_equivalent(float(amount), freq)
+            total = round(monthly * months, 2)
+            recurring.append({"cost_type": cost_type, "monthly": round(monthly, 2),
+                              "frequency": freq, "months": months, "total": total,
+                              "deductible": deductible})
             if deductible:
                 recurring_total += total
         recurring_total = round(recurring_total, 2)

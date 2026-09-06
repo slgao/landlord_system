@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
+import { todayISO } from "@/lib/utils";
 import { Payment, Contract } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,7 +43,7 @@ export default function RentTrackingPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
-  const [form, setForm] = useState({ amount: 0, payment_date: new Date().toISOString().split("T")[0], paidForeign: false, orig_amount: 0, orig_currency: "CNY" });
+  const [form, setForm] = useState({ amount: 0, payment_date: todayISO(), paidForeign: false, orig_amount: 0, orig_currency: "CNY" });
   const [monthFilter, setMonthFilter] = useState(currentYearMonth());
 
   const { data: contracts = [] } = useQuery<Contract[]>({
@@ -75,7 +76,7 @@ export default function RentTrackingPage() {
       toast.success("Payment recorded");
       setAddOpen(false);
     },
-    onError: () => toast.error("Failed to record payment"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to record payment")),
   });
 
   const remove = useMutation({
@@ -84,11 +85,12 @@ export default function RentTrackingPage() {
       qc.invalidateQueries({ queryKey: ["payments"] });
       toast.success("Payment deleted");
     },
+    onError: (e) => toast.error(errorMessage(e, "Could not delete the payment")),
   });
 
   function openAdd() {
     setSelectedContract(null);
-    setForm({ amount: 0, payment_date: new Date().toISOString().split("T")[0], paidForeign: false, orig_amount: 0, orig_currency: "CNY" });
+    setForm({ amount: 0, payment_date: todayISO(), paidForeign: false, orig_amount: 0, orig_currency: "CNY" });
     setAddOpen(true);
   }
 
@@ -233,7 +235,7 @@ export default function RentTrackingPage() {
                   Show inactive contracts
                 </label>
               </div>
-              <Select onValueChange={handleContractSelect}>
+              <Select value={selectedContract ? String(selectedContract.id) : ""} onValueChange={handleContractSelect}>
                 <SelectTrigger><SelectValue placeholder="Select tenant / contract" /></SelectTrigger>
                 <SelectContent>
                   {displayContracts.map((c) => (

@@ -147,19 +147,20 @@ def update_contract(contract_id: int, body: ContractIn, owner: int = Depends(req
         raise HTTPException(status_code=404, detail="Tenant not found")
     if not fetch("SELECT id FROM apartments WHERE id=? AND owner_id=?", (body.apartment_id, owner)):
         raise HTTPException(status_code=404, detail="Apartment not found")
+    # kaution_returned_date / kaution_returned_amount are NOT written here: they
+    # are derived from the kaution_returns ledger (kaution._sync_contract_return)
+    # and an edit of the contract must not make them drift from the rows behind
+    # them. The fields stay in ContractIn for API compatibility and are ignored.
     execute("""
         UPDATE contracts SET
           tenant_id=?, apartment_id=?, rent=?, currency=?,
           start_date=?, end_date=?,
-          kaution_amount=?, kaution_currency=?, kaution_paid_date=?,
-          kaution_returned_date=?, kaution_returned_amount=?, terminated=?
+          kaution_amount=?, kaution_currency=?, kaution_paid_date=?, terminated=?
         WHERE id=? AND owner_id=?
     """, (body.tenant_id, body.apartment_id, body.rent, RENT_CURRENCY,
           body.start_date, body.end_date or None,
           body.kaution_amount, body.kaution_currency,
           body.kaution_paid_date or None,
-          body.kaution_returned_date or None,
-          body.kaution_returned_amount,
           int(body.terminated), contract_id, owner))
     return _row(_get(contract_id, owner))
 
@@ -311,8 +312,9 @@ def renew_contract(contract_id: int, body: RenewIn, owner: int = Depends(require
     raise HTTPException(status_code=400, detail="mode must be 'extend' or 'new_term'")
 
 
-@router.get("/kaution-overview", response_model=list)
-def kaution_overview(owner: int = Depends(require_auth)):
+def kaution_overview(owner: int):
+    """Deposit ledger summary per contract. Served by kaution_overview_top,
+    which is registered above /{contract_id} so the literal path wins."""
     rows = fetch("""
         SELECT c.id, t.name, a.name, p.name,
                c.kaution_amount, COALESCE(c.kaution_currency,'EUR'),

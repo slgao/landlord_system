@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { isPastDate } from "@/lib/utils";
 import { Contract, GasMeter, StromMeter, MeterReading, BillingProfile } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -1159,8 +1160,7 @@ export default function NebenkostenabrechnungPage() {
   }
 
   function contractLabel(c: Contract) {
-    const status = c.terminated ? " (terminated)" :
-      (c.end_date && new Date(c.end_date) < new Date() ? " (expired)" : "");
+    const status = c.terminated ? " (terminated)" : (isPastDate(c.end_date) ? " (expired)" : "");
     return `${c.tenant_name} — ${c.apartment_name}${status}`;
   }
 
@@ -1492,10 +1492,11 @@ export default function NebenkostenabrechnungPage() {
           <CardContent className="pt-4 space-y-1">
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={deductKaution} onChange={(e) => setDeductKaution(e.target.checked)} className="size-4 accent-primary" />
-              Deduct the outstanding amount from the deposit (Kaution: {selected.kaution_amount.toFixed(2)} {selected.kaution_currency})
+              Deduct the outstanding amount from the deposit (agreed Kaution: {selected.kaution_amount.toFixed(2)} {selected.kaution_currency})
             </label>
             <p className="text-xs text-muted-foreground">
-              Adds a Kautionsverrechnung block to the PDF, offsetting the Nachzahlung against the still-held deposit.
+              Adds a Kautionsverrechnung block to the PDF. It offsets the Nachzahlung against what is
+              still held — the deposit less deductions already booked and any part already repaid.
             </p>
           </CardContent>
         </Card>

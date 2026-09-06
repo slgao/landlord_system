@@ -233,3 +233,25 @@ def contract_months_in_year(start_date: str, end_date: str | None, year: int) ->
     """Whole months a contract is active within `year` (month granularity,
     same convention as months_active_in_year)."""
     return months_active_in_year(start_date, end_date, year)
+
+
+# ── Recurring cost frequencies ───────────────────────────────────────────────
+
+# The flat_costs form offers these frequencies. Anything unknown (or NULL on a
+# legacy row) is treated as monthly, which is what every consumer assumed
+# before the frequency was honoured at all.
+FREQUENCY_MONTHS = {"monthly": 1, "quarterly": 3, "annually": 12, "annual": 12, "yearly": 12}
+
+
+def monthly_equivalent(amount, frequency: str | None):
+    """The per-month share of a recurring amount billed at `frequency`.
+
+    A one-time cost has no monthly equivalent — it belongs to the month it
+    was paid in — so it returns 0 here; callers place it themselves.
+    Works on Decimal as well as float so the balance sheet keeps its
+    precision and the tax report keeps its floats.
+    """
+    if frequency == "one-time":
+        return amount * 0
+    months = FREQUENCY_MONTHS.get(frequency or "monthly", 1)
+    return amount / months if months != 1 else amount

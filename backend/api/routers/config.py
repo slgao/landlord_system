@@ -34,7 +34,9 @@ class SmtpConfigOut(BaseModel):
     smtp_port: Optional[str] = None
     smtp_user: Optional[str] = None
     smtp_from: Optional[str] = None
-    smtp_password: Optional[str] = None
+    # The password itself never leaves the server; the page only needs to know
+    # whether one is on file.
+    smtp_password_set: bool = False
 
 
 class SmtpConfigIn(BaseModel):
@@ -62,11 +64,15 @@ def update_config(body: ConfigIn, owner: int = Depends(require_auth)):
     return ConfigOut(**{k: get_config(k) for k in _KEYS})
 
 
-@router.get("/smtp", response_model=SmtpConfigOut)
-def get_smtp_config(owner: int = Depends(require_auth)):
+def _smtp_out() -> SmtpConfigOut:
     from db import get_secret_config
     return SmtpConfigOut(**{k: get_config(k) for k in _SMTP_KEYS},
-                         smtp_password=get_secret_config("smtp_password", ""))
+                         smtp_password_set=bool(get_secret_config("smtp_password", "")))
+
+
+@router.get("/smtp", response_model=SmtpConfigOut)
+def get_smtp_config(owner: int = Depends(require_auth)):
+    return _smtp_out()
 
 
 @router.put("/smtp", response_model=SmtpConfigOut)
@@ -76,8 +82,8 @@ def update_smtp_config(body: SmtpConfigIn, owner: int = Depends(require_auth)):
         v = getattr(body, k)
         if v is not None:
             set_config(k, v)
-    if body.smtp_password is not None:
+    # An empty password field means "leave it as it is" — the form cannot echo
+    # the stored one back, so it submits blank unless the user typed a new one.
+    if body.smtp_password:
         set_secret_config("smtp_password", body.smtp_password)
-    from db import get_secret_config
-    return SmtpConfigOut(**{k: get_config(k) for k in _SMTP_KEYS},
-                         smtp_password=get_secret_config("smtp_password", ""))
+    return _smtp_out()

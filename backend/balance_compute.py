@@ -2,11 +2,18 @@
 
 Used by the FastAPI reports router to compute the balance sheet.
 Pure DB reads + arithmetic — no UI framework or pandas.
+
+Three queries per owner fetch every contract, recurring cost and payment for
+the year; the month-by-month figures are then computed in Python. The earlier
+version issued three queries per property per month (a few hundred round
+trips to the database for one page), which on a hosted database was most of
+the dashboard's load time.
 """
 import calendar
 from datetime import date
 from decimal import Decimal
 from db import fetch
+from tax_logic import monthly_equivalent
 
 _ZERO = Decimal("0")
 
@@ -42,61 +49,95 @@ def _financing(prop_id, owner, year):
             "equity_since_acq": round(equity_acq, 2)}
 
 
-def _expected_rent(prop_id, m_start, m_end):
-    """Expected rent for a property in a month.
+def _blank(v) -> bool:
+    """Date columns are TEXT and a few legacy rows hold the string 'None'."""
+    return v is None or str(v) == "None" or str(v) == ""
 
+
+def expected_rent(contracts, m_start: str, m_end: str) -> Decimal:
+    """Expected rent for one property in the month [m_start, m_end].
+
+    `contracts` is an iterable of (apartment_id, rent, start_date, end_date, id).
     For each apartment, take the rent of the most-recently-started contract that
     is active in the month, then sum across apartments. This avoids
     double-counting when two contracts overlap on the *same* apartment (e.g. a
     stale/incorrect end_date on an old contract): one apartment only ever
     contributes one tenant's rent. WG flats model each room as its own
     apartment, so they still sum correctly. Terminated contracts still count for
-    the months they were genuinely active."""
+    the months they were genuinely active.
+    """
+    best: dict = {}
+    for apt, rent, cs, ce, cid in contracts:
+        if str(cs) > m_end:
+            continue
+        if not _blank(ce) and str(ce) < m_start:
+            continue
+        rank = (str(cs), cid)
+        cur = best.get(apt)
+        if cur is None or rank > cur[0]:
+            best[apt] = (rank, rent)
+    return sum((r for _, r in best.values()), _ZERO)
+
+
+def month_costs(cost_rows, m_start: str, m_end: str, y: int, m: int) -> Decimal:
+    """Monthly cost equivalent of a property's recurring costs in one month.
+
+    `cost_rows` is an iterable of (amount, frequency, valid_from, valid_to).
+    A cost without a valid_from has always been in force. A quarterly or
+    annual bill is spread evenly over its months; a one-time cost lands in the
+    month it is dated.
+    """
+    total = _ZERO
+    for amt, freq, vf, vt in cost_rows:
+        if not _blank(vf) and str(vf) > m_end:
+            continue
+        if not _blank(vt) and str(vt) < m_start:
+            continue
+        if freq == "one-time":
+            if not _blank(vf) and str(vf)[:7] == f"{y}-{m:02d}":
+                total += amt
+        else:
+            total += monthly_equivalent(amt, freq)
+    return total
+
+
+def _load_contracts(owner) -> dict:
+    out: dict = {}
+    for pid, apt, rent, cs, ce, cid in fetch("""
+        SELECT a.property_id, c.apartment_id, c.rent, c.start_date, c.end_date, c.id
+        FROM contracts c
+        JOIN apartments a ON c.apartment_id = a.id
+        WHERE c.owner_id = ?
+    """, (owner,)):
+        out.setdefault(pid, []).append((apt, rent, cs, ce, cid))
+    return out
+
+
+def _load_costs(owner) -> dict:
+    out: dict = {}
+    for pid, amt, freq, vf, vt in fetch("""
+        SELECT a.property_id, fc.amount, fc.frequency, fc.valid_from, fc.valid_to
+        FROM flat_costs fc
+        JOIN apartments a ON fc.apartment_id = a.id
+        WHERE fc.owner_id = ?
+    """, (owner,)):
+        out.setdefault(pid, []).append((amt, freq, vf, vt))
+    return out
+
+
+def _load_payments(owner, year: int) -> dict:
+    """{(property_id, 'YYYY-MM'): Decimal} — everything received in `year`.
+    payments.amount is always the EUR value that counts (see the currency
+    model), so summing across contracts is sound."""
     rows = fetch("""
-        SELECT COALESCE(SUM(rent), 0) FROM (
-            SELECT DISTINCT ON (c.apartment_id) c.rent
-            FROM contracts c
-            JOIN apartments a ON c.apartment_id = a.id
-            WHERE a.property_id = ?
-              AND c.start_date <= ?
-              AND (c.end_date IS NULL OR c.end_date = 'None' OR c.end_date >= ?)
-            ORDER BY c.apartment_id, c.start_date DESC, c.id DESC
-        ) t
-    """, (prop_id, m_end, m_start))
-    return rows[0][0]
-
-
-def _actual_income(prop_id, m_start, m_end):
-    """Sum of payments actually received in a month (all EUR — see the currency
-    model: payments.amount is always the EUR value that counts)."""
-    return fetch("""
-        SELECT COALESCE(SUM(p.amount), 0)
+        SELECT a.property_id, substr(p.payment_date, 1, 7), COALESCE(SUM(p.amount), 0)
         FROM payments p
         JOIN contracts c ON p.contract_id = c.id
         JOIN apartments a ON c.apartment_id = a.id
-        WHERE a.property_id = ? AND p.payment_date BETWEEN ? AND ?
-    """, (prop_id, m_start, m_end))[0][0]
-
-
-def _flat_costs_month(prop_id, m_start, m_end, y, m):
-    """Monthly cost equivalent for a property in a given month."""
-    rows = fetch("""
-        SELECT fc.amount, fc.frequency, fc.valid_from
-        FROM flat_costs fc
-        JOIN apartments a ON fc.apartment_id = a.id
-        WHERE a.property_id = ?
-          AND fc.valid_from <= ?
-          AND (fc.valid_to IS NULL OR fc.valid_to = 'None' OR fc.valid_to >= ?)
-    """, (prop_id, m_end, m_start))
-    total = _ZERO
-    for amt, freq, vf in rows:
-        if freq == "monthly":
-            total += amt
-        elif freq == "annual":
-            total += amt / 12
-        elif freq == "one-time" and vf and vf[:7] == f"{y}-{m:02d}":
-            total += amt
-    return total
+        WHERE p.owner_id = ? AND substr(p.payment_date, 1, 4) = ?
+        GROUP BY a.property_id, substr(p.payment_date, 1, 7)
+    """, (owner, str(year)))
+    return {(pid, ym): total for pid, ym, total in rows}
 
 
 def _compute_snapshot(year: int, owner=None):
@@ -107,13 +148,17 @@ def _compute_snapshot(year: int, owner=None):
     max_month = today.month if y == today.year else 12
     properties = fetch("SELECT id, name FROM properties WHERE owner_id=? ORDER BY name", (owner,))
 
+    contracts = _load_contracts(owner)
+    costs = _load_costs(owner)
+    paid = _load_payments(owner, y)
+
     snap_start = str(today.replace(day=1))
     snap_end = str(today.replace(day=calendar.monthrange(today.year, today.month)[1]))
     snapshot = []
     for pid, pname in properties:
-        exp = _expected_rent(pid, snap_start, snap_end)
-        costs = _flat_costs_month(pid, snap_start, snap_end, today.year, today.month)
-        snapshot.append({"name": pname, "expected": float(exp), "costs": float(costs), "net": float(exp - costs)})
+        exp = expected_rent(contracts.get(pid, []), snap_start, snap_end)
+        cst = month_costs(costs.get(pid, []), snap_start, snap_end, today.year, today.month)
+        snapshot.append({"name": pname, "expected": float(exp), "costs": float(cst), "net": float(exp - cst)})
 
     props = []
     for prop_id, prop_name in properties:
@@ -122,20 +167,20 @@ def _compute_snapshot(year: int, owner=None):
         for m in range(1, max_month + 1):
             m_start = f"{y}-{m:02d}-01"
             m_end = f"{y}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
-            expected = _expected_rent(prop_id, m_start, m_end)
-            actual = _actual_income(prop_id, m_start, m_end)
-            costs = _flat_costs_month(prop_id, m_start, m_end, y, m)
+            expected = expected_rent(contracts.get(prop_id, []), m_start, m_end)
+            actual = paid.get((prop_id, m_start[:7]), _ZERO)
+            month_cost = month_costs(costs.get(prop_id, []), m_start, m_end, y, m)
             tot_expected += expected
             tot_actual += actual
-            tot_costs += costs
+            tot_costs += month_cost
             rows.append({
                 "Month": date(y, m, 1).strftime("%b %Y"),
                 "Expected rent (€)": round(expected, 2),
                 "Actual received (€)": round(actual, 2),
                 "Variance (€)": round(actual - expected, 2),
-                "Costs (€)": round(costs, 2),
-                "Expected net (€)": round(expected - costs, 2),
-                "Actual net (€)": round(actual - costs, 2),
+                "Costs (€)": round(month_cost, 2),
+                "Expected net (€)": round(expected - month_cost, 2),
+                "Actual net (€)": round(actual - month_cost, 2),
             })
         props.append({
             "name": prop_name,

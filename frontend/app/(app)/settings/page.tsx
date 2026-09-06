@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { Config } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +17,9 @@ export default function SettingsPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState<Config>({});
   const [smtp, setSmtp] = useState({ smtp_host: "", smtp_port: "587", smtp_user: "", smtp_from: "", smtp_password: "" });
+  // Whether a password is on file. The API never sends the password itself,
+  // so the field stays blank and blank on save means "keep the stored one".
+  const [passwordSet, setPasswordSet] = useState(false);
   const [sigUrl, setSigUrl] = useState<string | null>(null);
   // Built in an effect (not during render) so reading localStorage doesn't
   // cause a server/client hydration mismatch on the iframe src.
@@ -27,7 +30,10 @@ export default function SettingsPage() {
     queryFn: () => api.get("/api/config/").then((r) => r.data),
   });
 
-  const { data: smtpConfig } = useQuery({
+  const { data: smtpConfig } = useQuery<{
+    smtp_host?: string | null; smtp_port?: string | null; smtp_user?: string | null;
+    smtp_from?: string | null; smtp_password_set?: boolean;
+  }>({
     queryKey: ["smtp-config"],
     queryFn: () => api.get("/api/config/smtp").then((r) => r.data),
   });
@@ -37,18 +43,28 @@ export default function SettingsPage() {
     setPadSrc(`${API}/api/signature-pad${token ? `?token=${token}` : ""}`);
   }, []);
   useEffect(() => { if (config) setForm(config); }, [config]);
-  useEffect(() => { if (smtpConfig) setSmtp({ ...smtp, ...smtpConfig }); }, [smtpConfig]);
+  useEffect(() => {
+    if (!smtpConfig) return;
+    const { smtp_password_set, ...rest } = smtpConfig;
+    setPasswordSet(!!smtp_password_set);
+    // Unset keys come back as null; keep the defaults (port 587) for those.
+    setSmtp((f) => ({ ...f, ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v != null)) }));
+  }, [smtpConfig]);
 
   const save = useMutation({
     mutationFn: (data: Config) => api.put("/api/config/", data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["config"] }); toast.success("Settings saved"); },
-    onError: () => toast.error("Failed to save"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to save")),
   });
 
   const saveSmtp = useMutation({
     mutationFn: (data: typeof smtp) => api.put("/api/config/smtp", data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["smtp-config"] }); toast.success("SMTP settings saved"); },
-    onError: () => toast.error("Failed to save SMTP settings"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["smtp-config"] });
+      setSmtp((f) => ({ ...f, smtp_password: "" }));
+      toast.success("SMTP settings saved");
+    },
+    onError: (e) => toast.error(errorMessage(e, "Failed to save SMTP settings")),
   });
 
   function field(key: keyof Config, label: string, placeholder = "") {
@@ -104,7 +120,8 @@ export default function SettingsPage() {
           </div>
           {smtpField("smtp_user", "Username / Email")}
           {smtpField("smtp_from", "From Address (shown to tenant)")}
-          {smtpField("smtp_password", "Password / App Password", "password")}
+          {smtpField("smtp_password", "Password / App Password", "password",
+            passwordSet ? "•••••••• saved — leave blank to keep it" : "")}
           <Button onClick={() => saveSmtp.mutate(smtp)} disabled={saveSmtp.isPending}>
             {saveSmtp.isPending ? "Saving…" : "Save SMTP Settings"}
           </Button>

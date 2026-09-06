@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
+import { matchesQuery } from "@/lib/search";
 import { Tenant } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
@@ -20,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
+import { SearchInput } from "@/components/search-input";
 import { Pencil, Trash2 } from "lucide-react";
 
 const EMPTY = { name: "", email: "", phone: "", gender: "diverse" };
@@ -29,6 +31,7 @@ export default function TenantsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Tenant | null>(null);
   const [form, setForm] = useState(EMPTY);
+  const [query, setQuery] = useState("");
 
   const { data: tenants = [], isLoading } = useQuery<Tenant[]>({
     queryKey: ["tenants"],
@@ -45,7 +48,7 @@ export default function TenantsPage() {
       toast.success(editing ? "Tenant updated" : "Tenant created");
       setOpen(false);
     },
-    onError: () => toast.error("Failed to save"),
+    onError: (e) => toast.error(errorMessage(e, "Could not save the tenant")),
   });
 
   const remove = useMutation({
@@ -54,8 +57,7 @@ export default function TenantsPage() {
       qc.invalidateQueries({ queryKey: ["tenants"] });
       toast.success("Tenant deleted");
     },
-    onError: (e: any) =>
-      toast.error(e.response?.data?.detail || "Cannot delete — contracts exist"),
+    onError: (e) => toast.error(errorMessage(e, "Cannot delete — contracts exist")),
   });
 
   function openCreate() { setEditing(null); setForm(EMPTY); setOpen(true); }
@@ -68,9 +70,13 @@ export default function TenantsPage() {
   const genderLabel = (g: string) =>
     g === "male" ? "Herr" : g === "female" ? "Frau" : "Divers";
 
+  const visible = tenants.filter((t) => matchesQuery(query, [t.name, t.email, t.phone, genderLabel(t.gender)]));
+
   return (
     <div className="max-w-4xl">
-      <PageHeader title="Tenants" action={{ label: "New Tenant", onClick: openCreate }} />
+      <PageHeader title="Tenants" action={{ label: "New Tenant", onClick: openCreate }}>
+        <SearchInput value={query} onChange={setQuery} placeholder="Search name, email, phone…" className="w-64" />
+      </PageHeader>
 
       <Card>
         <Table>
@@ -88,12 +94,14 @@ export default function TenantsPage() {
               <TableRow>
                 <TableCell colSpan={5} className="text-center text-muted-foreground py-10">Loading…</TableCell>
               </TableRow>
-            ) : tenants.length === 0 ? (
+            ) : visible.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-10">No tenants yet.</TableCell>
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
+                  {tenants.length === 0 ? "No tenants yet." : <>No tenants match &ldquo;{query}&rdquo;.</>}
+                </TableCell>
               </TableRow>
             ) : (
-              tenants.map((t) => (
+              visible.map((t) => (
                 <TableRow key={t.id}>
                   <TableCell className="font-medium">{t.name}</TableCell>
                   <TableCell className="text-muted-foreground">{t.email || "—"}</TableCell>
@@ -122,6 +130,11 @@ export default function TenantsPage() {
             )}
           </TableBody>
         </Table>
+        {query && visible.length > 0 && (
+          <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
+            {visible.length} of {tenants.length} tenants
+          </p>
+        )}
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

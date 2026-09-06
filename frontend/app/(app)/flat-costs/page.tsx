@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { FlatCost, Apartment } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { GroupCard } from "@/components/group-card";
@@ -59,12 +59,13 @@ export default function FlatCostsPage() {
       return editing ? api.put(`/api/flat-costs/${editing.id}`, body) : api.post("/api/flat-costs/", body);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["flat-costs"] }); toast.success(editing ? "Updated" : "Created"); setOpen(false); },
-    onError: () => toast.error("Failed to save"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to save")),
   });
 
   const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/api/flat-costs/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["flat-costs"] }); toast.success("Deleted"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not delete the cost")),
   });
 
   function openCreate(apartmentId?: number) {

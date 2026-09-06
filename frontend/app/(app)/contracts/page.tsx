@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn } from "@/lib/types";
+import { api, errorMessage } from "@/lib/api";
+import { matchesQuery } from "@/lib/search";
+import { todayISO, isPastDate, daysUntil } from "@/lib/utils";
+import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
+import { SearchInput } from "@/components/search-input";
 import { HandoverCard } from "@/components/handover";
 import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X } from "lucide-react";
 
@@ -31,20 +34,30 @@ const CONTRACT_EMPTY = {
   tenant_id: 0, apartment_id: 0, rent: 0, currency: "EUR",
   start_date: "", end_date: "", terminated: false,
   kaution_amount: 0, kaution_currency: "EUR",
-  kaution_paid_date: "", kaution_returned_date: "", kaution_returned_amount: 0,
+  kaution_paid_date: "",
 };
+
+// What the Status badge says. Kept as a function so the search box can match
+// on it too — typing "expired" finds the contracts that need attention.
+function statusLabel(c: Contract): string {
+  if (c.terminated) return "Terminated";
+  if (isPastDate(c.end_date)) return "Expired";
+  return "Active";
+}
 
 export default function ContractsPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"contracts" | "detail" | "kaution-overview">("contracts");
-  const [kautionReturnForm, setKautionReturnForm] = useState({ date: new Date().toISOString().split("T")[0], amount: 0, note: "" });
+  const [kautionReturnForm, setKautionReturnForm] = useState({ date: todayISO(), amount: 0, note: "" });
   const [renewOpen, setRenewOpen] = useState(false);
   const [renewForm, setRenewForm] = useState<{ mode: "extend" | "new_term"; end_date: string; start_date: string; rent: number }>(
     { mode: "extend", end_date: "", start_date: "", rent: 0 });
   const [editing, setEditing] = useState<Contract | null>(null);
   const [form, setForm] = useState<typeof CONTRACT_EMPTY>(CONTRACT_EMPTY);
   const [showAll, setShowAll] = useState(false);
+  const [query, setQuery] = useState("");
+  const [kautionQuery, setKautionQuery] = useState("");
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
   // Terminate dialog: which date to record as the contract's end date
   const [terminateTarget, setTerminateTarget] = useState<Contract | null>(null);
@@ -54,9 +67,9 @@ export default function ContractsPage() {
   // Co-tenant form
   const [ctForm, setCtForm] = useState({ name: "", gender: "diverse", email: "", in_contract: false });
   // Kaution deduction form
-  const [kdForm, setKdForm] = useState({ date: new Date().toISOString().split("T")[0], amount: 0, category: "Sonstiges", reason: "" });
+  const [kdForm, setKdForm] = useState({ date: todayISO(), amount: 0, category: "Sonstiges", reason: "" });
   // Kaution installment (payment) form + inline-edit state
-  const [kpForm, setKpForm] = useState({ date: new Date().toISOString().split("T")[0], amount: 0, note: "" });
+  const [kpForm, setKpForm] = useState({ date: todayISO(), amount: 0, note: "" });
   const [editPay, setEditPay] = useState<{ id: number; date: string; amount: number; note: string } | null>(null);
   const [editDed, setEditDed] = useState<{ id: number; date: string; amount: number; category: string; reason: string } | null>(null);
 
@@ -92,7 +105,7 @@ export default function ContractsPage() {
     enabled: !!selectedContract,
   });
 
-  const { data: kautionOverview = [] } = useQuery({
+  const { data: kautionOverview = [] } = useQuery<KautionOverviewRow[]>({
     queryKey: ["kaution-overview"],
     queryFn: () => api.get("/api/contracts/kaution-overview").then((r) => r.data),
     enabled: tab === "kaution-overview",
@@ -102,11 +115,13 @@ export default function ContractsPage() {
     mutationFn: ({ id, end_date }: { id: number; end_date?: string }) =>
       api.post(`/api/contracts/${id}/terminate`, null, end_date ? { params: { end_date } } : undefined),
     onSuccess: (res, vars) => { qc.invalidateQueries({ queryKey: ["contracts"] }); if (selectedContract?.id === vars.id) setSelectedContract(res.data); toast.success("Contract terminated"); setTerminateTarget(null); },
+    onError: (e) => toast.error(errorMessage(e, "Could not terminate the contract")),
   });
 
   const reopen = useMutation({
     mutationFn: (id: number) => api.post(`/api/contracts/${id}/reopen`),
     onSuccess: (res, id) => { qc.invalidateQueries({ queryKey: ["contracts"] }); if (selectedContract?.id === id) setSelectedContract(res.data); toast.success("Contract reopened"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not reopen the contract")),
   });
 
   const invalidateKaution = () => {
@@ -127,9 +142,10 @@ export default function ContractsPage() {
       // The contract row carries the derived settled flag; refresh the open one.
       const fresh = await api.get(`/api/contracts/${selectedContract!.id}`);
       setSelectedContract(fresh.data);
-      setKautionReturnForm({ date: new Date().toISOString().split("T")[0], amount: 0, note: "" });
+      setKautionReturnForm({ date: todayISO(), amount: 0, note: "" });
       toast.success("Repayment recorded");
     },
+    onError: (e) => toast.error(errorMessage(e, "Could not record the repayment")),
   });
 
   const removeReturn = useMutation({
@@ -140,6 +156,7 @@ export default function ContractsPage() {
       setSelectedContract(fresh.data);
       toast.success("Repayment removed");
     },
+    onError: (e) => toast.error(errorMessage(e, "Could not remove the repayment")),
   });
 
   const markKautionReturned = useMutation({
@@ -155,12 +172,13 @@ export default function ContractsPage() {
       setSelectedContract(res.data);
       toast.success("Kaution marked as returned");
     },
-    onError: () => toast.error("Failed to mark Kaution as returned"),
+    onError: (e) => toast.error(errorMessage(e, "Could not mark the Kaution as returned")),
   });
 
   const clearKautionReturn = useMutation({
     mutationFn: () => api.post(`/api/contracts/${selectedContract!.id}/kaution-return/clear`),
     onSuccess: (res) => { invalidateKaution(); setSelectedContract(res.data); toast.success("Kaution return cleared"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not clear the repayments")),
   });
 
   const renew = useMutation({
@@ -177,43 +195,47 @@ export default function ContractsPage() {
       setRenewOpen(false);
       toast.success(renewForm.mode === "extend" ? "Contract extended" : "New term created");
     },
-    onError: () => toast.error("Failed to renew contract"),
+    onError: (e) => toast.error(errorMessage(e, "Could not renew the contract")),
   });
 
   const save = useMutation({
     mutationFn: (data: typeof CONTRACT_EMPTY) => {
       const body = { ...data, end_date: data.end_date || null, kaution_paid_date: data.kaution_paid_date || null,
-        kaution_returned_date: data.kaution_returned_date || null,
-        kaution_amount: data.kaution_amount || null, kaution_returned_amount: data.kaution_returned_amount || null };
+        kaution_amount: data.kaution_amount || null };
       return editing ? api.put(`/api/contracts/${editing.id}`, body) : api.post("/api/contracts/", body);
     },
     onSuccess: (res) => { qc.invalidateQueries({ queryKey: ["contracts"] }); if (editing && selectedContract?.id === editing.id) setSelectedContract(res.data); toast.success(editing ? "Updated" : "Created"); setOpen(false); },
-    onError: () => toast.error("Failed to save"),
+    onError: (e) => toast.error(errorMessage(e, "Could not save the contract")),
   });
 
   const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/api/contracts/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contracts"] }); toast.success("Deleted"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["contracts"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); toast.success("Deleted"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not delete the contract")),
   });
 
   const addCoTenant = useMutation({
     mutationFn: () => api.post("/api/co-tenants/", { ...ctForm, contract_id: selectedContract!.id }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["co-tenants"] }); setCtForm({ name: "", gender: "diverse", email: "", in_contract: false }); toast.success("Co-tenant added"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not add the co-tenant")),
   });
 
   const removeCoTenant = useMutation({
     mutationFn: (id: number) => api.delete(`/api/co-tenants/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["co-tenants"] }),
+    onError: (e) => toast.error(errorMessage(e, "Could not remove the co-tenant")),
   });
 
   const addDeduction = useMutation({
     mutationFn: () => api.post("/api/kaution-deductions/", { ...kdForm, contract_id: selectedContract!.id }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); toast.success("Deduction added"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); toast.success("Deduction added"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not add the deduction")),
   });
 
   const removeDeduction = useMutation({
     mutationFn: (id: number) => api.delete(`/api/kaution-deductions/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["kaution-deductions"] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); },
+    onError: (e) => toast.error(errorMessage(e, "Could not delete the deduction")),
   });
 
   const updateDeduction = useMutation({
@@ -223,13 +245,13 @@ export default function ContractsPage() {
         category: d.category, reason: d.reason || null,
       }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); setEditDed(null); toast.success("Deduction updated"); },
-    onError: () => toast.error("Failed to update deduction"),
+    onError: (e) => toast.error(errorMessage(e, "Could not update the deduction")),
   });
 
   const addPayment = useMutation({
     mutationFn: () => api.post("/api/kaution-payments/", { ...kpForm, note: kpForm.note || null, contract_id: selectedContract!.id }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-payments"] }); setKpForm({ date: new Date().toISOString().split("T")[0], amount: 0, note: "" }); toast.success("Installment added"); },
-    onError: () => toast.error("Failed to add installment"),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-payments"] }); setKpForm({ date: todayISO(), amount: 0, note: "" }); toast.success("Installment added"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not add the installment")),
   });
 
   const updatePayment = useMutation({
@@ -238,12 +260,13 @@ export default function ContractsPage() {
         contract_id: selectedContract!.id, date: p.date, amount: p.amount, note: p.note || null,
       }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-payments"] }); setEditPay(null); toast.success("Installment updated"); },
-    onError: () => toast.error("Failed to update installment"),
+    onError: (e) => toast.error(errorMessage(e, "Could not update the installment")),
   });
 
   const removePayment = useMutation({
     mutationFn: (id: number) => api.delete(`/api/kaution-payments/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["kaution-payments"] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-payments"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); },
+    onError: (e) => toast.error(errorMessage(e, "Could not delete the installment")),
   });
 
   function openCreate() { setEditing(null); setForm(CONTRACT_EMPTY); setOpen(true); }
@@ -252,7 +275,7 @@ export default function ContractsPage() {
     const oldEnd = selectedContract.end_date;
     const nextStart = oldEnd
       ? new Date(new Date(oldEnd).getTime() + 86_400_000).toISOString().split("T")[0]
-      : new Date().toISOString().split("T")[0];
+      : todayISO();
     setRenewForm({ mode: "extend", end_date: "", start_date: nextStart, rent: selectedContract.rent });
     setRenewOpen(true);
   }
@@ -261,8 +284,7 @@ export default function ContractsPage() {
     setForm({ tenant_id: c.tenant_id, apartment_id: c.apartment_id, rent: c.rent, currency: c.currency,
       start_date: c.start_date, end_date: c.end_date || "", terminated: c.terminated,
       kaution_amount: c.kaution_amount || 0, kaution_currency: c.kaution_currency,
-      kaution_paid_date: c.kaution_paid_date || "", kaution_returned_date: c.kaution_returned_date || "",
-      kaution_returned_amount: c.kaution_returned_amount || 0 });
+      kaution_paid_date: c.kaution_paid_date || "" });
     setOpen(true);
   }
 
@@ -297,18 +319,30 @@ export default function ContractsPage() {
   const statusColor = (c: Contract) => {
     if (c.terminated) return "bg-secondary text-secondary-foreground";
     if (c.end_date) {
-      const days = Math.round((new Date(c.end_date).getTime() - Date.now()) / 86400000);
+      const days = daysUntil(c.end_date);
       if (days < 0) return "bg-destructive/15 text-destructive border-destructive/20";
       if (days <= 90) return "bg-amber-500/15 text-amber-400 border-amber-500/20";
     }
     return "bg-primary/15 text-primary border-primary/20";
   };
 
+  // The search matches on everything a row shows, so the landlord can type
+  // whatever they remember: a name, the street, the rent, a year, "expired".
+  const visibleContracts = contracts.filter((c) => matchesQuery(query, [
+    c.tenant_name, c.apartment_name, c.property_name, c.rent.toFixed(2), c.currency,
+    c.start_date, c.end_date ?? "open", statusLabel(c),
+  ]));
+  const visibleOverview = kautionOverview.filter((r) => matchesQuery(kautionQuery, [
+    r.tenant_name, r.apartment_name, r.property_name, r.kaution_currency,
+    r.kaution_returned_date ? "returned" : (r.returned_total ?? 0) > 0 ? "part returned" : "held",
+  ]));
+
   return (
     <div className="max-w-5xl">
       {tab === "contracts" ? (
         <>
           <PageHeader title="Contracts" action={{ label: "New Contract", onClick: openCreate }}>
+            <SearchInput value={query} onChange={setQuery} placeholder="Search tenant, apartment, rent…" className="w-64" />
             <Button variant="outline" size="sm" onClick={() => setTab("kaution-overview")}>
               <BarChart2 className="size-4 mr-1" /> Kaution Overview
             </Button>
@@ -331,17 +365,19 @@ export default function ContractsPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-10">Loading…</TableCell></TableRow>
-                ) : contracts.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-10">No contracts.</TableCell></TableRow>
+                ) : visibleContracts.length === 0 ? (
+                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-10">
+                    {contracts.length === 0 ? "No contracts." : <>No contracts match &ldquo;{query}&rdquo;{!showAll && " among the active ones — try “Show all”."}</>}
+                  </TableCell></TableRow>
                 ) : (
-                  contracts.map((c) => (
+                  visibleContracts.map((c) => (
                     <TableRow key={c.id} className="cursor-pointer" onClick={() => openDetail(c)}>
                       <TableCell className="font-medium">{c.tenant_name}</TableCell>
                       <TableCell className="text-muted-foreground">{c.apartment_name}<br /><span className="text-xs">{c.property_name}</span></TableCell>
                       <TableCell>{c.rent.toFixed(2)} {c.currency}</TableCell>
                       <TableCell className="text-muted-foreground text-sm">{c.start_date}<br />{c.end_date || "open"}</TableCell>
                       <TableCell>
-                        <Badge className={statusColor(c)}>{c.terminated ? "Terminated" : c.end_date && new Date(c.end_date) < new Date() ? "Expired" : "Active"}</Badge>
+                        <Badge className={statusColor(c)}>{statusLabel(c)}</Badge>
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1 justify-end">
@@ -350,7 +386,7 @@ export default function ContractsPage() {
                             <Button variant="ghost" size="icon" title="Terminate" onClick={() => {
                               setTerminateTarget(c);
                               setTerminateChoice(c.end_date ? "contract" : "today");
-                              setTerminateCustom(c.end_date || new Date().toISOString().split("T")[0]);
+                              setTerminateCustom(c.end_date || todayISO());
                             }}>
                               <XCircle className="size-4 text-amber-400" />
                             </Button>
@@ -374,6 +410,11 @@ export default function ContractsPage() {
                 )}
               </TableBody>
             </Table>
+            {query && visibleContracts.length > 0 && (
+              <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
+                {visibleContracts.length} of {contracts.length} contracts
+              </p>
+            )}
           </Card>
         </>
       ) : tab === "detail" && selectedContract ? (
@@ -653,6 +694,7 @@ export default function ContractsPage() {
       {tab === "kaution-overview" && (
         <div className="max-w-5xl">
           <PageHeader title="Kaution Overview">
+            <SearchInput value={kautionQuery} onChange={setKautionQuery} placeholder="Search tenant, apartment…" className="w-60" />
             <Button variant="outline" size="sm" onClick={() => setTab("contracts")}>← Back</Button>
           </PageHeader>
           <p className="text-sm text-muted-foreground mb-3">
@@ -674,14 +716,16 @@ export default function ContractsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(kautionOverview as any[]).length === 0 ? (
-                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-10">No Kaution on file.</TableCell></TableRow>
+                {visibleOverview.length === 0 ? (
+                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-10">
+                    {kautionOverview.length === 0 ? "No Kaution on file." : <>No deposits match &ldquo;{kautionQuery}&rdquo;.</>}
+                  </TableCell></TableRow>
                 ) : (
-                  (kautionOverview as any[]).map((r: any) => (
+                  visibleOverview.map((r) => (
                     <TableRow key={r.contract_id} className="cursor-pointer" onClick={() => openContractById(r.contract_id)}>
                       <TableCell className="font-medium">{r.tenant_name}</TableCell>
                       <TableCell className="text-muted-foreground">{r.apartment_name}<br /><span className="text-xs">{r.property_name}</span></TableCell>
-                      <TableCell className="text-right font-mono">{r.kaution_amount?.toFixed(2)} {r.kaution_currency}</TableCell>
+                      <TableCell className="text-right font-mono">{r.kaution_amount.toFixed(2)} {r.kaution_currency}</TableCell>
                       <TableCell className="text-right font-mono">
                         {(r.paid ?? 0) > 0 ? (
                           <>
@@ -692,8 +736,8 @@ export default function ContractsPage() {
                           <span className="text-muted-foreground text-xs">{r.kaution_paid_date || "—"}</span>
                         )}
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{r.deducted?.toFixed(2)}</TableCell>
-                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-primary" : "text-destructive"}`}>{r.balance?.toFixed(2)}</TableCell>
+                      <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{r.deducted.toFixed(2)}</TableCell>
+                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-primary" : "text-destructive"}`}>{r.balance.toFixed(2)}</TableCell>
                       <TableCell className="text-muted-foreground">
                         {r.kaution_returned_date ? (
                           <span className="text-primary text-xs">{r.kaution_returned_amount?.toFixed(2)} on {r.kaution_returned_date}</span>
@@ -701,7 +745,7 @@ export default function ContractsPage() {
                           // Part-released: show what went back and what is left.
                           <span className="text-amber-500 text-xs">
                             {r.returned_total.toFixed(2)} returned<br />
-                            <span className="text-muted-foreground">{r.still_held?.toFixed(2)} still held</span>
+                            <span className="text-muted-foreground">{r.still_held.toFixed(2)} still held</span>
                           </span>
                         ) : "—"}
                       </TableCell>
@@ -709,9 +753,9 @@ export default function ContractsPage() {
                   ))
                 )}
               </TableBody>
-              {(kautionOverview as any[]).length > 0 && (() => {
-                const rows = kautionOverview as any[];
-                const active = rows.filter((r) => !r.kaution_returned_date);
+              {visibleOverview.length > 0 && (() => {
+                // Totals follow the filter: what is on screen is what is summed.
+                const active = visibleOverview.filter((r) => !r.kaution_returned_date);
                 // Group by deposit currency so we never add e.g. ¥ into €.
                 const byCurr: Record<string, { kaution: number; outstanding: number; balance: number }> = {};
                 for (const r of active) {
@@ -801,7 +845,9 @@ export default function ContractsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5"><Label>Kaution Paid Date</Label><Input type="date" value={form.kaution_paid_date} onChange={(e) => setForm((f) => ({ ...f, kaution_paid_date: e.target.value }))} /></div>
-              <div className="space-y-1.5"><Label>Kaution Returned Date</Label><Input type="date" value={form.kaution_returned_date} onChange={(e) => setForm((f) => ({ ...f, kaution_returned_date: e.target.value }))} /></div>
+              <p className="text-xs text-muted-foreground self-end pb-2">
+                Installments, deductions and repayments are recorded on the contract&apos;s detail page — the returned date follows from those.
+              </p>
             </div>
           </div>
           <DialogFooter>
@@ -837,7 +883,7 @@ export default function ContractsPage() {
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="radio" className="accent-primary" checked={terminateChoice === "today"}
                     onChange={() => setTerminateChoice("today")} />
-                  Today — <b>{new Date().toISOString().split("T")[0]}</b> <span className="text-muted-foreground">(early termination)</span>
+                  Today — <b>{todayISO()}</b> <span className="text-muted-foreground">(early termination)</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="radio" className="accent-primary" checked={terminateChoice === "custom"}
@@ -854,7 +900,7 @@ export default function ContractsPage() {
             <Button onClick={() => {
               if (!terminateTarget) return;
               const end_date = terminateChoice === "contract" ? (terminateTarget.end_date || undefined)
-                : terminateChoice === "today" ? new Date().toISOString().split("T")[0]
+                : terminateChoice === "today" ? todayISO()
                 : (terminateCustom || undefined);
               terminate.mutate({ id: terminateTarget.id, end_date });
             }} disabled={terminate.isPending || (terminateChoice === "custom" && !terminateCustom)}>

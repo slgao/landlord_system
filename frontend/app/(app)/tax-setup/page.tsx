@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { TaxProfile, TaxExpense, NkSplit } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,7 +37,7 @@ function ProfileRow({ p }: { p: TaxProfile }) {
         ? `${p.property_name} excluded from tax report`
         : `${p.property_name} included in tax report`);
     },
-    onError: () => toast.error("Failed to update"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to update")),
   });
   const [f, setF] = useState({
     purchase_date: p.purchase_date ?? "",
@@ -59,7 +59,7 @@ function ProfileRow({ p }: { p: TaxProfile }) {
       qc.invalidateQueries({ queryKey: ["tax-profiles"] });
       toast.success(`${p.property_name} saved`);
     },
-    onError: () => toast.error("Failed to save"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to save")),
   });
 
   const afaPreview =
@@ -129,12 +129,13 @@ function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
       start_date: f.start_date,
     }),
     onSuccess: () => { invalidate(); setF(EMPTY_MORTGAGE); toast.success("Mortgage added"); },
-    onError: () => toast.error("Failed to add"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to add")),
   });
 
   const del = useMutation({
     mutationFn: (id: number) => api.delete(`/api/tax/mortgages/${id}`),
     onSuccess: () => { invalidate(); toast.success("Mortgage removed"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not remove the mortgage")),
   });
 
   const valid = f.property_id && f.principal && f.interest_rate_pct && f.tilgung_rate_pct && f.start_date;
@@ -220,7 +221,7 @@ function NkRow({ c }: { c: NkSplit }) {
       qc.invalidateQueries({ queryKey: ["tax-report"] });
       toast.success(`${c.tenant_name} saved`);
     },
-    onError: () => toast.error("Failed to save"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to save")),
   });
 
   const kalt = nk !== "" ? c.rent - parseFloat(nk || "0") : null;
@@ -334,12 +335,13 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
       distribute_years: parseInt(f.distribute_years) || 1,
     }),
     onSuccess: () => { invalidate(); setF(EMPTY_EXPENSE); toast.success("Expense added"); },
-    onError: () => toast.error("Failed to add"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to add")),
   });
 
   const del = useMutation({
     mutationFn: (id: number) => api.delete(`/api/tax/expenses/${id}`),
     onSuccess: () => { invalidate(); toast.success("Expense removed"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not remove the expense")),
   });
 
   const valid = f.property_id && f.expense_date && f.amount && f.category;

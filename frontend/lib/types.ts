@@ -91,6 +91,25 @@ export interface KautionReturn {
   note?: string;
 }
 
+/** One row of GET /contracts/kaution-overview. */
+export interface KautionOverviewRow {
+  contract_id: number;
+  tenant_name: string;
+  apartment_name: string;
+  property_name: string;
+  kaution_amount: number;
+  kaution_currency: string;
+  kaution_paid_date?: string | null;
+  kaution_returned_date?: string | null;
+  kaution_returned_amount?: number | null;
+  deducted: number;
+  paid: number;
+  outstanding: number;
+  balance: number;
+  returned_total: number;
+  still_held: number;
+}
+
 export interface Payment {
   id: number;
   contract_id: number;

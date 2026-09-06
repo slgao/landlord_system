@@ -202,3 +202,17 @@ def test_annuity_before_start_owes_nothing():
     assert annuity_year_breakdown(120_000, 4.0, 2.0, "2025-10-15", 2025, 9)["balance_end"] == 0.0
     # ...and October itself is not.
     assert annuity_year_breakdown(120_000, 4.0, 2.0, "2025-10-15", 2025, 10)["balance_end"] > 0
+
+
+# ── recurring cost frequencies ───────────────────────────────────────────────
+
+def test_monthly_equivalent_by_frequency():
+    from tax_logic import monthly_equivalent
+    assert monthly_equivalent(120.0, "monthly") == 120.0
+    assert monthly_equivalent(300.0, "quarterly") == 100.0
+    assert monthly_equivalent(1200.0, "annually") == 100.0
+    assert monthly_equivalent(1200.0, "annual") == 100.0
+    assert monthly_equivalent(80.0, "one-time") == 0.0
+    # Unknown / legacy NULL frequency keeps the historical monthly reading.
+    assert monthly_equivalent(70.0, None) == 70.0
+    assert monthly_equivalent(70.0, "weird") == 70.0

@@ -215,16 +215,25 @@ def nebenkostenabrechnung_pdf(body: NKRequest, owner: int = Depends(require_auth
             if s:
                 contract_period = f"{s} – {e}"
 
-    # Optionally offset against the deposit, but only if it's still held
-    # (an amount exists and it has not yet been returned).
+    # Optionally offset against the deposit. What can be offset is the money
+    # still with the landlord — the agreed amount less deductions already
+    # booked and any part already paid back — not the figure on the contract.
+    # Offsetting against the full deposit after a Teilrückzahlung would promise
+    # the tenant money that has already gone back.
     kaution_info = body.kaution_info
     if body.deduct_kaution and body.contract_id and not kaution_info:
-        krow = fetch(
-            "SELECT kaution_amount, COALESCE(kaution_currency,'EUR'), kaution_returned_date "
-            "FROM contracts WHERE id=? AND owner_id=?", (body.contract_id, owner))
-        if krow and krow[0][0] and not (krow[0][2] and str(krow[0][2]) != "None"):
-            kaution_info = {"kaution_amount": float(krow[0][0]),
-                            "kaution_currency": krow[0][1]}
+        krow = fetch("""
+            SELECT c.kaution_amount, COALESCE(c.kaution_currency,'EUR'), c.kaution_returned_date,
+                   COALESCE((SELECT SUM(amount) FROM kaution_deductions d WHERE d.contract_id=c.id), 0),
+                   COALESCE((SELECT SUM(amount) FROM kaution_returns r WHERE r.contract_id=c.id), 0)
+            FROM contracts c WHERE c.id=? AND c.owner_id=?
+        """, (body.contract_id, owner))
+        if krow and krow[0][0]:
+            amount, currency, returned_date, deducted, returned = krow[0]
+            settled = bool(returned_date) and str(returned_date) != "None"
+            still_held = round(float(amount) - float(deducted) - float(returned), 2)
+            if not settled and still_held > 0.005:
+                kaution_info = {"kaution_amount": still_held, "kaution_currency": currency}
     # invoice_pdf writes to disk and returns the file path
     path = invoice_pdf(
         tenant=body.tenant, address=address,

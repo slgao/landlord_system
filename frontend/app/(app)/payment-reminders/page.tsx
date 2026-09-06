@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
+import { todayISO } from "@/lib/utils";
 import { PaymentReminder } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -40,19 +41,19 @@ export default function PaymentRemindersPage() {
       qc.invalidateQueries({ queryKey: ["payment-reminders"] });
       toast.success("Updated — reminder recalculated");
     },
-    onError: () => toast.error("Failed to update"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to update")),
   });
 
   const logReminder = useMutation({
     mutationFn: (r: PaymentReminder) => api.post("/api/reports/reminders", {
       contract_id: r.contract_id,
-      sent_date: new Date().toISOString().split("T")[0],
+      sent_date: todayISO(),
       months_due: `${r.months_due} mo (${r.first_month}–${r.last_month})`,
       amount_due: r.amount_due,
       channel: "manual",
     }),
     onSuccess: () => toast.success("Reminder logged"),
-    onError: () => toast.error("Failed to log reminder"),
+    onError: (e) => toast.error(errorMessage(e, "Failed to log reminder")),
   });
 
   async function generateMahnung(r: PaymentReminder) {
@@ -64,12 +65,15 @@ export default function PaymentRemindersPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           tenant_name: r.tenant_name,
-          address: r.property_name,
+          // Blank: the backend resolves the full street address from the
+          // contract. Sending the property name here put e.g. "WE 3" on the
+          // letter instead of the street.
+          address: "",
           amount_due: r.amount_due,
           contract_id: r.contract_id,
         }),
       });
-      if (!res.ok) { toast.error("Failed"); return; }
+      if (!res.ok) { toast.error(`Could not generate the Mahnung (HTTP ${res.status})`); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

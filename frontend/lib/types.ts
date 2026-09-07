@@ -466,6 +466,11 @@ export interface AmortMortgage {
   interest_since_start: number;
   tilgung_since_start: number;
   monthly_payment: number;
+  // The current month alone. The annuity payment is constant, but the share of
+  // it that is interest falls every month — that split is what the yearly and
+  // since-purchase figures cannot show.
+  interest_month: number;
+  tilgung_month: number;
 }
 
 export interface AmortProperty {
@@ -480,6 +485,8 @@ export interface AmortProperty {
   tilgung_since_start: number;
   interest_lifetime: number;
   monthly_payment: number;
+  interest_month: number;
+  tilgung_month: number;
   paid_off_year: number;
 }
 

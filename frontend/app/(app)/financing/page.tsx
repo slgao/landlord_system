@@ -227,7 +227,9 @@ export default function FinancingPage() {
   });
 
   const props = data?.properties ?? [];
-  const thisYear = new Date(data?.as_of ?? Date.now()).getFullYear();
+  const asOf = data?.as_of ? new Date(data.as_of) : new Date();
+  const thisYear = asOf.getFullYear();
+  const monthLabel = asOf.toLocaleString("en", { month: "long", year: "numeric" });
 
   // "all" folds the portfolio into one timeline; otherwise a single property.
   const view = useMemo(() => {
@@ -351,6 +353,18 @@ export default function FinancingPage() {
           }
         />
       </div>
+
+      {/* The split for the month you are actually in. Deliberately not phrased
+          as "of the X rate": each loan's two halves are rounded separately, and
+          a loan cleared mid-month pays a part-payment while dropping out of the
+          rate — so the pair need not add up to the figure above to the cent. */}
+      <p className="text-sm text-muted-foreground">
+        <span className="text-foreground font-medium">{monthLabel}</span>:{" "}
+        <span className="font-mono tabular-nums" style={{ color: C.interest }}>{fmt(view.interest_month)}</span>{" "}
+        Zins ·{" "}
+        <span className="font-mono tabular-nums text-primary">{fmt(view.tilgung_month)}</span>{" "}
+        Tilgung. The rate stays flat; the split inside it moves every month.
+      </p>
 
       <Charts rows={view.rows} thisYear={thisYear} />
 

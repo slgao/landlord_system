@@ -253,8 +253,15 @@ def _as_of(m: dict, year: int, month: int) -> dict:
     b = tax_logic.annuity_year_breakdown(
         m["principal"], m["interest_rate_pct"], m["tilgung_rate_pct"],
         m["start_date"], year, month)
+    # `month` alone: the year so far, less the year up to the month before it.
+    # January has no month before it, so the year so far is already the month.
+    prev = (tax_logic.annuity_year_breakdown(
+        m["principal"], m["interest_rate_pct"], m["tilgung_rate_pct"],
+        m["start_date"], year, month - 1) if month > 1 else None)
     return {"balance_now": b["balance_end"], "interest_since_start": b["interest_total"],
-            "tilgung_since_start": b["equity_total"], "monthly_payment": b["monthly_payment"]}
+            "tilgung_since_start": b["equity_total"], "monthly_payment": b["monthly_payment"],
+            "interest_month": round(b["interest"] - (prev["interest"] if prev else 0.0), 2),
+            "tilgung_month": round(b["tilgung"] - (prev["tilgung"] if prev else 0.0), 2)}
 
 
 @router.get("/amortization")
@@ -314,6 +321,8 @@ def amortization(owner: int = Depends(require_auth)):
             "balance_now": round(sum(e["balance_now"] for e in entries), 2),
             "interest_since_start": round(sum(e["interest_since_start"] for e in entries), 2),
             "tilgung_since_start": round(sum(e["tilgung_since_start"] for e in entries), 2),
+            "interest_month": round(sum(e["interest_month"] for e in entries), 2),
+            "tilgung_month": round(sum(e["tilgung_month"] for e in entries), 2),
             "interest_lifetime": round(sum(e["interest_lifetime"] for e in entries), 2),
             "monthly_payment": round(rate_now, 2),
             "paid_off_year": max(e["paid_off_year"] for e in entries),
@@ -325,6 +334,8 @@ def amortization(owner: int = Depends(require_auth)):
         "balance_now": round(sum(p["balance_now"] for p in props), 2),
         "interest_since_start": round(sum(p["interest_since_start"] for p in props), 2),
         "tilgung_since_start": round(sum(p["tilgung_since_start"] for p in props), 2),
+        "interest_month": round(sum(p["interest_month"] for p in props), 2),
+        "tilgung_month": round(sum(p["tilgung_month"] for p in props), 2),
         "interest_lifetime": round(sum(p["interest_lifetime"] for p in props), 2),
         "monthly_payment": round(sum(p["monthly_payment"] for p in props), 2),
         "paid_off_year": max((p["paid_off_year"] for p in props), default=None),

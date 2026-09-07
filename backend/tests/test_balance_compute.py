@@ -1,6 +1,7 @@
 """expected_rent / month_costs are pure: rows in, Decimal out."""
 from decimal import Decimal
 
+import balance_compute
 from balance_compute import expected_rent, month_costs
 
 D = Decimal
@@ -57,3 +58,56 @@ def test_month_costs_validity_window():
     assert month_costs(rows, "2025-03-01", "2025-03-31", 2025, 3) == D("10")
     assert month_costs(rows, "2025-05-01", "2025-05-31", 2025, 5) == D("10")
     assert month_costs(rows, "2025-06-01", "2025-06-30", 2025, 6) == D("0")
+
+
+# ── The current month's share of the annuity ─────────────────────────────────
+# The payment is constant; the interest inside it falls every month. These pin
+# the split down, because it is the one figure a yearly total cannot show.
+
+def _one_mortgage(monkeypatch, start="2020-01-01"):
+    monkeypatch.setattr(balance_compute, "fetch",
+                        lambda sql, params=(): [(100000, 3.0, 2.0, start)])
+
+
+def test_month_split_sums_to_the_year_so_far(monkeypatch):
+    from datetime import date
+    _one_mortgage(monkeypatch)
+    year = date.today().year
+    fin = balance_compute._financing(1, 1, year)
+    # Walk the year month by month via the same helper the report uses; the
+    # months must add up to the year-so-far figures exactly.
+    import tax_logic
+    i_sum = t_sum = 0.0
+    for m in range(1, date.today().month + 1):
+        cur = tax_logic.annuity_year_breakdown(100000, 3.0, 2.0, "2020-01-01", year, m)
+        prev = tax_logic.annuity_year_breakdown(100000, 3.0, 2.0, "2020-01-01", year, m - 1) if m > 1 else None
+        i_sum += cur["interest"] - (prev["interest"] if prev else 0.0)
+        t_sum += cur["tilgung"] - (prev["tilgung"] if prev else 0.0)
+    assert round(i_sum, 2) == fin["interest_paid"]
+    assert round(t_sum, 2) == fin["equity_paid"]
+    # And the month itself is a real slice of the year, never the whole of it
+    # (unless we happen to be in January).
+    if date.today().month > 1:
+        assert 0 < fin["interest_month"] < fin["interest_paid"]
+        assert 0 < fin["equity_month"] < fin["equity_paid"]
+
+
+def test_month_split_in_january_is_the_year_so_far(monkeypatch):
+    # January has no earlier month to subtract; asking for month 0 would clamp
+    # back to January and cancel the split to zero.
+    from datetime import date
+    import tax_logic
+    monkeypatch.setattr(balance_compute, "date", type("D", (), {"today": staticmethod(lambda: date(2026, 1, 20))}))
+    _one_mortgage(monkeypatch)
+    fin = balance_compute._financing(1, 1, 2026)
+    jan = tax_logic.annuity_year_breakdown(100000, 3.0, 2.0, "2020-01-01", 2026, 1)
+    assert fin["interest_month"] == fin["interest_paid"] == round(jan["interest"], 2)
+    assert fin["equity_month"] == fin["equity_paid"] == round(jan["tilgung"], 2)
+
+
+def test_past_year_has_no_current_month(monkeypatch):
+    from datetime import date
+    _one_mortgage(monkeypatch)
+    fin = balance_compute._financing(1, 1, date.today().year - 1)
+    assert fin["interest_month"] is None and fin["equity_month"] is None
+    assert fin["interest_paid"] > 0            # the completed year still reports

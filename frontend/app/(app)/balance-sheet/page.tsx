@@ -133,6 +133,10 @@ export default function BalanceSheetPage() {
   const totalDebt = properties.reduce((s: number, p: any) => s + (p.debt_remaining || 0), 0);
   const totalInterest = properties.reduce((s: number, p: any) => s + (p.interest_paid || 0), 0);
   const totalEquity = properties.reduce((s: number, p: any) => s + (p.equity_paid || 0), 0);
+  // The current month on its own — null for a past year, where it means nothing.
+  const totalInterestMonth = properties.reduce((s: number, p: any) => s + (p.interest_month || 0), 0);
+  const totalEquityMonth = properties.reduce((s: number, p: any) => s + (p.equity_month || 0), 0);
+  const shortMonth = new Date().toLocaleString("en", { month: "short" });
   const totalInterestAcq = properties.reduce((s: number, p: any) => s + (p.interest_since_acq || 0), 0);
   const totalEquityAcq = properties.reduce((s: number, p: any) => s + (p.equity_since_acq || 0), 0);
   const hasFinancing = totalDebt > 0 || totalInterest > 0 || totalEquity > 0;
@@ -201,12 +205,33 @@ export default function BalanceSheetPage() {
                   <span className="text-xs text-muted-foreground">Remaining debt</span>
                   <span className="font-mono tabular-nums text-sm font-semibold text-destructive">{fmt(totalDebt)}</span>
                 </div>
+                {/* The constant annuity payment hides a split that moves every
+                    month; this is the only place the current month's share of
+                    it is visible. */}
+                {isCurrentYear && (
+                  <>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs text-muted-foreground">Interest ({shortMonth})</span>
+                      <span className="font-mono tabular-nums text-sm">{fmt(totalInterestMonth)}</span>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs text-muted-foreground">Equity ({shortMonth})</span>
+                      <span className="font-mono tabular-nums text-sm text-primary">{fmt(totalEquityMonth)}</span>
+                    </div>
+                  </>
+                )}
+                {/* The current year is only simulated up to the current month,
+                    so its figures are to date — a past year is complete. */}
                 <div className="flex items-baseline gap-2">
-                  <span className="text-xs text-muted-foreground">Interest ({year})</span>
+                  <span className="text-xs text-muted-foreground">
+                    Interest ({year}{isCurrentYear ? " to date" : ""})
+                  </span>
                   <span className="font-mono tabular-nums text-sm">{fmt(totalInterest)}</span>
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-xs text-muted-foreground">Equity ({year})</span>
+                  <span className="text-xs text-muted-foreground">
+                    Equity ({year}{isCurrentYear ? " to date" : ""})
+                  </span>
                   <span className="font-mono tabular-nums text-sm text-primary">{fmt(totalEquity)}</span>
                 </div>
                 <div className="flex items-baseline gap-2">

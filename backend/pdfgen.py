@@ -1204,11 +1204,15 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
         ]))
         return t
 
+    # The current year is only simulated up to the current month, so its
+    # interest/Tilgung are figures to date — a past year is complete.
+    _ytd = " (bis heute)" if int(year) == date.today().year else ""
+
     def _fin_row(p, prefix=""):
         return [[
-            _mc("Restschuld",        f"€ {p.get('debt_remaining', 0):,.2f}", vc="#e74c3c"),
-            _mc(f"Zinsen {year}",    f"€ {p.get('interest_paid', 0):,.2f}"),
-            _mc(f"Tilgung {year}",   f"€ {p.get('equity_paid', 0):,.2f}", vc="#27ae60"),
+            _mc("Restschuld",             f"€ {p.get('debt_remaining', 0):,.2f}", vc="#e74c3c"),
+            _mc(f"Zinsen {year}{_ytd}",   f"€ {p.get('interest_paid', 0):,.2f}"),
+            _mc(f"Tilgung {year}{_ytd}",  f"€ {p.get('equity_paid', 0):,.2f}", vc="#27ae60"),
             _mc("Zinsen seit Kauf",  f"€ {p.get('interest_since_acq', 0):,.2f}"),
             _mc("Tilgung seit Kauf", f"€ {p.get('equity_since_acq', 0):,.2f}", vc="#27ae60"),
         ]]

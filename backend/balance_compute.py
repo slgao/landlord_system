@@ -20,21 +20,37 @@ _ZERO = Decimal("0")
 
 def _financing(prop_id, owner, year):
     """Rough financing figures for a property in `year`, summed over its
-    mortgages: outstanding debt at year-end (Restschuld), interest paid
-    (Schuldzinsen) and principal repaid (Tilgung = equity built). Returns zeros
-    when the property has no mortgage."""
+    mortgages: outstanding debt (Restschuld), interest paid (Schuldzinsen) and
+    principal repaid (Tilgung = equity built). Returns zeros when the property
+    has no mortgage.
+
+    `interest_paid` / `equity_paid` are the figures **so far** in `year`: for
+    the current year the simulation stops at the current month, so they are what
+    has actually been paid, not a projected year-end. A past year is complete
+    and covers all twelve months. `interest_month` / `equity_month` split out
+    the current month alone — the annuity payment is constant but the share of
+    it that is interest falls every month, and that split is the thing a
+    landlord cannot read off the yearly figure. They are None for a past year,
+    where "this month" means nothing.
+    """
     from tax_logic import annuity_year_breakdown
-    # For the current year, stop at the current month so debt/interest/equity are
-    # "as of now" (what's actually been paid) rather than a projected year-end.
     today = date.today()
-    end_month = today.month if int(year) == today.year else 12
+    is_current = int(year) == today.year
+    end_month = today.month if is_current else 12
     rows = fetch("SELECT principal, interest_rate_pct, tilgung_rate_pct, start_date "
                  "FROM mortgages WHERE property_id=? AND owner_id=?", (prop_id, owner))
     debt = interest = equity = 0.0
     interest_acq = equity_acq = 0.0
+    interest_m = equity_m = 0.0
     for principal, ir, tr, sd in rows:
         try:
             b = annuity_year_breakdown(float(principal), float(ir), float(tr), sd, int(year), end_month)
+            # The month on its own is what the year gained in it. In January
+            # there is no earlier month to subtract, so the year so far IS it —
+            # asking for month 0 would clamp back to January and cancel out.
+            prev = (annuity_year_breakdown(float(principal), float(ir), float(tr), sd,
+                                           int(year), end_month - 1)
+                    if end_month > 1 else None)
         except Exception:
             continue
         debt += b["balance_end"]
@@ -42,9 +58,13 @@ def _financing(prop_id, owner, year):
         equity += b["tilgung"]
         interest_acq += b["interest_total"]
         equity_acq += b["equity_total"]
+        interest_m += b["interest"] - (prev["interest"] if prev else 0.0)
+        equity_m += b["tilgung"] - (prev["tilgung"] if prev else 0.0)
     return {"debt_remaining": round(debt, 2),
             "interest_paid": round(interest, 2),
             "equity_paid": round(equity, 2),
+            "interest_month": round(interest_m, 2) if is_current else None,
+            "equity_month": round(equity_m, 2) if is_current else None,
             "interest_since_acq": round(interest_acq, 2),
             "equity_since_acq": round(equity_acq, 2)}
 

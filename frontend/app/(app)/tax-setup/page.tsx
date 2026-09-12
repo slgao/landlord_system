@@ -19,6 +19,10 @@ import { ConfirmButton } from "@/components/confirm-button";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, FileDown } from "lucide-react";
 
+// Mirrors tax_logic.DEFAULT_FOLLOW_UP_RATE_PCT — the rate the projections fall
+// back to when a loan records a Zinsbindung but no follow-up rate.
+const DEFAULT_FOLLOW_UP_RATE = 4.0;
+
 const eur = (v: number) =>
   v.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 
@@ -108,7 +112,7 @@ function ProfileRow({ p }: { p: TaxProfile }) {
 
 const EMPTY_MORTGAGE = {
   property_id: "", label: "", principal: "", interest_rate_pct: "",
-  tilgung_rate_pct: "", start_date: "",
+  tilgung_rate_pct: "", start_date: "", fixed_until: "", follow_up_rate_pct: "",
 };
 
 function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
@@ -127,6 +131,8 @@ function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
       interest_rate_pct: parseFloat(f.interest_rate_pct),
       tilgung_rate_pct: parseFloat(f.tilgung_rate_pct),
       start_date: f.start_date,
+      fixed_until: f.fixed_until || null,
+      follow_up_rate_pct: f.follow_up_rate_pct === "" ? null : parseFloat(f.follow_up_rate_pct),
     }),
     onSuccess: () => { invalidate(); setF(EMPTY_MORTGAGE); toast.success("Mortgage added"); },
     onError: (e) => toast.error(errorMessage(e, "Failed to add")),
@@ -149,6 +155,14 @@ function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
           &quot;Schuldzinsen&quot; expense for a year overrides the computation
           (use the bank&apos;s Jahreskontoauszug — authoritative with Sondertilgungen).
         </p>
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium">Zinsbindung:</span> without an end date the
+          Sollzins is projected to payoff, which for a 2018 loan means projecting a rate
+          that expires. Fill it in and the schedules reprice on that date — at the rate
+          you enter, or {DEFAULT_FOLLOW_UP_RATE}&nbsp;% if you leave it blank. The
+          monthly payment is held constant across the reset, as at a normal
+          Prolongation, so a dearer rate shows up as a later payoff.
+        </p>
         {mortgages.length > 0 && (
           <Table>
             <TableHeader><TableRow>
@@ -156,7 +170,9 @@ function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
               <TableHead className="text-right">Principal</TableHead>
               <TableHead className="text-right">Sollzins %</TableHead>
               <TableHead className="text-right">Tilgung %</TableHead>
-              <TableHead>Start</TableHead><TableHead />
+              <TableHead>Start</TableHead>
+              <TableHead>Fixed until</TableHead>
+              <TableHead className="text-right">Then</TableHead><TableHead />
             </TableRow></TableHeader>
             <TableBody>
               {mortgages.map((m) => (
@@ -167,6 +183,14 @@ function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
                   <TableCell className="text-right font-mono">{m.interest_rate_pct}</TableCell>
                   <TableCell className="text-right font-mono">{m.tilgung_rate_pct}</TableCell>
                   <TableCell className="text-muted-foreground">{m.start_date}</TableCell>
+                  <TableCell className={m.fixed_until ? "text-muted-foreground" : "text-amber-500"}>
+                    {m.fixed_until || "not set"}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-muted-foreground">
+                    {m.fixed_until
+                      ? `${m.follow_up_rate_pct}%${m.follow_up_assumed ? "*" : ""}`
+                      : "—"}
+                  </TableCell>
                   <TableCell>
                     <ConfirmButton onConfirm={() => del.mutate(m.id)}
                       message={`Delete mortgage ${m.label || m.id} (${m.property_name})? Computed Schuldzinsen for it disappear from all years.`}>
@@ -196,10 +220,21 @@ function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
             <Input type="number" step="0.01" className="h-8 w-20 font-mono" value={f.tilgung_rate_pct} onChange={(e) => setF({ ...f, tilgung_rate_pct: e.target.value })} /></div>
           <div className="space-y-1"><Label className="text-xs">First payment</Label>
             <Input type="date" className="h-8 w-36" value={f.start_date} onChange={(e) => setF({ ...f, start_date: e.target.value })} /></div>
+          <div className="space-y-1"><Label className="text-xs">Zinsbindung until</Label>
+            <Input type="date" className="h-8 w-36" value={f.fixed_until} onChange={(e) => setF({ ...f, fixed_until: e.target.value })} /></div>
+          <div className="space-y-1"><Label className="text-xs">Rate after</Label>
+            <Input type="number" step="0.01" className="h-8 w-20 font-mono" placeholder={String(DEFAULT_FOLLOW_UP_RATE)}
+              value={f.follow_up_rate_pct} onChange={(e) => setF({ ...f, follow_up_rate_pct: e.target.value })} /></div>
           <Button size="sm" disabled={!valid || add.isPending} onClick={() => add.mutate()}>
             <Plus className="size-4 mr-1" /> Add
           </Button>
         </div>
+        {mortgages.some((m) => m.follow_up_assumed) && (
+          <p className="text-xs text-muted-foreground">
+            * assumed — the loan has a Zinsbindung but no follow-up rate, so the
+            projections use {DEFAULT_FOLLOW_UP_RATE}&nbsp;%.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

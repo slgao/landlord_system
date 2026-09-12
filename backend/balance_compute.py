@@ -37,19 +37,25 @@ def _financing(prop_id, owner, year):
     today = date.today()
     is_current = int(year) == today.year
     end_month = today.month if is_current else 12
-    rows = fetch("SELECT principal, interest_rate_pct, tilgung_rate_pct, start_date "
+    rows = fetch("SELECT principal, interest_rate_pct, tilgung_rate_pct, start_date, "
+                 "       fixed_until, follow_up_rate_pct "
                  "FROM mortgages WHERE property_id=? AND owner_id=?", (prop_id, owner))
     debt = interest = equity = 0.0
     interest_acq = equity_acq = 0.0
     interest_m = equity_m = 0.0
-    for principal, ir, tr, sd in rows:
+    for principal, ir, tr, sd, fixed_until, follow_rate in rows:
+        # The Zinsbindung matters here as much as on the Financing page: without
+        # it the two would report different Restschuld for the same loan.
+        reprice = dict(fixed_until=fixed_until if fixed_until and str(fixed_until) != "None" else None,
+                       follow_up_rate_pct=float(follow_rate) if follow_rate is not None else None)
         try:
-            b = annuity_year_breakdown(float(principal), float(ir), float(tr), sd, int(year), end_month)
+            b = annuity_year_breakdown(float(principal), float(ir), float(tr), sd, int(year), end_month,
+                                       **reprice)
             # The month on its own is what the year gained in it. In January
             # there is no earlier month to subtract, so the year so far IS it —
             # asking for month 0 would clamp back to January and cancel out.
             prev = (annuity_year_breakdown(float(principal), float(ir), float(tr), sd,
-                                           int(year), end_month - 1)
+                                           int(year), end_month - 1, **reprice)
                     if end_month > 1 else None)
         except Exception:
             continue

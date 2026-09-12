@@ -17,6 +17,10 @@ export interface Property {
   we_label?: string | null;   // Wohnungseigentum unit label, e.g. "WE 3"
   mea?: number | null;        // Miteigentumsanteil
   building_name?: string | null;
+  // What the flat is worth now. Equity is value less debt; without this only
+  // the purchase price is on file, so equity cannot be computed.
+  market_value?: number | null;
+  market_value_date?: string | null;
 }
 
 export interface Apartment {
@@ -25,6 +29,8 @@ export interface Apartment {
   property_name?: string;
   name: string;
   flat?: string;
+  // Wohnfläche — what €/m² and any Mietspiegel comparison need.
+  size_sqm?: number | null;
 }
 
 export interface Tenant {
@@ -353,6 +359,12 @@ export interface Mortgage {
   tilgung_rate_pct: number;
   start_date: string;
   note: string | null;
+  // End of the Zinsbindung and the rate assumed after it. `follow_up_rate_pct`
+  // is what the projection actually used; `follow_up_assumed` says the loan
+  // did not supply one and the app's default stood in.
+  fixed_until: string | null;
+  follow_up_rate_pct: number | null;
+  follow_up_assumed: boolean;
 }
 
 export interface TaxProfile {
@@ -459,9 +471,14 @@ export interface AmortMortgage {
   tilgung_rate_pct: number;
   start_date: string;
   note: string | null;
+  fixed_until: string | null;
+  follow_up_rate_pct: number | null;
+  follow_up_assumed: boolean;
   schedule: AmortRow[];
   paid_off_year: number;
   interest_lifetime: number;
+  // What still has to be refinanced when the fixed rate ends.
+  balance_at_reset: number | null;
   balance_now: number;
   interest_since_start: number;
   tilgung_since_start: number;
@@ -477,6 +494,10 @@ export interface AmortProperty {
   property_id: number;
   property_name: string;
   apartments: string[];
+  market_value: number | null;
+  market_value_date: string | null;
+  equity: number | null;          // value − debt; null until a value is on file
+  next_reset: string | null;      // nearest Zinsbindung end across its loans
   mortgages: AmortMortgage[];
   combined: AmortRow[];
   principal_total: number;
@@ -493,7 +514,14 @@ export interface AmortProperty {
 export interface Amortization {
   as_of: string;
   properties: AmortProperty[];
-  totals: (Omit<AmortProperty, "property_id" | "property_name" | "apartments" | "mortgages"> & {
+  // A portfolio has no single valuation date, so that one field is dropped
+  // rather than left in the type for nothing to fill.
+  totals: (Omit<AmortProperty, "property_id" | "property_name" | "apartments"
+                               | "mortgages" | "market_value_date"> & {
     combined: AmortRow[];
+    // Portfolio equity is only reported when every financed property carries a
+    // value — a partial sum would understate it while looking authoritative.
+    properties_valued: number;
+    properties_total: number;
   }) | null;
 }

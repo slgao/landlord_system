@@ -1,6 +1,7 @@
 """Tests for tax_logic — annuity interest, AfA, cost expansion, §82b spreading."""
 import pytest
 
+import tax_logic
 from tax_logic import (
     annuity_year_breakdown,
     annuity_schedule,
@@ -216,3 +217,52 @@ def test_monthly_equivalent_by_frequency():
     # Unknown / legacy NULL frequency keeps the historical monthly reading.
     assert monthly_equivalent(70.0, None) == 70.0
     assert monthly_equivalent(70.0, "weird") == 70.0
+
+
+# ── Zinsbindung: the projection must stop pretending the fixed rate is forever ──
+
+def test_schedule_without_a_zinsbindung_is_unchanged():
+    # Every existing caller passes no reset; the old behaviour has to survive.
+    a = tax_logic.annuity_schedule(200000, 1.44, 3.0, "2018-06-30")
+    b = tax_logic.annuity_schedule(200000, 1.44, 3.0, "2018-06-30",
+                                   fixed_until=None, follow_up_rate_pct=None)
+    assert a == b and a[-1]["year"] == 2045
+
+
+def test_repricing_defers_payoff_and_costs_more_interest():
+    cheap = tax_logic.annuity_schedule(200000, 1.44, 3.0, "2018-06-30")
+    reset = tax_logic.annuity_schedule(200000, 1.44, 3.0, "2018-06-30",
+                                       fixed_until="2028-06-30", follow_up_rate_pct=4.5)
+    assert reset[-1]["year"] > cheap[-1]["year"]
+    assert reset[-1]["interest_cum"] > cheap[-1]["interest_cum"]
+    # The payment is what does NOT move at a Prolongation — Tilgung absorbs it.
+    assert reset[0]["payment"] == cheap[0]["payment"]
+
+
+def test_the_rate_only_changes_after_the_fixed_period_ends():
+    reset = tax_logic.annuity_schedule(200000, 1.44, 3.0, "2018-06-30",
+                                       fixed_until="2028-06-30", follow_up_rate_pct=9.0)
+    cheap = tax_logic.annuity_schedule(200000, 1.44, 3.0, "2018-06-30")
+    by_year = {r["year"]: r for r in reset}
+    # Years wholly inside the fixed period are untouched...
+    for y in range(2019, 2028):
+        assert by_year[y] == next(r for r in cheap if r["year"] == y)
+    # ...and the year after it is dearer.
+    assert by_year[2029]["interest"] > next(r for r in cheap if r["year"] == 2029)["interest"]
+
+
+def test_follow_up_rate_is_flagged_when_it_had_to_be_assumed():
+    assert tax_logic.follow_up_rate(1.44, None, None) == (None, False)
+    assert tax_logic.follow_up_rate(1.44, "2028-06-30", None) == (tax_logic.DEFAULT_FOLLOW_UP_RATE_PCT, True)
+    assert tax_logic.follow_up_rate(1.44, "2028-06-30", 3.25) == (3.25, False)
+
+
+def test_year_breakdown_and_schedule_agree_across_a_reset():
+    m = {"principal": 200000, "interest_rate_pct": 1.44, "tilgung_rate_pct": 3.0,
+         "start_date": "2018-06-30", "fixed_until": "2028-06-30", "follow_up_rate_pct": 4.5}
+    sched = {r["year"]: r for r in tax_logic.schedule_for(m)}
+    for y in (2027, 2029, 2035):
+        b = tax_logic.year_breakdown_for(m, y)
+        assert abs(b["interest"] - sched[y]["interest"]) < 0.02
+        assert abs(b["balance_end"] - sched[y]["balance_end"]) < 0.02
+

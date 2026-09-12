@@ -72,3 +72,26 @@ def test_parse_iso_date_for_query_params():
     assert parse_iso_date("2026-03-04") == "2026-03-04"
     with pytest.raises(ValueError):
         parse_iso_date("2026/03/04")
+
+
+# ── The cold-rent split ──────────────────────────────────────────────────────
+# Rent is what the tenant transfers; how much of it is utilities depends on the
+# contract. Kaltmiete = rent − NK, and €/m² is only comparable when it is cold.
+
+def test_utilities_may_not_exceed_the_rent():
+    with pytest.raises(ValidationError):
+        _contract(rent=1000, nebenkosten_vorauszahlung=1000.01)
+    # Equal is legal in principle (an all-inclusive Pauschale) and leaves a
+    # Kaltmiete of zero rather than a negative one.
+    assert _contract(rent=1000, nebenkosten_vorauszahlung=1000).nebenkosten_vorauszahlung == 1000
+
+
+def test_negative_utilities_are_rejected():
+    with pytest.raises(ValidationError):
+        _contract(nebenkosten_vorauszahlung=-1)
+
+
+def test_utilities_default_to_unknown_not_zero():
+    # Unset must stay None: zero would claim the rent is entirely cold, which
+    # is a statement about the contract nobody made.
+    assert _contract().nebenkosten_vorauszahlung is None

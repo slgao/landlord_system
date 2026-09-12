@@ -58,6 +58,9 @@ export interface Contract {
   kaution_returned_date?: string;
   kaution_returned_amount?: number;
   terminated: boolean;
+  // The utilities portion of `rent`. Kaltmiete = rent − this; null means the
+  // split was never recorded, so the rent has to be treated as warm.
+  nebenkosten_vorauszahlung?: number | null;
 }
 
 export interface CoTenant {

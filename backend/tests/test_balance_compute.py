@@ -64,9 +64,10 @@ def test_month_costs_validity_window():
 # The payment is constant; the interest inside it falls every month. These pin
 # the split down, because it is the one figure a yearly total cannot show.
 
-def _one_mortgage(monkeypatch, start="2020-01-01"):
+# Row shape: principal, Sollzins, Tilgung, start, fixed_until, follow_up_rate
+def _one_mortgage(monkeypatch, start="2020-01-01", fixed_until=None, follow=None):
     monkeypatch.setattr(balance_compute, "fetch",
-                        lambda sql, params=(): [(100000, 3.0, 2.0, start)])
+                        lambda sql, params=(): [(100000, 3.0, 2.0, start, fixed_until, follow)])
 
 
 def test_month_split_sums_to_the_year_so_far(monkeypatch):
@@ -111,3 +112,32 @@ def test_past_year_has_no_current_month(monkeypatch):
     fin = balance_compute._financing(1, 1, date.today().year - 1)
     assert fin["interest_month"] is None and fin["equity_month"] is None
     assert fin["interest_paid"] > 0            # the completed year still reports
+
+
+def test_balance_sheet_honours_the_zinsbindung(monkeypatch):
+    # The same loan, once projected at its fixed rate for ever and once
+    # repriced when the Zinsbindung ends. The balance sheet has to see the
+    # second one, or its Restschuld drifts from the Financing page's.
+    from datetime import date
+    year = date.today().year
+    _one_mortgage(monkeypatch, start="2015-01-01")
+    flat = balance_compute._financing(1, 1, year)
+    _one_mortgage(monkeypatch, start="2015-01-01", fixed_until="2025-01-01", follow=6.0)
+    repriced = balance_compute._financing(1, 1, year)
+    # A dearer rate on the same payment amortizes more slowly: more debt left,
+    # more interest, less equity built.
+    assert repriced["debt_remaining"] > flat["debt_remaining"]
+    assert repriced["interest_month"] > flat["interest_month"]
+    assert repriced["equity_month"] < flat["equity_month"]
+
+
+def test_a_blank_zinsbindung_changes_nothing(monkeypatch):
+    # Legacy rows hold NULL — and the string "None" — for a date that was never
+    # set; neither may switch the projection to the assumed follow-up rate.
+    from datetime import date
+    year = date.today().year
+    _one_mortgage(monkeypatch, fixed_until=None)
+    a = balance_compute._financing(1, 1, year)
+    _one_mortgage(monkeypatch, fixed_until="None")
+    b = balance_compute._financing(1, 1, year)
+    assert a == b

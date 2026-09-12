@@ -6,7 +6,8 @@ from api.schemas.property import PropertyIn, PropertyOut
 router = APIRouter(prefix="/properties", tags=["Properties"])
 
 _SELECT = """
-    SELECT p.id, p.name, p.address, p.building_id, p.we_label, p.mea, b.name
+    SELECT p.id, p.name, p.address, p.building_id, p.we_label, p.mea, b.name,
+           p.market_value, p.market_value_date
     FROM properties p
     LEFT JOIN buildings b ON b.id = p.building_id
 """
@@ -15,7 +16,9 @@ _SELECT = """
 def _row(r) -> PropertyOut:
     return PropertyOut(id=r[0], name=r[1], address=r[2], building_id=r[3],
                        we_label=r[4], mea=float(r[5]) if r[5] is not None else None,
-                       building_name=r[6])
+                       building_name=r[6],
+                       market_value=float(r[7]) if r[7] is not None else None,
+                       market_value_date=r[8] if r[8] and r[8] != "None" else None)
 
 
 def _assert_building(building_id, owner):
@@ -41,9 +44,10 @@ def get_property(property_id: int, owner: int = Depends(require_auth)):
 def create_property(body: PropertyIn, owner: int = Depends(require_auth)):
     _assert_building(body.building_id, owner)
     pid = execute_returning(
-        "INSERT INTO properties (name, address, building_id, we_label, mea, owner_id) "
-        "VALUES (?,?,?,?,?,?) RETURNING id",
-        (body.name, body.address, body.building_id, body.we_label, body.mea, owner),
+        "INSERT INTO properties (name, address, building_id, we_label, mea, "
+        "market_value, market_value_date, owner_id) VALUES (?,?,?,?,?,?,?,?) RETURNING id",
+        (body.name, body.address, body.building_id, body.we_label, body.mea,
+         body.market_value, body.market_value_date, owner),
     )[0][0]
     return get_property(pid, owner)
 
@@ -54,9 +58,10 @@ def update_property(property_id: int, body: PropertyIn, owner: int = Depends(req
         raise HTTPException(status_code=404, detail="Property not found")
     _assert_building(body.building_id, owner)
     execute(
-        "UPDATE properties SET name=?, address=?, building_id=?, we_label=?, mea=? "
-        "WHERE id=? AND owner_id=?",
-        (body.name, body.address, body.building_id, body.we_label, body.mea, property_id, owner),
+        "UPDATE properties SET name=?, address=?, building_id=?, we_label=?, mea=?, "
+        "market_value=?, market_value_date=? WHERE id=? AND owner_id=?",
+        (body.name, body.address, body.building_id, body.we_label, body.mea,
+         body.market_value, body.market_value_date, property_id, owner),
     )
     return get_property(property_id, owner)
 

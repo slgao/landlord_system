@@ -25,8 +25,11 @@ type Form = {
   building_id: number | null;
   we_label: string;
   mea: string;
+  market_value: string;
+  market_value_date: string;
 };
-const EMPTY: Form = { name: "", address: "", building_id: null, we_label: "", mea: "" };
+const EMPTY: Form = { name: "", address: "", building_id: null, we_label: "", mea: "",
+                      market_value: "", market_value_date: "" };
 
 function buildingLabel(b: Building): string {
   return b.name || [b.street, b.house_no].filter(Boolean).join(" ") || `Building #${b.id}`;
@@ -56,6 +59,8 @@ export default function PropertiesPage() {
         building_id: data.building_id,
         we_label: data.we_label || null,
         mea: data.mea === "" ? null : parseFloat(data.mea),
+        market_value: data.market_value === "" ? null : parseFloat(data.market_value),
+        market_value_date: data.market_value_date || null,
       };
       return editing
         ? api.put(`/api/properties/${editing.id}`, payload)
@@ -106,6 +111,8 @@ export default function PropertiesPage() {
       building_id: p.building_id ?? null,
       we_label: p.we_label || "",
       mea: p.mea == null ? "" : String(p.mea),
+      market_value: p.market_value == null ? "" : String(p.market_value),
+      market_value_date: p.market_value_date || "",
     });
     setOpen(true);
   }
@@ -127,19 +134,20 @@ export default function PropertiesPage() {
               <TableHead>Building</TableHead>
               <TableHead>WE</TableHead>
               <TableHead>MEA</TableHead>
+              <TableHead className="text-right">Market value</TableHead>
               <TableHead className="w-20" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : properties.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
                   No properties yet.
                 </TableCell>
               </TableRow>
@@ -150,6 +158,16 @@ export default function PropertiesPage() {
                   <TableCell className="text-muted-foreground">{p.building_name || "—"}</TableCell>
                   <TableCell className="text-muted-foreground">{p.we_label || "—"}</TableCell>
                   <TableCell className="text-muted-foreground font-mono">{p.mea ?? "—"}</TableCell>
+                  <TableCell className="text-right font-mono">
+                    {p.market_value != null ? (
+                      <>
+                        {p.market_value.toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} €
+                        {p.market_value_date && (
+                          <span className="block text-[10px] text-muted-foreground">{p.market_value_date}</span>
+                        )}
+                      </>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(p)}>
@@ -238,6 +256,30 @@ export default function PropertiesPage() {
                   onChange={(e) => setForm((f) => ({ ...f, mea: e.target.value }))}
                   placeholder="e.g. 0.25"
                 />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Market value (€)</Label>
+                <Input
+                  type="number" step="1000" min="0"
+                  value={form.market_value}
+                  onChange={(e) => setForm((f) => ({ ...f, market_value: e.target.value }))}
+                  placeholder="e.g. 210000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Equity is this less the debt. Only the purchase price is otherwise on file.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Valued on</Label>
+                <Input
+                  type="date"
+                  value={form.market_value_date}
+                  onChange={(e) => setForm((f) => ({ ...f, market_value_date: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">When the estimate was made.</p>
               </div>
             </div>
 

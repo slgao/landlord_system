@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
-import { Apartment, Property } from "@/lib/types";
+import { todayISO } from "@/lib/utils";
+import { Apartment, Property, Contract } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,7 @@ import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
 import { Pencil, Trash2 } from "lucide-react";
 
-const EMPTY = { property_id: 0, name: "", flat: "" };
+const EMPTY = { property_id: 0, name: "", flat: "", size_sqm: "" };
 
 export default function ApartmentsPage() {
   const qc = useQueryClient();
@@ -35,6 +36,18 @@ export default function ApartmentsPage() {
     queryKey: ["properties"],
     queryFn: () => api.get("/api/properties/").then((r) => r.data),
   });
+  // Rents come along so the list can show €/m² — the figure that says which
+  // flat is furthest below what the Mietspiegel would allow.
+  const { data: contracts = [] } = useQuery<Contract[]>({
+    queryKey: ["contracts", true],
+    queryFn: () => api.get("/api/contracts/?active_only=true").then((r) => r.data),
+  });
+  const today = todayISO();
+  const rentFor = (aptId: number) => contracts
+    .filter((c) => c.apartment_id === aptId && c.start_date <= today
+                   && (!c.end_date || c.end_date >= today))
+    .reduce((s, c) => s + c.rent, 0);
+
   const { data: apartments = [], isLoading } = useQuery<Apartment[]>({
     queryKey: ["apartments", filterProp],
     queryFn: () => {
@@ -44,10 +57,12 @@ export default function ApartmentsPage() {
   });
 
   const save = useMutation({
-    mutationFn: (data: typeof EMPTY) =>
-      editing
-        ? api.put(`/api/apartments/${editing.id}`, data)
-        : api.post("/api/apartments/", data),
+    mutationFn: (data: typeof EMPTY) => {
+      const body = { ...data, size_sqm: data.size_sqm === "" ? null : Number(data.size_sqm) };
+      return editing
+        ? api.put(`/api/apartments/${editing.id}`, body)
+        : api.post("/api/apartments/", body);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["apartments"] });
       toast.success(editing ? "Apartment updated" : "Apartment created");
@@ -73,7 +88,8 @@ export default function ApartmentsPage() {
 
   function openEdit(a: Apartment) {
     setEditing(a);
-    setForm({ property_id: a.property_id, name: a.name, flat: a.flat || "" });
+    setForm({ property_id: a.property_id, name: a.name, flat: a.flat || "",
+              size_sqm: a.size_sqm != null ? String(a.size_sqm) : "" });
     setOpen(true);
   }
 
@@ -100,17 +116,19 @@ export default function ApartmentsPage() {
               <TableHead>Property</TableHead>
               <TableHead>Apartment</TableHead>
               <TableHead>Flat/Unit</TableHead>
+              <TableHead className="text-right">m²</TableHead>
+              <TableHead className="text-right">Rent / m²</TableHead>
               <TableHead className="w-20" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-10">Loading…</TableCell>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-10">Loading…</TableCell>
               </TableRow>
             ) : apartments.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-10">No apartments yet.</TableCell>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-10">No apartments yet.</TableCell>
               </TableRow>
             ) : (
               apartments.map((a) => (
@@ -118,6 +136,14 @@ export default function ApartmentsPage() {
                   <TableCell className="text-muted-foreground">{a.property_name}</TableCell>
                   <TableCell className="font-medium">{a.name}</TableCell>
                   <TableCell className="text-muted-foreground">{a.flat || "—"}</TableCell>
+                  <TableCell className="text-right font-mono text-muted-foreground">
+                    {a.size_sqm != null ? a.size_sqm.toFixed(1) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right font-mono">
+                    {a.size_sqm && rentFor(a.id) > 0
+                      ? `${(rentFor(a.id) / a.size_sqm).toFixed(2)} €`
+                      : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(a)}>
@@ -171,13 +197,25 @@ export default function ApartmentsPage() {
                 placeholder="e.g. OG Links"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label>Flat / Unit</Label>
-              <Input
-                value={form.flat}
-                onChange={(e) => setForm((f) => ({ ...f, flat: e.target.value }))}
-                placeholder="e.g. 2B"
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Flat / Unit</Label>
+                <Input
+                  value={form.flat}
+                  onChange={(e) => setForm((f) => ({ ...f, flat: e.target.value }))}
+                  placeholder="e.g. 2B"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Size (m²)</Label>
+                <Input
+                  type="number" step="0.1" min="0"
+                  value={form.size_sqm}
+                  onChange={(e) => setForm((f) => ({ ...f, size_sqm: e.target.value }))}
+                  placeholder="e.g. 62.5"
+                />
+                <p className="text-xs text-muted-foreground">Wohnfläche — drives €/m².</p>
+              </div>
             </div>
           </div>
           <DialogFooter>

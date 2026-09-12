@@ -10,10 +10,10 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
-from db import fetch, execute, insert
+from db import fetch, execute, execute_returning, insert
 from auth import require_auth
 from api.schemas.common import IsoDate, OptIsoDate
 import tax_logic
@@ -50,10 +50,15 @@ class TaxProfileIn(BaseModel):
 class MortgageIn(BaseModel):
     property_id: int
     label: Optional[str] = None
-    principal: float
-    interest_rate_pct: float
-    tilgung_rate_pct: float
+    principal: float = Field(gt=0)
+    interest_rate_pct: float = Field(ge=0, le=25)
+    tilgung_rate_pct: float = Field(ge=0, le=100)
     start_date: IsoDate
+    # End of the Zinsbindung, and the rate to assume after it. Without these a
+    # 2018 loan at 1.44 % was projected at 1.44 % out to 2045 — a rate that
+    # expires in 2028. Left empty, the current rate simply runs on, as before.
+    fixed_until: OptIsoDate = None
+    follow_up_rate_pct: Optional[float] = Field(default=None, ge=0, le=25)
     note: Optional[str] = None
 
 
@@ -101,11 +106,24 @@ def _clean(v):
 
 # ── Profiles + mortgages ─────────────────────────────────────────────────────
 
+# Every mortgage read goes through this list, so no call site can forget the
+# Zinsbindung columns and quietly project the fixed rate to payoff.
+_MORTGAGE_COLS = ("id, property_id, label, principal, interest_rate_pct, "
+                  "tilgung_rate_pct, start_date, note, fixed_until, follow_up_rate_pct")
+
+
 def _mortgage_row(r) -> dict:
+    fixed_until = _clean(r[8])
+    rate_after, assumed = tax_logic.follow_up_rate(float(r[4]), fixed_until,
+                                                   r[9] if r[9] is not None else None)
     return {
         "id": r[0], "property_id": r[1], "label": _clean(r[2]),
         "principal": float(r[3]), "interest_rate_pct": float(r[4]),
         "tilgung_rate_pct": float(r[5]), "start_date": r[6], "note": _clean(r[7]),
+        "fixed_until": fixed_until,
+        # What the projection actually used, and whether the loan supplied it.
+        "follow_up_rate_pct": rate_after,
+        "follow_up_assumed": assumed,
     }
 
 
@@ -117,8 +135,7 @@ def list_profiles(owner: int = Depends(require_auth)):
         "SELECT property_id, purchase_date, purchase_price, building_share_pct,"
         "       afa_rate_pct, notes FROM property_tax_profiles WHERE owner_id=?", (owner,))}
     mortgages: dict[int, list] = {}
-    for r in fetch("SELECT id, property_id, label, principal, interest_rate_pct,"
-                   "       tilgung_rate_pct, start_date, note FROM mortgages "
+    for r in fetch(f"SELECT {_MORTGAGE_COLS} FROM mortgages "
                    "WHERE owner_id=? ORDER BY id", (owner,)):
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
 
@@ -180,11 +197,14 @@ def set_tax_relevance(property_id: int, body: RelevanceIn, owner: int = Depends(
 def create_mortgage(body: MortgageIn, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (body.property_id, owner)):
         raise HTTPException(status_code=404, detail="Property not found")
-    new_id = insert("mortgages", (body.property_id, body.label, body.principal,
-                                  body.interest_rate_pct, body.tilgung_rate_pct,
-                                  body.start_date, body.note))
-    r = fetch("SELECT id, property_id, label, principal, interest_rate_pct, tilgung_rate_pct,"
-              "       start_date, note FROM mortgages WHERE id=?", (new_id,))[0]
+    new_id = execute_returning(
+        "INSERT INTO mortgages (property_id, label, principal, interest_rate_pct, "
+        "tilgung_rate_pct, start_date, note, fixed_until, follow_up_rate_pct, owner_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id",
+        (body.property_id, body.label, body.principal, body.interest_rate_pct,
+         body.tilgung_rate_pct, body.start_date, body.note, body.fixed_until,
+         body.follow_up_rate_pct, owner))[0][0]
+    r = fetch(f"SELECT {_MORTGAGE_COLS} FROM mortgages WHERE id=?", (new_id,))[0]
     return _mortgage_row(r)
 
 
@@ -195,11 +215,12 @@ def update_mortgage(mortgage_id: int, body: MortgageIn, owner: int = Depends(req
     if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (body.property_id, owner)):
         raise HTTPException(status_code=404, detail="Property not found")
     execute("""UPDATE mortgages SET property_id=?, label=?, principal=?, interest_rate_pct=?,
-               tilgung_rate_pct=?, start_date=?, note=? WHERE id=? AND owner_id=?""",
+               tilgung_rate_pct=?, start_date=?, note=?, fixed_until=?, follow_up_rate_pct=?
+               WHERE id=? AND owner_id=?""",
             (body.property_id, body.label, body.principal, body.interest_rate_pct,
-             body.tilgung_rate_pct, body.start_date, body.note, mortgage_id, owner))
-    r = fetch("SELECT id, property_id, label, principal, interest_rate_pct, tilgung_rate_pct,"
-              "       start_date, note FROM mortgages WHERE id=?", (mortgage_id,))[0]
+             body.tilgung_rate_pct, body.start_date, body.note, body.fixed_until,
+             body.follow_up_rate_pct, mortgage_id, owner))
+    r = fetch(f"SELECT {_MORTGAGE_COLS} FROM mortgages WHERE id=?", (mortgage_id,))[0]
     return _mortgage_row(r)
 
 
@@ -250,14 +271,10 @@ def _as_of(m: dict, year: int, month: int) -> dict:
     Same convention as the balance sheet's _financing: the current year stops at
     the current month, so these are figures to date, not a projected year-end.
     """
-    b = tax_logic.annuity_year_breakdown(
-        m["principal"], m["interest_rate_pct"], m["tilgung_rate_pct"],
-        m["start_date"], year, month)
+    b = tax_logic.year_breakdown_for(m, year, month)
     # `month` alone: the year so far, less the year up to the month before it.
     # January has no month before it, so the year so far is already the month.
-    prev = (tax_logic.annuity_year_breakdown(
-        m["principal"], m["interest_rate_pct"], m["tilgung_rate_pct"],
-        m["start_date"], year, month - 1) if month > 1 else None)
+    prev = tax_logic.year_breakdown_for(m, year, month - 1) if month > 1 else None
     return {"balance_now": b["balance_end"], "interest_since_start": b["interest_total"],
             "tilgung_since_start": b["equity_total"], "monthly_payment": b["monthly_payment"],
             "interest_month": round(b["interest"] - (prev["interest"] if prev else 0.0), 2),
@@ -275,15 +292,20 @@ def amortization(owner: int = Depends(require_auth)):
     """
     today = date.today()
     mortgages: dict[int, list] = {}
-    for r in fetch("SELECT id, property_id, label, principal, interest_rate_pct,"
-                   "       tilgung_rate_pct, start_date, note FROM mortgages "
+    for r in fetch(f"SELECT {_MORTGAGE_COLS} FROM mortgages "
                    "WHERE owner_id=? ORDER BY start_date, id", (owner,)):
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
     if not mortgages:
         return {"as_of": str(today), "properties": [], "totals": None}
 
-    names = {r[0]: r[1] for r in fetch(
-        "SELECT id, name FROM properties WHERE owner_id=? ", (owner,))}
+    # Market value is what turns a debt figure into an equity figure.
+    names, values = {}, {}
+    for pid, name, mv, mvd in fetch(
+            "SELECT id, name, market_value, market_value_date FROM properties "
+            "WHERE owner_id=?", (owner,)):
+        names[pid] = name
+        values[pid] = (float(mv) if mv is not None else None,
+                       mvd if mvd and mvd != "None" else None)
     flats: dict[int, list] = {}
     for pid, label in fetch("SELECT property_id, name FROM apartments WHERE owner_id=? "
                             "ORDER BY name", (owner,)):
@@ -293,13 +315,18 @@ def amortization(owner: int = Depends(require_auth)):
     for pid, loans in mortgages.items():
         entries = []
         for m in loans:
-            sched = tax_logic.annuity_schedule(
-                m["principal"], m["interest_rate_pct"], m["tilgung_rate_pct"], m["start_date"])
+            sched = tax_logic.schedule_for(m)
             if not sched:                     # unusable terms — skip, never crash the page
                 continue
+            # What is still owed when the fixed rate ends — the sum that has to
+            # be refinanced at whatever the market then offers.
+            reset = tax_logic._parse(m["fixed_until"])
+            bal_at_reset = (tax_logic.year_breakdown_for(m, reset.year, reset.month)["balance_end"]
+                            if reset else None)
             entries.append({**m, "schedule": sched,
                             "paid_off_year": sched[-1]["year"],
                             "interest_lifetime": sched[-1]["interest_cum"],
+                            "balance_at_reset": bal_at_reset,
                             **_as_of(m, today.year, today.month)})
         if not entries:
             continue
@@ -311,10 +338,20 @@ def amortization(owner: int = Depends(require_auth)):
         # into the property's rate would invoice you for a loan you no longer
         # have. balance_now is 0 in both of those cases, which is exactly the test.
         rate_now = sum(e["monthly_payment"] for e in entries if e["balance_now"] > 0)
+        market_value, value_date = values.get(pid, (None, None))
+        balance_now = round(sum(e["balance_now"] for e in entries), 2)
         props.append({
             "property_id": pid,
             "property_name": names.get(pid, f"Property #{pid}"),
             "apartments": flats.get(pid, []),
+            # Equity only means anything once a value is on file; None says
+            # "not known" rather than quietly implying the debt is the whole story.
+            "market_value": market_value,
+            "market_value_date": value_date,
+            "equity": round(market_value - balance_now, 2) if market_value is not None else None,
+            # The nearest reset across this property's loans — what the projection
+            # below stops being a fact at.
+            "next_reset": min((e["fixed_until"] for e in entries if e["fixed_until"]), default=None),
             "mortgages": entries,
             "combined": _merge_schedules(scheds),
             "principal_total": round(sum(e["principal"] for e in entries), 2),
@@ -329,7 +366,19 @@ def amortization(owner: int = Depends(require_auth)):
         })
 
     props.sort(key=lambda p: p["property_name"])
+    # Portfolio equity is only honest when every financed property has a value;
+    # summing the ones that do would understate it and look like a real number.
+    valued = [p for p in props if p["market_value"] is not None]
+    all_valued = bool(valued) and len(valued) == len(props)
     totals = {
+        # Both are withheld until every financed property has a value. A partial
+        # sum is worse than nothing here: it would pit some of the value against
+        # all of the debt and report an equity far below the truth.
+        "market_value": round(sum(p["market_value"] for p in valued), 2) if all_valued else None,
+        "equity": round(sum(p["equity"] for p in valued), 2) if all_valued else None,
+        "properties_valued": len(valued),
+        "properties_total": len(props),
+        "next_reset": min((p["next_reset"] for p in props if p["next_reset"]), default=None),
         "principal_total": round(sum(p["principal_total"] for p in props), 2),
         "balance_now": round(sum(p["balance_now"] for p in props), 2),
         "interest_since_start": round(sum(p["interest_since_start"] for p in props), 2),
@@ -557,8 +606,7 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
         "SELECT property_id, purchase_date, purchase_price, building_share_pct,"
         "       afa_rate_pct FROM property_tax_profiles WHERE owner_id=?", (owner,))}
     mortgages: dict[int, list] = {}
-    for r in fetch("SELECT id, property_id, label, principal, interest_rate_pct,"
-                   "       tilgung_rate_pct, start_date, note FROM mortgages "
+    for r in fetch(f"SELECT {_MORTGAGE_COLS} FROM mortgages "
                    "WHERE owner_id=? ORDER BY id", (owner,)):
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
 
@@ -662,9 +710,7 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
         zins_rows = [e for e in expenses.get(pid, []) if e["category"] == "Schuldzinsen"]
         computed_rows = []
         for m in mortgages.get(pid, []):
-            b = tax_logic.annuity_year_breakdown(
-                m["principal"], m["interest_rate_pct"], m["tilgung_rate_pct"],
-                m["start_date"], year)
+            b = tax_logic.year_breakdown_for(m, year)
             computed_rows.append({"label": m["label"] or f"Loan #{m['id']}", **b})
         ov_zins = overrides.get((pid, "schuldzinsen"))
         if ov_zins is not None:

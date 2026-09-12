@@ -1,11 +1,16 @@
-"""Tests for the amortization endpoint's schedule merging.
+"""Tests for the amortization endpoint: schedule merging, and the aggregation
+it hands the Financing page.
 
 The math itself is covered in test_tax_logic; what is easy to get wrong here is
 folding several loans that start and finish at different times onto one
-timeline — see _merge_schedules.
+timeline (see _merge_schedules), and the rules around equity and the
+Zinsbindung reset.
 """
+from datetime import date
+
 import pytest
 
+from api.routers import tax as tax_router
 from api.routers.tax import _merge_schedules
 from tax_logic import annuity_schedule
 
@@ -78,3 +83,92 @@ def test_as_of_on_a_settled_loan():
     r = _as_of(m, 2026, 8)
     assert r["balance_now"] == 0.0
     assert r["tilgung_since_start"] == pytest.approx(50_000, abs=1.0)
+
+
+# ── Aggregation: equity and the Zinsbindung reset ───────────────────────────
+
+# mortgages row order is tax_router._MORTGAGE_COLS
+def _loan(mid, pid, label, principal, ir, tr, start, fixed_until=None, follow=None):
+    return (mid, pid, label, principal, ir, tr, start, None, fixed_until, follow)
+
+
+def _install(monkeypatch, properties, loans, apartments=()):
+    def fake_fetch(sql, params=()):
+        q = " ".join(sql.split())
+        if "FROM mortgages" in q:
+            return list(loans)
+        if "FROM properties" in q:
+            return list(properties)
+        if "FROM apartments" in q:
+            return list(apartments)
+        raise AssertionError(f"unexpected query: {q}")
+    monkeypatch.setattr(tax_router, "fetch", fake_fetch)
+
+
+def test_equity_is_value_less_debt(monkeypatch):
+    _install(monkeypatch,
+             properties=[(1, "Haus A", 300000, "2026-06-30")],
+             loans=[_loan(1, 1, "A", 200000, 2.0, 2.0, "2020-01-31")])
+    out = tax_router.amortization(owner=1)
+    p = out["properties"][0]
+    assert p["market_value"] == 300000
+    assert p["market_value_date"] == "2026-06-30"
+    assert p["equity"] == round(300000 - p["balance_now"], 2)
+    assert out["totals"]["equity"] == p["equity"]
+    assert out["totals"]["properties_valued"] == out["totals"]["properties_total"] == 1
+
+
+def test_unvalued_property_reports_no_equity(monkeypatch):
+    _install(monkeypatch,
+             properties=[(1, "Haus A", None, None)],
+             loans=[_loan(1, 1, "A", 200000, 2.0, 2.0, "2020-01-31")])
+    out = tax_router.amortization(owner=1)
+    assert out["properties"][0]["equity"] is None
+    assert out["totals"]["equity"] is None and out["totals"]["market_value"] is None
+
+
+def test_partly_valued_portfolio_withholds_both_totals(monkeypatch):
+    # Pitting one property's value against the whole portfolio's debt would
+    # report an equity far below the truth while looking authoritative.
+    _install(monkeypatch,
+             properties=[(1, "Haus A", 300000, None), (2, "Haus B", None, None)],
+             loans=[_loan(1, 1, "A", 200000, 2.0, 2.0, "2020-01-31"),
+                    _loan(2, 2, "B", 100000, 2.0, 2.0, "2020-01-31")])
+    t = tax_router.amortization(owner=1)["totals"]
+    assert t["equity"] is None
+    assert t["market_value"] is None
+    assert (t["properties_valued"], t["properties_total"]) == (1, 2)
+
+
+def test_reset_fields_follow_the_zinsbindung(monkeypatch):
+    _install(monkeypatch,
+             properties=[(1, "Haus A", None, None)],
+             loans=[_loan(1, 1, "fixed", 200000, 1.44, 3.0, "2018-06-30", "2028-06-30", 4.5),
+                    _loan(2, 1, "open", 50000, 2.0, 2.0, "2020-01-31")])
+    p = tax_router.amortization(owner=1)["properties"][0]
+    by = {m["label"]: m for m in p["mortgages"]}
+    assert by["fixed"]["balance_at_reset"] > 0          # what must be refinanced
+    assert by["open"]["balance_at_reset"] is None       # nothing to refinance
+    assert by["fixed"]["follow_up_rate_pct"] == 4.5 and by["fixed"]["follow_up_assumed"] is False
+    assert by["open"]["follow_up_rate_pct"] is None
+    # The property's next reset is the earliest across its loans.
+    assert p["next_reset"] == "2028-06-30"
+
+
+def test_a_missing_follow_up_rate_is_flagged_not_silently_chosen(monkeypatch):
+    _install(monkeypatch,
+             properties=[(1, "Haus A", None, None)],
+             loans=[_loan(1, 1, "fixed", 200000, 1.44, 3.0, "2018-06-30", "2028-06-30", None)])
+    m = tax_router.amortization(owner=1)["properties"][0]["mortgages"][0]
+    assert m["follow_up_assumed"] is True
+    assert m["follow_up_rate_pct"] == tax_router.tax_logic.DEFAULT_FOLLOW_UP_RATE_PCT
+
+
+def test_repricing_defers_payoff_in_the_endpoint_too(monkeypatch):
+    terms = dict(properties=[(1, "Haus A", None, None)])
+    _install(monkeypatch, loans=[_loan(1, 1, "x", 200000, 1.44, 3.0, "2018-06-30")], **terms)
+    flat = tax_router.amortization(owner=1)["properties"][0]
+    _install(monkeypatch, loans=[_loan(1, 1, "x", 200000, 1.44, 3.0, "2018-06-30", "2028-06-30", 4.5)], **terms)
+    repriced = tax_router.amortization(owner=1)["properties"][0]
+    assert repriced["paid_off_year"] > flat["paid_off_year"]
+    assert repriced["interest_lifetime"] > flat["interest_lifetime"]

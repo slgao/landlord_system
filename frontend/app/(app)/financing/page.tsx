@@ -54,9 +54,15 @@ function toChartRows(rows: AmortRow[]) {
   }));
 }
 
-function Charts({ rows, thisYear }: { rows: AmortRow[]; thisYear: number }) {
+function Charts({ rows, thisYear, resetYear }: {
+  rows: AmortRow[]; thisYear: number; resetYear: number | null;
+}) {
   const data = useMemo(() => toChartRows(rows), [rows]);
   const marker = data.some((d) => d.year === String(thisYear)) ? String(thisYear) : null;
+  // The year the projection stops being a fact: past it the rate is whatever
+  // the refinancing brings, so the step in the bars is an assumption.
+  const reset = resetYear && data.some((d) => d.year === String(resetYear)) && resetYear !== thisYear
+    ? String(resetYear) : null;
   // A 30-year loan puts ~30 categories on the axis; let Recharts drop labels
   // rather than overlap them, but always keep the first and last year visible.
   const axis = {
@@ -78,7 +84,7 @@ function Charts({ rows, thisYear }: { rows: AmortRow[]; thisYear: number }) {
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={data} margin={{ top: 22, right: 8, left: 4, bottom: 0 }}>
+            <BarChart data={data} margin={{ top: 38, right: 8, left: 4, bottom: 0 }}>
               <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.5} vertical={false} />
               <XAxis dataKey="year" {...axis} minTickGap={18} />
               <YAxis {...axis} width={54} tickFormatter={fmtAxis} />
@@ -91,6 +97,11 @@ function Charts({ rows, thisYear }: { rows: AmortRow[]; thisYear: number }) {
               )}
               {/* stroke = the card surface: a hairline that keeps the two stacked
                   segments from bleeding into one another. */}
+              {reset && (
+                <ReferenceLine x={reset} stroke={C.interest} strokeDasharray="2 4"
+                  label={{ value: "rate resets", position: "top", offset: 22, fontSize: 10,
+                           fill: C.interest }} />
+              )}
               <Bar dataKey="Zins" stackId="a" fill={C.interest} fillOpacity={0.9}
                 stroke="hsl(var(--card))" strokeWidth={1} maxBarSize={26} />
               <Bar dataKey="Tilgung" stackId="a" fill={C.principal} fillOpacity={0.9}
@@ -111,7 +122,7 @@ function Charts({ rows, thisYear }: { rows: AmortRow[]; thisYear: number }) {
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={280}>
-            <AreaChart data={data} margin={{ top: 22, right: 8, left: 4, bottom: 0 }}>
+            <AreaChart data={data} margin={{ top: 38, right: 8, left: 4, bottom: 0 }}>
               <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.5} vertical={false} />
               <XAxis dataKey="year" {...axis} minTickGap={18} />
               <YAxis {...axis} width={54} tickFormatter={fmtAxis} />
@@ -120,6 +131,11 @@ function Charts({ rows, thisYear }: { rows: AmortRow[]; thisYear: number }) {
                 <ReferenceLine x={marker} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3"
                   label={{ value: "today", position: "top", offset: 8, fontSize: 10,
                            fill: "hsl(var(--muted-foreground))" }} />
+              )}
+              {reset && (
+                <ReferenceLine x={reset} stroke={C.interest} strokeDasharray="2 4"
+                  label={{ value: "rate resets", position: "top", offset: 22, fontSize: 10,
+                           fill: C.interest }} />
               )}
               {/* One series — the card title names it, so no legend box. */}
               <Area type="monotone" dataKey="Restschuld" stroke={C.net} strokeWidth={2}
@@ -194,6 +210,8 @@ function LoanTable({ p }: { p: AmortProperty }) {
               <TableHead className="text-right">Tilgung</TableHead>
               <TableHead className="text-right">Rate / month</TableHead>
               <TableHead className="text-right">Restschuld</TableHead>
+              <TableHead>Zinsbindung</TableHead>
+              <TableHead className="text-right">To refinance</TableHead>
               <TableHead className="text-right">Paid off</TableHead>
             </TableRow>
           </TableHeader>
@@ -207,6 +225,24 @@ function LoanTable({ p }: { p: AmortProperty }) {
                 <TableCell className="text-right font-mono tabular-nums">{pct(m.tilgung_rate_pct)}</TableCell>
                 <TableCell className="text-right font-mono tabular-nums">{fmt(m.monthly_payment)}</TableCell>
                 <TableCell className="text-right font-mono tabular-nums">{fmt(m.balance_now)}</TableCell>
+                <TableCell className="tabular-nums">
+                  {m.fixed_until ? (
+                    <>
+                      <span className="text-muted-foreground">{m.fixed_until}</span>
+                      <span className="block text-[10px] text-muted-foreground">
+                        then {m.follow_up_rate_pct}%{m.follow_up_assumed ? " (assumed)" : ""}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-amber-500" title="No Zinsbindung on file — the current rate is projected to payoff">
+                      not set
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {m.balance_at_reset != null ? fmt(m.balance_at_reset)
+                    : <span className="text-muted-foreground">—</span>}
+                </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.paid_off_year}</TableCell>
               </TableRow>
             ))}
@@ -366,13 +402,50 @@ export default function FinancingPage() {
         Tilgung. The rate stays flat; the split inside it moves every month.
       </p>
 
-      <Charts rows={view.rows} thisYear={thisYear} />
+      <Charts rows={view.rows} thisYear={thisYear}
+        resetYear={view.next_reset ? Number(view.next_reset.slice(0, 4)) : null} />
+
+      {/* Debt on its own says nothing about wealth; this is the line that turns
+          it into equity, and it stays quiet until the values are actually on file. */}
+      {/* Keyed on equity, not on market_value: across the portfolio a value is
+          only reported once every financed property has one, because pitting
+          some of the value against all of the debt understates equity badly. */}
+      {view.equity != null && view.market_value != null ? (
+        <p className="text-sm text-muted-foreground">
+          Worth{" "}
+          <span className="font-mono tabular-nums text-foreground">{fmt(view.market_value)}</span>
+          {" "}− debt{" "}
+          <span className="font-mono tabular-nums">{fmt(view.balance_now)}</span>
+          {" "}={" "}
+          <span className="font-mono tabular-nums text-primary font-medium">{fmt(view.equity)}</span>
+          {" "}equity
+          {"market_value_date" in view && view.market_value_date && (
+            <span> · valued {view.market_value_date}</span>
+          )}
+        </p>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {selected === "all" && data!.totals!.properties_valued > 0 ? (
+            <>
+              Only {data!.totals!.properties_valued} of {data!.totals!.properties_total} financed
+              properties {data!.totals!.properties_valued === 1 ? "has" : "have"} a market value, so
+              portfolio equity is not shown — value the rest under{" "}
+            </>
+          ) : (
+            <>No market value on file — add one under{" "}</>
+          )}
+          <Link href="/properties" className="text-primary hover:underline">Properties</Link>{" "}
+          to see equity rather than just debt.
+        </p>
+      )}
 
       <p className="text-xs text-muted-foreground">
-        Projected from the loan terms as a standard Annuitätendarlehen at a constant
-        rate — it assumes the Sollzins holds to payoff and knows nothing about
-        Sondertilgungen or the end of a Zinsbindung. Check figures against your bank
-        statements before using them in a tax return.
+        Projected from the loan terms as a standard Annuitätendarlehen, repricing each
+        loan at the end of its Zinsbindung (a loan with no end date on file is projected
+        at today&apos;s Sollzins to payoff, which overstates how long the cheap rate
+        lasts). The monthly payment is held constant across a reset, so a dearer rate
+        shows as a later payoff. Nothing here knows about Sondertilgungen — check
+        figures against your bank statements before using them in a tax return.
       </p>
 
       {selected !== "all" && <LoanTable p={props.find((x) => x.property_id === selected)!} />}

@@ -21,6 +21,49 @@ def _parse(d: str | None) -> date | None:
 
 # ── Annuity mortgage (Annuitätendarlehen) ────────────────────────────────────
 
+# ── Zinsbindung (the fixed-rate period) ──────────────────────────────────────
+# A German mortgage fixes its Sollzins for a term — typically ten years — and
+# reprices at the end of it. Projecting today's rate to payoff therefore
+# invents a rate: a 2018 loan at 1.44 % is a 2028 loan at whatever the market
+# then offers. When a loan records `fixed_until` the simulation switches rate
+# from the month after it.
+#
+# What does NOT change at the reset is the monthly payment. That is the usual
+# Prolongation in practice ("gleichbleibende Rate"): the balance is what it is,
+# you keep paying what you pay, and the Tilgung share absorbs the new rate —
+# so a higher rate shows up as a later payoff and more interest, not a bigger
+# bill. (A rate high enough that interest alone exceeds the payment would never
+# amortize; `annuity_schedule`'s `max_years` guard still terminates it.)
+
+# Used when a loan has a `fixed_until` but no follow-up rate of its own. It is
+# an assumption, not a forecast — the API reports which loans fell back to it
+# so the UI can say so.
+DEFAULT_FOLLOW_UP_RATE_PCT = 4.0
+
+
+def follow_up_rate(interest_rate_pct: float, fixed_until: str | None,
+                   follow_up_rate_pct: float | None) -> tuple[float | None, bool]:
+    """(rate after the reset, whether it was assumed). None when the loan has
+    no Zinsbindung on file and the current rate simply runs on."""
+    if not _parse(fixed_until):
+        return None, False
+    if follow_up_rate_pct is None:
+        return DEFAULT_FOLLOW_UP_RATE_PCT, True
+    return float(follow_up_rate_pct), False
+
+
+def _rate_picker(interest_rate_pct, fixed_until, follow_up_rate_pct):
+    """month-index → monthly interest rate, honouring the reset."""
+    after, _ = follow_up_rate(interest_rate_pct, fixed_until, follow_up_rate_pct)
+    base = interest_rate_pct / 100.0 / 12.0
+    if after is None:
+        return lambda m: base
+    end = _parse(fixed_until)
+    end_m = end.year * 12 + (end.month - 1)
+    new = after / 100.0 / 12.0
+    return lambda m: base if m <= end_m else new
+
+
 def annuity_year_breakdown(
     principal: float,
     interest_rate_pct: float,
@@ -28,6 +71,8 @@ def annuity_year_breakdown(
     start_date: str,
     year: int,
     end_month: int = 12,
+    fixed_until: str | None = None,
+    follow_up_rate_pct: float | None = None,
 ) -> dict:
     """Interest (Schuldzinsen) and principal (Tilgung) paid in `year`.
 
@@ -44,9 +89,13 @@ def annuity_year_breakdown(
     current month for a mid-year "as of now" snapshot (balance_end / *_ytd /
     *_total then reflect what's actually been paid so far, not a projected
     year-end). Defaults to 12 (full year), which is what the tax module wants.
+
+    `fixed_until` / `follow_up_rate_pct` reprice the loan at the end of its
+    Zinsbindung — see the note above. Omitted, the current rate runs on, which
+    is what every caller did before the Zinsbindung was recorded.
     """
     start = _parse(start_date)
-    monthly_rate = interest_rate_pct / 100.0 / 12.0
+    rate_at = _rate_picker(interest_rate_pct, fixed_until, follow_up_rate_pct)
     payment = principal * (interest_rate_pct + tilgung_rate_pct) / 100.0 / 12.0
 
     balance = float(principal)
@@ -67,7 +116,7 @@ def annuity_year_breakdown(
                 "monthly_payment": round(payment, 2),
                 "interest_total": 0.0, "equity_total": 0.0}
     while m <= end_m and balance > 0.005:
-        interest = balance * monthly_rate
+        interest = balance * rate_at(m)
         # Tilgung 0 (interest-only) legitimately amortizes nothing; never negative.
         amortize = max(min(payment - interest, balance), 0.0)
         interest_total += interest
@@ -94,6 +143,8 @@ def annuity_schedule(
     tilgung_rate_pct: float,
     start_date: str,
     max_years: int = 60,
+    fixed_until: str | None = None,
+    follow_up_rate_pct: float | None = None,
 ) -> list[dict]:
     """Year-by-year life of an annuity loan, from the first payment to payoff.
 
@@ -115,7 +166,7 @@ def annuity_schedule(
     if start is None or payment <= 0 or float(principal) <= 0:
         return []
 
-    monthly_rate = interest_rate_pct / 100.0 / 12.0
+    rate_at = _rate_picker(interest_rate_pct, fixed_until, follow_up_rate_pct)
     balance = float(principal)
     interest_cum = tilgung_cum = 0.0
     rows: list[dict] = []
@@ -143,7 +194,7 @@ def annuity_schedule(
             year = m // 12
             interest_y = tilgung_y = 0.0
             months_y = 0
-        interest = balance * monthly_rate
+        interest = balance * rate_at(m)
         # Tilgung 0 (interest-only) legitimately amortizes nothing; never negative.
         # The final payment is capped at the balance so it cannot overshoot.
         amortize = max(min(payment - interest, balance), 0.0)
@@ -255,3 +306,24 @@ def monthly_equivalent(amount, frequency: str | None):
         return amount * 0
     months = FREQUENCY_MONTHS.get(frequency or "monthly", 1)
     return amount / months if months != 1 else amount
+
+
+# ── Calling the two above from a stored mortgage row ────────────────────────
+# Every caller reads the same six columns; these keep the Zinsbindung from
+# being forgotten at one call site and silently projecting the old rate.
+
+def _terms(m: dict) -> tuple:
+    return (float(m["principal"]), float(m["interest_rate_pct"]),
+            float(m["tilgung_rate_pct"]), m["start_date"],
+            m.get("fixed_until"), m.get("follow_up_rate_pct"))
+
+
+def schedule_for(m: dict, max_years: int = 60) -> list[dict]:
+    p, i, t, s, fu, fr = _terms(m)
+    return annuity_schedule(p, i, t, s, max_years, fixed_until=fu, follow_up_rate_pct=fr)
+
+
+def year_breakdown_for(m: dict, year: int, end_month: int = 12) -> dict:
+    p, i, t, s, fu, fr = _terms(m)
+    return annuity_year_breakdown(p, i, t, s, year, end_month,
+                                  fixed_until=fu, follow_up_rate_pct=fr)

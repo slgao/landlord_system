@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
 import { matchesQuery } from "@/lib/search";
+import { coldRent } from "@/lib/rent";
 import { todayISO } from "@/lib/utils";
 import { contractStatus, contractStatusLabel, contractStatusColor, startsInLabel } from "@/lib/contract-status";
 import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow } from "@/lib/types";
@@ -36,6 +37,10 @@ const CONTRACT_EMPTY = {
   start_date: "", end_date: "", terminated: false,
   kaution_amount: 0, kaution_currency: "EUR",
   kaution_paid_date: "",
+  // Entered as the cold rent, stored as the utilities part (rent − kalt), so
+  // there is one source of truth and the tax module keeps reading the column
+  // it always read. Blank = the split is not known.
+  kaltmiete: "" as string,
 };
 
 export default function ContractsPage() {
@@ -193,8 +198,12 @@ export default function ContractsPage() {
 
   const save = useMutation({
     mutationFn: (data: typeof CONTRACT_EMPTY) => {
-      const body = { ...data, end_date: data.end_date || null, kaution_paid_date: data.kaution_paid_date || null,
-        kaution_amount: data.kaution_amount || null };
+      const { kaltmiete, ...rest } = data;
+      const body = { ...rest, end_date: data.end_date || null,
+        kaution_paid_date: data.kaution_paid_date || null,
+        kaution_amount: data.kaution_amount || null,
+        nebenkosten_vorauszahlung: kaltmiete === ""
+          ? null : Math.round((data.rent - Number(kaltmiete)) * 100) / 100 };
       return editing ? api.put(`/api/contracts/${editing.id}`, body) : api.post("/api/contracts/", body);
     },
     onSuccess: (res) => { qc.invalidateQueries({ queryKey: ["contracts"] }); if (editing && selectedContract?.id === editing.id) setSelectedContract(res.data); toast.success(editing ? "Updated" : "Created"); setOpen(false); },
@@ -277,7 +286,8 @@ export default function ContractsPage() {
     setForm({ tenant_id: c.tenant_id, apartment_id: c.apartment_id, rent: c.rent, currency: c.currency,
       start_date: c.start_date, end_date: c.end_date || "", terminated: c.terminated,
       kaution_amount: c.kaution_amount || 0, kaution_currency: c.kaution_currency,
-      kaution_paid_date: c.kaution_paid_date || "" });
+      kaution_paid_date: c.kaution_paid_date || "",
+      kaltmiete: coldRent(c) != null ? String(coldRent(c)) : "" });
     setOpen(true);
   }
 
@@ -357,7 +367,16 @@ export default function ContractsPage() {
                     <TableRow key={c.id} className="cursor-pointer" onClick={() => openDetail(c)}>
                       <TableCell className="font-medium">{c.tenant_name}</TableCell>
                       <TableCell className="text-muted-foreground">{c.apartment_name}<br /><span className="text-xs">{c.property_name}</span></TableCell>
-                      <TableCell>{c.rent.toFixed(2)} {c.currency}</TableCell>
+                      <TableCell>
+                        {c.rent.toFixed(2)} {c.currency}
+                        {/* What the tenant transfers is not what the flat earns
+                            when utilities ride along inside it. */}
+                        {coldRent(c) != null && (
+                          <span className="block text-xs text-muted-foreground">
+                            kalt {coldRent(c)!.toFixed(2)}
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-muted-foreground text-sm">{c.start_date}<br />{c.end_date || "open"}</TableCell>
                       <TableCell>
                         <Badge className={contractStatusColor(c)}>{contractStatusLabel(c)}</Badge>
@@ -825,6 +844,27 @@ export default function ContractsPage() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>of which cold rent (Kaltmiete)</Label>
+                <Input type="number" step="0.01" min="0" max={form.rent || undefined}
+                  value={form.kaltmiete}
+                  onChange={(e) => setForm((f) => ({ ...f, kaltmiete: e.target.value }))}
+                  placeholder="leave blank if not split" />
+                <p className="text-xs text-muted-foreground">
+                  {form.kaltmiete === "" ? (
+                    <>The rent above is treated as warm, so €/m² cannot be compared
+                       against a Mietspiegel figure.</>
+                  ) : Number(form.kaltmiete) > form.rent ? (
+                    <span className="text-destructive">Cold rent cannot exceed the total rent.</span>
+                  ) : (
+                    <>Utilities inside the rent:{" "}
+                      <b>{(form.rent - Number(form.kaltmiete)).toFixed(2)} €</b>/month</>
+                  )}
+                </p>
+              </div>
+              <div />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5"><Label>Start Date</Label><Input type="date" value={form.start_date} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} /></div>
               <div className="space-y-1.5"><Label>End Date (optional)</Label><Input type="date" value={form.end_date} onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))} /></div>
             </div>
@@ -846,7 +886,9 @@ export default function ContractsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => save.mutate(form)} disabled={!form.tenant_id || !form.apartment_id || !form.start_date || save.isPending}>
+            <Button onClick={() => save.mutate(form)}
+              disabled={!form.tenant_id || !form.apartment_id || !form.start_date || save.isPending
+                        || (form.kaltmiete !== "" && Number(form.kaltmiete) > form.rent)}>
               {save.isPending ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>

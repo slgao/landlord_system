@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
-import { TaxProfile, TaxExpense, NkSplit } from "@/lib/types";
+import { TaxProfile, TaxExpense, NkSplit, Mortgage } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import { ConfirmButton } from "@/components/confirm-button";
 import { toast } from "sonner";
-import { Plus, Save, Trash2, FileDown } from "lucide-react";
+import { Plus, Save, Trash2, FileDown, Pencil, Check, X } from "lucide-react";
 
 // Mirrors tax_logic.DEFAULT_FOLLOW_UP_RATE_PCT — the rate the projections fall
 // back to when a loan records a Zinsbindung but no follow-up rate.
@@ -115,6 +115,125 @@ const EMPTY_MORTGAGE = {
   tilgung_rate_pct: "", start_date: "", fixed_until: "", follow_up_rate_pct: "",
 };
 
+// A loan's terms are not write-once: the Zinsbindung is usually filled in long
+// after the loan was entered, and a rate typo has to be fixable. The PUT
+// replaces the whole loan, so the row edits every field rather than two — a
+// half-editable row would resubmit whatever stale values it still held.
+function MortgageRow({ m, onDelete }: { m: Mortgage & { property_name: string }; onDelete: () => void }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const asForm = () => ({
+    label: m.label ?? "",
+    principal: String(m.principal),
+    interest_rate_pct: String(m.interest_rate_pct),
+    tilgung_rate_pct: String(m.tilgung_rate_pct),
+    start_date: m.start_date,
+    fixed_until: m.fixed_until ?? "",
+    // Only the loan's own rate is editable; the app's fallback is not the
+    // loan's and must not be saved onto it as though it were.
+    follow_up_rate_pct: m.follow_up_assumed || m.follow_up_rate_pct == null
+      ? "" : String(m.follow_up_rate_pct),
+  });
+  const [f, setF] = useState(asForm);
+
+  const save = useMutation({
+    mutationFn: () => api.put(`/api/tax/mortgages/${m.id}`, {
+      property_id: m.property_id,
+      label: f.label || null,
+      principal: parseFloat(f.principal),
+      interest_rate_pct: parseFloat(f.interest_rate_pct),
+      tilgung_rate_pct: parseFloat(f.tilgung_rate_pct),
+      start_date: f.start_date,
+      fixed_until: f.fixed_until || null,
+      follow_up_rate_pct: f.follow_up_rate_pct === "" ? null : parseFloat(f.follow_up_rate_pct),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tax-profiles"] });
+      // Every projection keys off these terms.
+      qc.invalidateQueries({ queryKey: ["amortization"] });
+      qc.invalidateQueries({ queryKey: ["tax-report"] });
+      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+      setEditing(false);
+      toast.success(`${m.label || "Mortgage"} updated`);
+    },
+    onError: (e) => toast.error(errorMessage(e, "Could not save the mortgage")),
+  });
+
+  if (!editing) {
+    return (
+      <TableRow>
+        <TableCell>{m.property_name}</TableCell>
+        <TableCell className="text-muted-foreground">{m.label || "—"}</TableCell>
+        <TableCell className="text-right font-mono">{eur(m.principal)}</TableCell>
+        <TableCell className="text-right font-mono">{m.interest_rate_pct}</TableCell>
+        <TableCell className="text-right font-mono">{m.tilgung_rate_pct}</TableCell>
+        <TableCell className="text-muted-foreground">{m.start_date}</TableCell>
+        <TableCell className={m.fixed_until ? "text-muted-foreground" : "text-amber-500"}>
+          {m.fixed_until || "not set"}
+        </TableCell>
+        <TableCell className="text-right font-mono text-muted-foreground">
+          {m.fixed_until ? `${m.follow_up_rate_pct}%${m.follow_up_assumed ? "*" : ""}` : "—"}
+        </TableCell>
+        <TableCell>
+          <div className="flex gap-1 justify-end">
+            <Button size="sm" variant="ghost" title="Edit"
+              onClick={() => { setF(asForm()); setEditing(true); }}>
+              <Pencil className="size-4" />
+            </Button>
+            <ConfirmButton onConfirm={onDelete}
+              message={`Delete mortgage ${m.label || m.id} (${m.property_name})? Computed Schuldzinsen for it disappear from all years.`}>
+              <Button size="sm" variant="ghost" className="text-muted-foreground"><Trash2 className="size-4" /></Button>
+            </ConfirmButton>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
+  const num = (k: keyof typeof f, w: string, step = "0.01") => (
+    <Input type="number" step={step} className={`h-8 ${w} font-mono`} value={f[k]}
+      onChange={(e) => setF({ ...f, [k]: e.target.value })} />
+  );
+  const valid = f.principal && f.interest_rate_pct && f.tilgung_rate_pct && f.start_date;
+
+  return (
+    <TableRow className="bg-muted/30">
+      <TableCell className="text-muted-foreground">{m.property_name}</TableCell>
+      <TableCell>
+        <Input className="h-8 w-24" value={f.label}
+          onChange={(e) => setF({ ...f, label: e.target.value })} />
+      </TableCell>
+      <TableCell className="text-right">{num("principal", "w-28", "100")}</TableCell>
+      <TableCell className="text-right">{num("interest_rate_pct", "w-20")}</TableCell>
+      <TableCell className="text-right">{num("tilgung_rate_pct", "w-20")}</TableCell>
+      <TableCell>
+        <Input type="date" className="h-8 w-36" value={f.start_date}
+          onChange={(e) => setF({ ...f, start_date: e.target.value })} />
+      </TableCell>
+      <TableCell>
+        <Input type="date" className="h-8 w-36" value={f.fixed_until}
+          onChange={(e) => setF({ ...f, fixed_until: e.target.value })} />
+      </TableCell>
+      <TableCell className="text-right">
+        <Input type="number" step="0.01" className="h-8 w-20 font-mono"
+          placeholder={String(DEFAULT_FOLLOW_UP_RATE)} value={f.follow_up_rate_pct}
+          onChange={(e) => setF({ ...f, follow_up_rate_pct: e.target.value })} />
+      </TableCell>
+      <TableCell>
+        <div className="flex gap-1 justify-end">
+          <Button size="sm" variant="ghost" title="Save" disabled={!valid || save.isPending}
+            onClick={() => save.mutate()}>
+            <Check className="size-4 text-primary" />
+          </Button>
+          <Button size="sm" variant="ghost" title="Cancel" onClick={() => setEditing(false)}>
+            <X className="size-4" />
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
   const qc = useQueryClient();
   const [f, setF] = useState(EMPTY_MORTGAGE);
@@ -172,32 +291,11 @@ function MortgageSection({ profiles }: { profiles: TaxProfile[] }) {
               <TableHead className="text-right">Tilgung %</TableHead>
               <TableHead>Start</TableHead>
               <TableHead>Fixed until</TableHead>
-              <TableHead className="text-right">Then</TableHead><TableHead />
+              <TableHead className="text-right">Then</TableHead><TableHead className="w-20" />
             </TableRow></TableHeader>
             <TableBody>
               {mortgages.map((m) => (
-                <TableRow key={m.id}>
-                  <TableCell>{m.property_name}</TableCell>
-                  <TableCell className="text-muted-foreground">{m.label || "—"}</TableCell>
-                  <TableCell className="text-right font-mono">{eur(m.principal)}</TableCell>
-                  <TableCell className="text-right font-mono">{m.interest_rate_pct}</TableCell>
-                  <TableCell className="text-right font-mono">{m.tilgung_rate_pct}</TableCell>
-                  <TableCell className="text-muted-foreground">{m.start_date}</TableCell>
-                  <TableCell className={m.fixed_until ? "text-muted-foreground" : "text-amber-500"}>
-                    {m.fixed_until || "not set"}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-muted-foreground">
-                    {m.fixed_until
-                      ? `${m.follow_up_rate_pct}%${m.follow_up_assumed ? "*" : ""}`
-                      : "—"}
-                  </TableCell>
-                  <TableCell>
-                    <ConfirmButton onConfirm={() => del.mutate(m.id)}
-                      message={`Delete mortgage ${m.label || m.id} (${m.property_name})? Computed Schuldzinsen for it disappear from all years.`}>
-                      <Button size="sm" variant="ghost" className="text-muted-foreground"><Trash2 className="size-4" /></Button>
-                    </ConfirmButton>
-                  </TableCell>
-                </TableRow>
+                <MortgageRow key={m.id} m={m} onDelete={() => del.mutate(m.id)} />
               ))}
             </TableBody>
           </Table>

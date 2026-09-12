@@ -21,6 +21,7 @@ def _row(r) -> ContractOut:
         kaution_returned_date=r[13] if r[13] and r[13] != "None" else None,
         kaution_returned_amount=float(r[14]) if r[14] else None,
         terminated=bool(r[15]),
+        nebenkosten_vorauszahlung=float(r[16]) if r[16] is not None else None,
     )
 
 
@@ -30,7 +31,7 @@ _SELECT = """
            c.start_date, c.end_date,
            c.kaution_amount, COALESCE(c.kaution_currency,'EUR'),
            c.kaution_paid_date, c.kaution_returned_date, c.kaution_returned_amount,
-           c.terminated
+           c.terminated, c.nebenkosten_vorauszahlung
     FROM contracts c
     JOIN tenants    t ON t.id = c.tenant_id
     JOIN apartments a ON a.id = c.apartment_id
@@ -128,8 +129,9 @@ def create_contract(body: ContractIn, owner: int = Depends(require_auth)):
         INSERT INTO contracts
           (tenant_id, apartment_id, rent, currency, start_date, end_date,
            kaution_amount, kaution_currency, kaution_paid_date,
-           kaution_returned_date, kaution_returned_amount, terminated, owner_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+           kaution_returned_date, kaution_returned_amount, terminated,
+           nebenkosten_vorauszahlung, owner_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         RETURNING id
     """, (body.tenant_id, body.apartment_id, body.rent, RENT_CURRENCY,
           body.start_date, body.end_date or None,
@@ -137,7 +139,7 @@ def create_contract(body: ContractIn, owner: int = Depends(require_auth)):
           body.kaution_paid_date or None,
           body.kaution_returned_date or None,
           body.kaution_returned_amount,
-          int(body.terminated), owner))[0][0]
+          int(body.terminated), body.nebenkosten_vorauszahlung, owner))[0][0]
     return _row(_get(new_id, owner))
 
 
@@ -156,13 +158,14 @@ def update_contract(contract_id: int, body: ContractIn, owner: int = Depends(req
         UPDATE contracts SET
           tenant_id=?, apartment_id=?, rent=?, currency=?,
           start_date=?, end_date=?,
-          kaution_amount=?, kaution_currency=?, kaution_paid_date=?, terminated=?
+          kaution_amount=?, kaution_currency=?, kaution_paid_date=?, terminated=?,
+          nebenkosten_vorauszahlung=?
         WHERE id=? AND owner_id=?
     """, (body.tenant_id, body.apartment_id, body.rent, RENT_CURRENCY,
           body.start_date, body.end_date or None,
           body.kaution_amount, body.kaution_currency,
           body.kaution_paid_date or None,
-          int(body.terminated), contract_id, owner))
+          int(body.terminated), body.nebenkosten_vorauszahlung, contract_id, owner))
     return _row(_get(contract_id, owner))
 
 
@@ -309,17 +312,21 @@ def renew_contract(contract_id: int, body: RenewIn, owner: int = Depends(require
         # Clone tenant/apartment into a new term; deposit carries over (0). The
         # rent currency is not cloned — it is EUR by the rule above, so a legacy
         # row with a foreign currency does not propagate it into a fresh term.
+        # The utilities split carries over: the same flat with the same bills,
+        # so losing it would silently turn the new term's rent warm and skew
+        # every €/m² and the Anlage V income split with it.
         new_id = execute_returning("""
             INSERT INTO contracts
               (tenant_id, apartment_id, rent, currency, start_date, end_date,
                kaution_amount, kaution_currency, kaution_paid_date,
-               kaution_returned_date, kaution_returned_amount, terminated, owner_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               kaution_returned_date, kaution_returned_amount, terminated,
+               nebenkosten_vorauszahlung, owner_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             RETURNING id
         """, (old[1], old[3], new_rent, RENT_CURRENCY,
               new_start, new_end,
               0, old[11] or "EUR", None,
-              None, None, 0, owner))[0][0]
+              None, None, 0, old[16], owner))[0][0]
         return _row(_get(new_id, owner))
 
     raise HTTPException(status_code=400, detail="mode must be 'extend' or 'new_term'")

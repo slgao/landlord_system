@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
 import { todayISO } from "@/lib/utils";
+import { coldRentTotal } from "@/lib/rent";
 import { Apartment, Property, Contract } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
@@ -43,10 +44,23 @@ export default function ApartmentsPage() {
     queryFn: () => api.get("/api/contracts/?active_only=true").then((r) => r.data),
   });
   const today = todayISO();
-  const rentFor = (aptId: number) => contracts
-    .filter((c) => c.apartment_id === aptId && c.start_date <= today
-                   && (!c.end_date || c.end_date >= today))
-    .reduce((s, c) => s + c.rent, 0);
+  const activeFor = (aptId: number) => contracts.filter(
+    (c) => c.apartment_id === aptId && c.start_date <= today
+           && (!c.end_date || c.end_date >= today));
+
+  // €/m² is only comparable on the cold rent — a Mietspiegel figure is cold,
+  // and a rent with utilities riding inside it makes the flat look dearer than
+  // it is. Fall back to the total rent when the split is not on file, and say
+  // so rather than passing a warm figure off as a cold one.
+  function perSqm(a: Apartment) {
+    if (!a.size_sqm) return null;
+    const active = activeFor(a.id);
+    const cold = coldRentTotal(active);
+    const warm = active.reduce((s, c) => s + c.rent, 0);
+    if (cold != null) return { value: cold / a.size_sqm, cold: true };
+    if (warm > 0) return { value: warm / a.size_sqm, cold: false };
+    return null;
+  }
 
   const { data: apartments = [], isLoading } = useQuery<Apartment[]>({
     queryKey: ["apartments", filterProp],
@@ -117,7 +131,7 @@ export default function ApartmentsPage() {
               <TableHead>Apartment</TableHead>
               <TableHead>Flat/Unit</TableHead>
               <TableHead className="text-right">m²</TableHead>
-              <TableHead className="text-right">Rent / m²</TableHead>
+              <TableHead className="text-right">Kalt / m²</TableHead>
               <TableHead className="w-20" />
             </TableRow>
           </TableHeader>
@@ -140,9 +154,21 @@ export default function ApartmentsPage() {
                     {a.size_sqm != null ? a.size_sqm.toFixed(1) : "—"}
                   </TableCell>
                   <TableCell className="text-right font-mono">
-                    {a.size_sqm && rentFor(a.id) > 0
-                      ? `${(rentFor(a.id) / a.size_sqm).toFixed(2)} €`
-                      : <span className="text-muted-foreground">—</span>}
+                    {(() => {
+                      const r = perSqm(a);
+                      if (!r) return <span className="text-muted-foreground">—</span>;
+                      return (
+                        <>
+                          {r.value.toFixed(2)} €
+                          {!r.cold && (
+                            <span className="block text-[10px] text-amber-500 font-sans"
+                              title="No cold-rent split on this contract, so this is the warm rent per m² — not comparable with a Mietspiegel figure.">
+                              warm
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">

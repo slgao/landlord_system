@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 from db import fetch, execute, execute_returning
 from auth import require_auth
+from api.schemas.apartment import ApartmentOut
 from api.schemas.common import IsoDate
 
 router = APIRouter(prefix="/meters", tags=["Meters"])
@@ -478,6 +479,35 @@ def create_reading(body: MeterReadingIn, owner: int = Depends(require_auth)):
     """, (body.meter_type, body.meter_id, body.reading_date, body.reading, body.note, owner))[0][0]
     return MeterReadingOut(id=nid, meter_type=body.meter_type, meter_id=body.meter_id,
                            reading_date=body.reading_date, reading=body.reading, note=body.note)
+
+
+# ── Everything the Meter Readings page needs, in one request ─────────────────
+# It used to make six: apartments, readings, and one per meter type. The
+# database is remote and serialises the work anyway, so six round trips cost
+# far more than the six queries do — this is the same work behind one of them.
+
+class MetersOverviewOut(BaseModel):
+    apartments: list[ApartmentOut]
+    readings: list[MeterReadingOut]
+    strom: list[StromMeterOut]
+    gas: list[GasMeterOut]
+    wasser: list[WasserMeterOut]
+    heizung: list[HeizungMeterOut]
+
+
+@router.get("/overview", response_model=MetersOverviewOut)
+def meters_overview(owner: int = Depends(require_auth)):
+    """The page's whole dataset. Delegates to the individual handlers rather
+    than re-selecting, so a change to any row shape reaches here too."""
+    from api.routers.apartments import list_apartments
+    return MetersOverviewOut(
+        apartments=list_apartments(owner=owner),
+        readings=list_readings(owner=owner),
+        strom=list_strom_meters(owner=owner),
+        gas=list_gas_meters(owner=owner),
+        wasser=list_wasser_meters(owner=owner),
+        heizung=list_heizung_meters(owner=owner),
+    )
 
 
 @router.delete("/readings/{reading_id}", status_code=204)

@@ -280,6 +280,17 @@ export interface ProtocolReading {
   merged?: boolean;
 }
 
+/** Everything the Meter Readings page needs, from GET /meters/overview —
+ *  one request instead of six, each of which also re-validated the token. */
+export interface MetersOverview {
+  apartments: Apartment[];
+  readings: MeterReading[];
+  strom: StromMeter[];
+  gas: GasMeter[];
+  wasser: WasserMeter[];
+  heizung: HeizungMeter[];
+}
+
 export interface Config {
   landlord_name?: string;
   landlord_address?: string;

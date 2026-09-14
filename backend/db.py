@@ -83,15 +83,48 @@ def _checkout():
             time.sleep(0.05)
 
 
+# Whether we have to pin the search_path ourselves. Decided once, on the first
+# connection, by asking the database whether an unqualified table already
+# resolves under the role's own default.
+#
+# It usually does, and the check matters because the alternatives are all
+# expensive or unavailable: the libpq `options` startup parameter is rejected
+# by Neon's pooler, and a session-level SET cannot be relied on to survive
+# transaction pooling — which left "SET on every checkout", a whole extra
+# round trip on every single query. On a database 38 ms away that was the
+# difference between a 193 ms fetch and a 37 ms one.
+_needs_search_path: bool | None = None
+
+
+def _probe_search_path(conn) -> bool:
+    """True when unqualified names do NOT resolve, so we must set the path."""
+    try:
+        with conn.cursor() as c:
+            # to_regclass returns NULL when the name is not visible on the
+            # current path. `config` exists from the baseline migration on.
+            c.execute("SELECT to_regclass('config') IS NULL")
+            return bool(c.fetchone()[0])
+    except Exception:
+        return True                    # unsure: keep the safe, slower behaviour
+
+
 def get_conn():
+    global _needs_search_path
     conn = _checkout()
     try:
-        # First statement of the transaction: pin the schema search_path so every
-        # subsequent query in this checkout resolves unqualified table names,
-        # regardless of the role's default. _SEARCH_PATH is a trusted constant,
-        # not user input, so interpolation is safe.
-        with conn.cursor() as c:
-            c.execute(f"SET search_path TO {_SEARCH_PATH}")
+        # Autocommit: every call here runs exactly one statement, so a
+        # transaction adds a BEGIN and a COMMIT/ROLLBACK round trip and buys
+        # nothing. It also means a pooled connection can never sit "idle in
+        # transaction" holding a stale snapshot, which the read path used to
+        # roll back by hand.
+        if not conn.autocommit:
+            conn.autocommit = True
+        if _needs_search_path is None:
+            _needs_search_path = _probe_search_path(conn)
+        if _needs_search_path:
+            # _SEARCH_PATH is a trusted constant, not user input.
+            with conn.cursor() as c:
+                c.execute(f"SET search_path TO {_SEARCH_PATH}")
         return conn
     except Exception:
         # Don't return a half-initialised connection to the pool.
@@ -230,14 +263,12 @@ def _run_once(query, params, commit, returning=False):
         # `returning` fetches the RETURNING rows before committing so callers get
         # the generated id/values back from a writing statement.
         result = _normalize(c.fetchall()) if (returning or not commit) else None
+        # Under autocommit the statement has already settled; commit() and
+        # rollback() are no-ops kept so the connection is returned in a known
+        # state even if autocommit could not be enabled.
         if commit:
             conn.commit()
         else:
-            # End the read's implicit transaction before the connection returns
-            # to the pool. psycopg2 opens a transaction on the first statement;
-            # without this the pooled connection sits "idle in transaction" and
-            # keeps a stale MVCC snapshot, so a later request on the same
-            # connection could read data frozen at this point in time.
             conn.rollback()
     except _CONN_ERRORS:
         # Evict the dead connection so the pool replaces it on the next getconn().

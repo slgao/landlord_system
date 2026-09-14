@@ -18,7 +18,22 @@ from tax_logic import monthly_equivalent
 _ZERO = Decimal("0")
 
 
-def _financing(prop_id, owner, year):
+def _load_mortgages(owner) -> dict:
+    """{property_id: [loan rows]} — every mortgage in one round trip.
+
+    _financing used to fetch its own property's loans, and it is called once
+    per property, so a portfolio of eight cost eight queries where one does.
+    """
+    out: dict = {}
+    for pid, principal, ir, tr, sd, fixed_until, follow in fetch(
+            "SELECT property_id, principal, interest_rate_pct, tilgung_rate_pct, "
+            "       start_date, fixed_until, follow_up_rate_pct "
+            "FROM mortgages WHERE owner_id=?", (owner,)):
+        out.setdefault(pid, []).append((principal, ir, tr, sd, fixed_until, follow))
+    return out
+
+
+def _financing(prop_id, owner, year, loans=None):
     """Rough financing figures for a property in `year`, summed over its
     mortgages: outstanding debt (Restschuld), interest paid (Schuldzinsen) and
     principal repaid (Tilgung = equity built). Returns zeros when the property
@@ -37,9 +52,12 @@ def _financing(prop_id, owner, year):
     today = date.today()
     is_current = int(year) == today.year
     end_month = today.month if is_current else 12
-    rows = fetch("SELECT principal, interest_rate_pct, tilgung_rate_pct, start_date, "
-                 "       fixed_until, follow_up_rate_pct "
-                 "FROM mortgages WHERE property_id=? AND owner_id=?", (prop_id, owner))
+    # Pre-loaded by the caller in the normal path; fetched here only when
+    # _financing is called on its own (the tests do).
+    rows = loans if loans is not None else fetch(
+        "SELECT principal, interest_rate_pct, tilgung_rate_pct, start_date, "
+        "       fixed_until, follow_up_rate_pct "
+        "FROM mortgages WHERE property_id=? AND owner_id=?", (prop_id, owner))
     debt = interest = equity = 0.0
     interest_acq = equity_acq = 0.0
     interest_m = equity_m = 0.0
@@ -204,6 +222,7 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     costs = _load_costs(owner)
     paid = _load_payments(owner, y)
     one_off = _load_one_off(owner, y) if include_one_off else {}
+    mortgages = _load_mortgages(owner)
 
     snap_start = str(today.replace(day=1))
     snap_end = str(today.replace(day=calendar.monthrange(today.year, today.month)[1]))
@@ -249,6 +268,6 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
             "tot_one_off": tot_one_off,
             "flat_rows": [],
             "insights": [],
-            **_financing(prop_id, owner, y),
+            **_financing(prop_id, owner, y, mortgages.get(prop_id, [])),
         })
     return snapshot, props

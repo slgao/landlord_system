@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from db import migrate_to_head
 from auth import (
     require_auth, create_access_token, verify_startup_config, verify_access_token,
+    active_user, invalidate_user,
 )
 import users_db
 from api.errors import client_detail, log_and_reference
@@ -164,6 +165,9 @@ def register(body: RegisterRequest):
     if users_db.get_user_by_email(email):
         raise HTTPException(status_code=409, detail="An account with this email already exists")
     uid = users_db.create_user(email, body.password, body.display_name)
+    # Ids are handed out by the database and could re-use one whose negative
+    # result is still cached from before the row existed.
+    invalidate_user(uid)
     return TokenResponse(access_token=create_access_token(uid))
 
 
@@ -338,8 +342,7 @@ def _signature_owner(request: Request) -> int:
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authentication required")
     uid = verify_access_token(auth_header[7:])  # raises 401 if invalid/expired
-    user = users_db.get_user_by_id(uid)
-    if not user or not user["is_active"]:
+    if active_user(uid) is None:
         raise HTTPException(status_code=401, detail="User not found or inactive")
     return uid
 

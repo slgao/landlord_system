@@ -11,7 +11,45 @@ export function clearAssistantCache() {
   if (typeof window !== "undefined") localStorage.removeItem(ASSISTANT_CACHE_KEY);
 }
 
-export const api = axios.create({ baseURL: BASE });
+export const api = axios.create({
+  baseURL: BASE,
+  // A backstop only: without it a hung request would hold a queue slot (below)
+  // for ever. Generous, because PDF generation is genuinely slow.
+  timeout: 60_000,
+});
+
+// ── One request at a time ────────────────────────────────────────────────────
+// Counter-intuitive, and measured rather than assumed: firing a page's queries
+// in parallel is *slower* than running them one after another, because the
+// database is remote and serialises the work anyway — the concurrency only adds
+// connection contention on top. Six calls take 2740 ms fired together and
+// 542 ms queued; the dashboard's three take 1162 ms against 484 ms.
+//
+// Raise this if the database ever moves next to the API, where real parallelism
+// would pay: then the queue is the thing costing you time.
+const MAX_IN_FLIGHT = 1;
+
+let active = 0;
+const waiting: Array<() => void> = [];
+
+function acquireSlot(): Promise<void> {
+  if (active < MAX_IN_FLIGHT) {
+    active += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => waiting.push(() => { active += 1; resolve(); }));
+}
+
+function releaseSlot() {
+  active = Math.max(0, active - 1);
+  waiting.shift()?.();
+}
+
+/** Downloads skip the queue: they are user-initiated, can take seconds, and
+ *  must not sit in front of the data a page is waiting for. */
+function isQueued(config: { responseType?: string }) {
+  return config.responseType !== "blob" && config.responseType !== "arraybuffer";
+}
 
 /** The message to show for a failed request: the API's own `detail` when it
  *  sent one (a 409 "still has contracts", a 422 field error), otherwise the
@@ -23,17 +61,29 @@ export function errorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
-api.interceptors.request.use((config) => {
+api.interceptors.request.use(async (config) => {
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("token");
     if (token) config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (isQueued(config)) {
+    await acquireSlot();
+    // Marked on the config so the response side releases exactly what it took,
+    // even for a request that failed before reaching the server.
+    (config as { _queued?: boolean })._queued = true;
   }
   return config;
 });
 
 api.interceptors.response.use(
-  (r) => r,
+  (r) => {
+    if ((r.config as { _queued?: boolean })?._queued) releaseSlot();
+    return r;
+  },
   (err) => {
+    // Release before anything else can throw, or one failure would wedge the
+    // queue and every later request would hang waiting for a slot.
+    if ((err.config as { _queued?: boolean })?._queued) releaseSlot();
     if (err.response?.status === 401 && typeof window !== "undefined") {
       localStorage.removeItem("token");
       clearAssistantCache();

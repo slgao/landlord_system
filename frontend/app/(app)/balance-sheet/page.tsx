@@ -62,10 +62,16 @@ function StatRow({ label, value, dot, strong }: { label: string; value: string; 
 export default function BalanceSheetPage() {
   const [year, setYear] = useState(String(currentYear));
   const [downloading, setDownloading] = useState(false);
+  // One-off expenses (Tax Setup) are real money out but lumpy — a Hausgeld
+  // settlement lands in one month. Recurring-only answers "is the rent covering
+  // the running costs?"; including them answers "what did this actually cost?".
+  // Two different questions, so the page asks which one you want.
+  const [withOneOff, setWithOneOff] = useState(true);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["balance-sheet", year],
-    queryFn: () => api.get(`/api/reports/balance-sheet/${year}`).then((r) => r.data),
+    queryKey: ["balance-sheet", year, withOneOff],
+    queryFn: () => api.get(`/api/reports/balance-sheet/${year}?include_one_off=${withOneOff}`)
+      .then((r) => r.data),
   });
 
   async function downloadPdf() {
@@ -73,7 +79,7 @@ export default function BalanceSheetPage() {
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/reports/balance-sheet/${year}/pdf`,
+        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/reports/balance-sheet/${year}/pdf?include_one_off=${withOneOff}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       // Without this an API error came down as a file named Bilanz_<year>.pdf
@@ -127,6 +133,7 @@ export default function BalanceSheetPage() {
   const totalExpected = properties.reduce((s: number, p: any) => s + (p.tot_expected || 0), 0);
   const totalActual = properties.reduce((s: number, p: any) => s + (p.tot_actual || 0), 0);
   const totalCosts = properties.reduce((s: number, p: any) => s + (p.tot_costs || 0), 0);
+  const totalOneOff = properties.reduce((s: number, p: any) => s + (p.tot_one_off || 0), 0);
   const totalNet = totalActual - totalCosts;
 
   // Financing (mortgages): rough remaining debt + interest/equity paid this year.
@@ -144,6 +151,24 @@ export default function BalanceSheetPage() {
   return (
     <div className="max-w-6xl space-y-6">
       <PageHeader title="Balance Sheet">
+        <div className="flex rounded-md border border-border overflow-hidden text-xs">
+          <button
+            onClick={() => setWithOneOff(false)}
+            className={`px-2.5 py-1 transition-colors ${!withOneOff
+              ? "bg-primary/15 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+            title="Rent against the running costs only — comparable month to month"
+          >
+            Running costs
+          </button>
+          <button
+            onClick={() => setWithOneOff(true)}
+            className={`px-2.5 py-1 border-l border-border transition-colors ${withOneOff
+              ? "bg-primary/15 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+            title="Also the one-off expenses from Tax Setup — Hausgeld settlements, repairs — in the month they were paid"
+          >
+            + one-off
+          </button>
+        </div>
         <Select value={year} onValueChange={setYear}>
           <SelectTrigger className="w-28 h-8 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>{YEARS.map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
@@ -169,7 +194,8 @@ export default function BalanceSheetPage() {
                       {fmt(curNet)}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Projected result this month if all contracted rent is collected.
+                      Projected result this month if all contracted rent is collected —
+                      running costs only, whichever basis is selected above.
                     </p>
                   </div>
                   <div className="p-6 border-t md:border-t-0 md:border-l border-border flex flex-col justify-center gap-3">
@@ -189,7 +215,12 @@ export default function BalanceSheetPage() {
             <MetricCard label="Actual Received" value={fmt(totalActual)}
               sub={`${totalActual >= totalExpected ? "+" : ""}${(totalActual - totalExpected).toFixed(2)} vs expected`}
               positive={totalActual >= totalExpected} accent={C.actual} icon={Banknote} />
-            <MetricCard label="Total Costs" value={fmt(totalCosts)} accent={C.costs} icon={Receipt} />
+            <MetricCard label="Total Costs" value={fmt(totalCosts)} accent={C.costs} icon={Receipt}
+              sub={withOneOff
+                ? (totalOneOff !== 0
+                    ? `incl. ${fmt(totalOneOff)} one-off`
+                    : "no one-off expenses this year")
+                : "running costs only"} />
             <MetricCard label="Net (actual)" value={fmt(totalNet)} positive={totalNet >= 0} accent={C.net} icon={Wallet} />
           </div>
 

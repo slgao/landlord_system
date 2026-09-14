@@ -141,3 +141,98 @@ def test_a_blank_zinsbindung_changes_nothing(monkeypatch):
     _one_mortgage(monkeypatch, fixed_until="None")
     b = balance_compute._financing(1, 1, year)
     assert a == b
+
+
+# ── One-off expenses folded into the monthly costs ───────────────────────────
+# They are real money out but lumpy, so the balance sheet takes them as an
+# option. The cash view differs from the tax view in two deliberate ways: the
+# full amount lands in the month it was paid (no §82b spreading), and a
+# non-deductible cost still counts.
+
+def _books(monkeypatch, costs=(), expenses=()):
+    """Route balance_compute's loads to canned rows.
+
+    `costs` rows are (property_id, amount, frequency, valid_from, valid_to) and
+    `expenses` rows (property_id, 'YYYY-MM', amount) — the shapes the two
+    loaders select, not the shapes the tables hold.
+    """
+    def fake_fetch(sql, params=()):
+        q = " ".join(sql.split())
+        if "FROM properties" in q:
+            return [(1, "Haus A")]
+        if "FROM contracts" in q:
+            return []
+        if "FROM flat_costs" in q:
+            return list(costs)
+        if "FROM payments" in q:
+            return []
+        if "FROM expenses" in q:
+            return list(expenses)
+        if "FROM mortgages" in q:
+            return []
+        raise AssertionError(f"unexpected query: {q}")
+    monkeypatch.setattr(balance_compute, "fetch", fake_fetch)
+
+
+def _year():
+    from datetime import date
+    return date.today().year
+
+
+def _costs_of(props, month_index=0):
+    return float(props[0]["monthly_rows"][month_index]["Costs (€)"])
+
+
+def test_one_off_is_absent_unless_asked_for(monkeypatch):
+    from decimal import Decimal
+    y = _year()
+    _books(monkeypatch, expenses=[(1, f"{y}-03", Decimal("1200"))])
+    _, props = balance_compute._compute_snapshot(y, 1)
+    assert float(props[0]["tot_costs"]) == 0.0
+    assert float(props[0]["tot_one_off"]) == 0.0
+
+
+def test_one_off_lands_in_the_month_it_was_paid(monkeypatch):
+    from decimal import Decimal
+    y = _year()
+    _books(monkeypatch, expenses=[(1, f"{y}-03", Decimal("1200"))])
+    _, props = balance_compute._compute_snapshot(y, 1, include_one_off=True)
+    assert _costs_of(props, 2) == 1200.0          # March
+    assert _costs_of(props, 1) == 0.0             # not smeared over the year
+    assert float(props[0]["tot_costs"]) == 1200.0
+    assert float(props[0]["tot_one_off"]) == 1200.0
+
+
+def test_a_guthaben_reduces_that_month(monkeypatch):
+    # A Hausgeld settlement in your favour is a negative expense; the cash view
+    # has to let it pull a month's costs down, even below zero.
+    from decimal import Decimal
+    y = _year()
+    _books(monkeypatch, expenses=[(1, f"{y}-04", Decimal("-450"))])
+    _, props = balance_compute._compute_snapshot(y, 1, include_one_off=True)
+    assert _costs_of(props, 3) == -450.0
+    assert float(props[0]["tot_one_off"]) == -450.0
+
+
+def test_one_off_adds_to_the_recurring_costs_rather_than_replacing_them(monkeypatch):
+    from decimal import Decimal
+    y = _year()
+    _books(monkeypatch,
+           costs=[(1, Decimal("100"), "monthly", None, None)],
+           expenses=[(1, f"{y}-03", Decimal("1200"))])
+    _, props = balance_compute._compute_snapshot(y, 1, include_one_off=True)
+    assert _costs_of(props, 2) == 1300.0          # March: 100 recurring + 1200
+    assert _costs_of(props, 1) == 100.0           # February: recurring only
+    assert float(props[0]["tot_one_off"]) == 1200.0
+
+
+def test_the_current_month_snapshot_stays_a_projection(monkeypatch):
+    # The headline is "what this month looks like if the contracted rent comes
+    # in" — a one-off that already happened is not part of that question.
+    from datetime import date
+    from decimal import Decimal
+    y = _year()
+    ym = date.today().strftime("%Y-%m")
+    _books(monkeypatch, expenses=[(1, ym, Decimal("5000"))])
+    snap, _ = balance_compute._compute_snapshot(y, 1, include_one_off=True)
+    assert snap[0]["costs"] == 0.0

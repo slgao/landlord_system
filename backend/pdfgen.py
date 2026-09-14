@@ -1138,7 +1138,8 @@ def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signat
 
 # ── Balance Sheet Annual Report ────────────────────────────────────────────────
 
-def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", signature_path=None):
+def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", signature_path=None,
+                      include_one_off=False):
     """
     Generate a balance sheet annual report and return PDF bytes.
 
@@ -1146,6 +1147,9 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
     snapshot : [{name, expected, costs, net}]  — current-month per-property figures
     props    : [{name, monthly_rows, tot_expected, tot_actual, tot_costs,
                  flat_rows, insights}]
+    include_one_off : whether `props` costs already fold in the one-off
+                 expenses. Only printed — the caller has done the arithmetic —
+                 but a report of costs has to say which costs it counted.
     """
     import io as _io
     import re as _re
@@ -1228,7 +1232,16 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
         today_str,
     ))
     story.append(_accent_line(C_BLUE))
-    story.append(Spacer(1, 22))
+    story.append(Spacer(1, 10))
+    # Two different documents share this layout; which costs are in the figures
+    # is the difference between them, so it is stated rather than implied.
+    story.append(_info_box(
+        "Kostenbasis: laufende Kosten <b>und einmalige Ausgaben</b> "
+        "(Hausgeldabrechnungen, Reparaturen) im Monat ihrer Zahlung."
+        if include_one_off else
+        "Kostenbasis: <b>nur laufende Kosten</b>. Einmalige Ausgaben "
+        "(Hausgeldabrechnungen, Reparaturen) sind nicht enthalten.", s))
+    story.append(Spacer(1, 14))
 
     # ═════════════════════════════════════════════════════════════════════════
     # SECTION 1 — Current monthly snapshot

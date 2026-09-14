@@ -61,9 +61,12 @@ _Year = PathParam(ge=1900, le=2200)
 # ── Balance Sheet ─────────────────────────────────────────────────────────────
 
 @router.get("/balance-sheet/{year}")
-def balance_sheet_data(year: int = _Year, owner: int = Depends(require_auth)):
+def balance_sheet_data(year: int = _Year, include_one_off: bool = False,
+                       owner: int = Depends(require_auth)):
+    """`include_one_off` folds the one-off expenses from Tax Setup into each
+    month's costs — real money out, but lumpy, so the caller chooses."""
     from balance_compute import _compute_snapshot
-    snapshot, props = _compute_snapshot(year, owner)
+    snapshot, props = _compute_snapshot(year, owner, include_one_off)
     # serialise Decimal values for JSON
     def _f(v):
         try:
@@ -76,17 +79,22 @@ def balance_sheet_data(year: int = _Year, owner: int = Depends(require_auth)):
         props_clean.append({**p, "monthly_rows": rows_clean,
                              "tot_expected": _f(p["tot_expected"]),
                              "tot_actual": _f(p["tot_actual"]),
-                             "tot_costs": _f(p["tot_costs"])})
+                             "tot_costs": _f(p["tot_costs"]),
+                             "tot_one_off": _f(p["tot_one_off"])})
     snap_clean = [{k: _f(v) for k, v in s.items()} for s in snapshot]
-    return {"year": year, "snapshot": snap_clean, "properties": props_clean}
+    # Echoed back so the page can label what its figures actually contain.
+    return {"year": year, "include_one_off": include_one_off,
+            "snapshot": snap_clean, "properties": props_clean}
 
 
 @router.get("/balance-sheet/{year}/pdf")
-def balance_sheet_pdf(year: int = _Year, owner: int = Depends(require_auth)):
+def balance_sheet_pdf(year: int = _Year, include_one_off: bool = False,
+                      owner: int = Depends(require_auth)):
     from balance_compute import _compute_snapshot
     from pdfgen import balance_sheet_pdf as gen_pdf
-    snapshot, props = _compute_snapshot(year, owner)
-    pdf_bytes = gen_pdf(year, snapshot, props, landlord_name=_landlord_name(), signature_path=_sig(owner))
+    snapshot, props = _compute_snapshot(year, owner, include_one_off)
+    pdf_bytes = gen_pdf(year, snapshot, props, landlord_name=_landlord_name(),
+                        signature_path=_sig(owner), include_one_off=include_one_off)
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="Bilanz_{year}.pdf"'})
 

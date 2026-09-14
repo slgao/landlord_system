@@ -425,8 +425,18 @@ def list_expenses(year: int | None = None, property_id: int | None = None,
         # is negative in the affected year — > 0 silently dropped it from the
         # report/PDF, overstating costs. Rows outside the window return 0.0 and
         # are correctly excluded.
-        rows = [r for r in rows if tax_logic.expense_share_for_year(
-            r["expense_date"], r["amount"], r["distribute_years"], year) != 0]
+        #
+        # `share_this_year` comes along so a caller filtering by year can show
+        # what the row actually contributes to it: a repair spread over three
+        # years is listed under each of them, and its full amount is not what
+        # lands in any one of them.
+        out = []
+        for r in rows:
+            share = tax_logic.expense_share_for_year(
+                r["expense_date"], r["amount"], r["distribute_years"], year)
+            if share != 0:
+                out.append({**r, "share_this_year": share})
+        return out
     return rows
 
 

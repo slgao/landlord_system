@@ -422,24 +422,33 @@ const EMPTY_EXPENSE = {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const THIS_YEAR = new Date().getFullYear();
+const EXPENSE_YEARS = [THIS_YEAR, THIS_YEAR - 1, THIS_YEAR - 2, THIS_YEAR - 3, THIS_YEAR - 4];
+
 function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
   const qc = useQueryClient();
   const [f, setF] = useState(EMPTY_EXPENSE);
-  const [invYear, setInvYear] = useState(String(new Date().getFullYear() - 1));
+  // One year for the whole card: which rows are listed, what they total, and
+  // which year the Belegliste covers. The list used to show every year at once
+  // while the PDF quietly used a different year of its own, so switching tax
+  // year changed nothing you could see.
+  const [year, setYear] = useState<string>(String(THIS_YEAR - 1));
+  const allYears = year === "all";
 
   async function downloadInventory() {
+    const y = allYears ? String(THIS_YEAR - 1) : year;
     const token = localStorage.getItem("token");
-    const res = await fetch(`${API}/api/tax/expenses/inventory/pdf?year=${invYear}`, {
+    const res = await fetch(`${API}/api/tax/expenses/inventory/pdf?year=${y}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
-      toast.error(res.status === 404 ? `No expenses recorded for ${invYear}` : "PDF failed");
+      toast.error(res.status === 404 ? `No expenses recorded for ${y}` : "PDF failed");
       return;
     }
     const blob = await res.blob();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `Belegliste_${invYear}.pdf`;
+    a.download = `Belegliste_${y}.pdf`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -449,9 +458,18 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
     queryFn: () => api.get("/api/tax/expense-categories").then((r) => r.data),
   });
   const { data: expenses = [] } = useQuery<TaxExpense[]>({
-    queryKey: ["tax-expenses"],
-    queryFn: () => api.get("/api/tax/expenses").then((r) => r.data),
+    queryKey: ["tax-expenses", year],
+    // The year filter is the backend's, not a client-side date match: a repair
+    // spread under §82b belongs to every year of its window, not just the one
+    // it was paid in.
+    queryFn: () => api.get(`/api/tax/expenses${allYears ? "" : `?year=${year}`}`)
+      .then((r) => r.data),
   });
+
+  // What the listed rows are worth in the selected year — the shares, not the
+  // invoice amounts, which is the figure the tax report uses.
+  const yearTotal = expenses.reduce(
+    (s, e) => s + (e.share_this_year ?? e.amount), 0);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["tax-expenses"] });
@@ -467,7 +485,15 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
       note: f.note || null,
       distribute_years: parseInt(f.distribute_years) || 1,
     }),
-    onSuccess: () => { invalidate(); setF(EMPTY_EXPENSE); toast.success("Expense added"); },
+    onSuccess: (res) => {
+      invalidate();
+      // Jump to the year the new row belongs to, or it would be filtered out of
+      // the list the moment it was saved and look like it had not been.
+      const y = String(res.data?.expense_date ?? f.expense_date).slice(0, 4);
+      if (!allYears && y !== year) setYear(y);
+      setF(EMPTY_EXPENSE);
+      toast.success("Expense added");
+    },
     onError: (e) => toast.error(errorMessage(e, "Failed to add")),
   });
 
@@ -483,16 +509,34 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
     <Card>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <p className="font-medium">One-off expenses</p>
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <p className="font-medium">One-off expenses</p>
+            <span className="text-xs text-muted-foreground">
+              {expenses.length} row{expenses.length === 1 ? "" : "s"}
+              {!allYears && <> · {eur(yearTotal)} in {year}</>}
+            </span>
+          </div>
           <div className="flex items-center gap-1.5">
-            <Input type="number" className="h-8 w-20 font-mono" value={invYear}
-              onChange={(e) => setInvYear(e.target.value)} />
+            <Select value={year} onValueChange={setYear}>
+              <SelectTrigger className="h-8 w-32 text-sm" aria-label="Expense year">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {EXPENSE_YEARS.map((y) => (
+                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                ))}
+                <SelectItem value="all">All years</SelectItem>
+              </SelectContent>
+            </Select>
             <Button size="sm" variant="outline" onClick={downloadInventory}>
               <FileDown className="size-4 mr-1" /> Belegliste PDF
             </Button>
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
+          Showing the rows that count toward{" "}
+          <span className="font-medium">{allYears ? "any year" : year}</span> — a repair spread
+          under §82b belongs to every year of its window, not only the one it was paid in.
           Repairs, insurance, yearly mortgage interest (category Schuldzinsen), etc.
           Large repairs can be spread over 2–5 years (§82b EStDV) via &quot;Spread years&quot;.
           The Belegliste PDF lists every bill of a year per property with subtotals and a
@@ -516,7 +560,9 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
               <TableHead>Category</TableHead><TableHead>Vendor</TableHead>
               <TableHead>Beleg</TableHead>
               <TableHead className="text-right">Amount</TableHead>
-              <TableHead className="text-right">Spread</TableHead><TableHead />
+              <TableHead className="text-right">Spread</TableHead>
+              {!allYears && <TableHead className="text-right">Counts in {year}</TableHead>}
+              <TableHead />
             </TableRow></TableHeader>
             <TableBody>
               {expenses.map((e) => (
@@ -535,6 +581,17 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
                     )}
                   </TableCell>
                   <TableCell className="text-right font-mono">{e.distribute_years > 1 ? `${e.distribute_years}y` : "—"}</TableCell>
+                  {!allYears && (
+                    <TableCell className="text-right font-mono">
+                      {e.share_this_year != null && e.share_this_year !== e.amount ? (
+                        <span title={`§82b: ${eur(e.amount)} over ${e.distribute_years} years`}>
+                          {eur(e.share_this_year)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">{eur(e.share_this_year ?? e.amount)}</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell>
                     <ConfirmButton onConfirm={() => del.mutate(e.id)}
                       message={`Delete ${e.category} expense of ${eur(e.amount)} (${e.property_name})?`}>

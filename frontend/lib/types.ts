@@ -390,6 +390,10 @@ export interface TaxExpense {
   apartment_id: number | null;
   expense_date: string;
   amount: number;
+  // What the row contributes to the year it was fetched for — the §82b share,
+  // which differs from `amount` on a spread expense. Absent when no year was
+  // asked for, because then there is no year to be a share of.
+  share_this_year?: number;
   category: string;
   vendor: string | null;
   note: string | null;

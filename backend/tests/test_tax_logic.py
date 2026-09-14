@@ -266,3 +266,36 @@ def test_year_breakdown_and_schedule_agree_across_a_reset():
         assert abs(b["interest"] - sched[y]["interest"]) < 0.02
         assert abs(b["balance_end"] - sched[y]["balance_end"]) < 0.02
 
+
+
+def test_list_expenses_reports_what_each_row_contributes_to_the_year(monkeypatch):
+    """Filtering by year has to say what the row is worth *in that year*: a
+    repair spread over three years appears under all three, and its invoice
+    amount is not what lands in any one of them."""
+    from api.routers import tax as tax_router
+    rows = [
+        # id, property_id, property_name, apartment_id, date, amount, category,
+        # vendor, note, deductible, distribute_years, source_file
+        (1, 1, "Haus A", None, "2024-05-10", 3000, "Erhaltungsaufwand", None, None, 1, 3, None),
+        (2, 1, "Haus A", None, "2024-06-01", 500, "Hausgeld", None, None, 1, 1, None),
+        (3, 1, "Haus A", None, "2024-07-01", -450, "Hausgeld", None, None, 1, 1, None),
+    ]
+    monkeypatch.setattr(tax_router, "fetch", lambda sql, params=(): rows)
+
+    # The year it was paid: the one-year rows at face value, the spread one at a third.
+    y2024 = {r["id"]: r for r in tax_router.list_expenses(year=2024, owner=1)}
+    assert y2024[1]["share_this_year"] == 1000.0 and y2024[1]["amount"] == 3000.0
+    assert y2024[2]["share_this_year"] == 500.0
+    assert y2024[3]["share_this_year"] == -450.0        # a Gutschrift survives the filter
+
+    # A later year in the window keeps only the spread row.
+    y2026 = tax_router.list_expenses(year=2026, owner=1)
+    assert [r["id"] for r in y2026] == [1]
+    # The final year carries the rounding remainder so the shares sum exactly.
+    assert round(sum(tax_router.list_expenses(year=y, owner=1)[0]["share_this_year"]
+                     for y in (2024, 2025, 2026)), 2) == 3000.0
+
+    # Outside the window, nothing.
+    assert tax_router.list_expenses(year=2027, owner=1) == []
+    # And unfiltered, no share is claimed at all — there is no year to be a share of.
+    assert all("share_this_year" not in r for r in tax_router.list_expenses(owner=1))

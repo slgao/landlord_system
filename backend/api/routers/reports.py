@@ -1,6 +1,5 @@
 """PDF generation, calculation, and report endpoints."""
 import functools
-import traceback
 from datetime import date
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
@@ -9,17 +8,22 @@ from pydantic import BaseModel
 from typing import Optional, Any
 from db import get_config, fetch, execute, execute_returning
 from auth import require_auth
+from api.errors import client_detail, log_and_reference
 from api.schemas.common import IsoDate
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
 def _surface_errors(fn):
-    """Convert an unhandled exception into an HTTPException(500) carrying the
-    error message. An HTTPException is rendered *below* the CORS middleware, so
+    """Convert an unhandled exception into an HTTPException(500) the browser can
+    actually read. An HTTPException is rendered *below* the CORS middleware, so
     the response keeps its Access-Control-Allow-Origin header — without this the
-    browser sees a CORS-less 500 as an opaque "NetworkError" and the real cause
-    is invisible to the client. Endpoints stay synchronous."""
+    browser sees a CORS-less 500 as an opaque "NetworkError". Endpoints stay
+    synchronous.
+
+    The message is a reference, not the exception text: see api/errors.py. A
+    deliberate HTTPException raised inside the endpoint still speaks for itself.
+    """
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
@@ -27,8 +31,8 @@ def _surface_errors(fn):
         except HTTPException:
             raise
         except Exception as e:
-            traceback.print_exc()
-            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+            ref = log_and_reference(e, f"reports.{fn.__name__}")
+            raise HTTPException(status_code=500, detail=client_detail(ref))
     return wrapper
 
 def _sig(owner: int) -> str | None:

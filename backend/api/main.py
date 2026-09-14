@@ -2,7 +2,6 @@ import base64
 import binascii
 import logging
 import os
-import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -14,11 +13,31 @@ from auth import (
     require_auth, create_access_token, verify_startup_config, verify_access_token,
 )
 import users_db
+from api.errors import client_detail, log_and_reference
 from api.routers import (
     properties, buildings, apartments, tenants, contracts, payments,
     dashboard, flat_costs, meters, config, reports,
     co_tenants, kaution, billing_profiles, rag, tax, assistant, handover,
 )
+
+
+def _warn_unencrypted_secrets() -> None:
+    """FERNET_KEY is optional and set_secret_config silently stores plaintext
+    without it, so a password can sit in the clear in `config` for years with
+    nothing ever saying so. Checked at boot rather than trusted to memory."""
+    if os.environ.get("FERNET_KEY"):
+        return
+    try:
+        from db import fetch
+        rows = fetch("SELECT COUNT(*) FROM config WHERE key LIKE '%password%' "
+                     "AND value IS NOT NULL AND value <> ''")
+    except Exception:
+        return                      # never let a diagnostic stop the app booting
+    if rows and rows[0][0]:
+        logging.getLogger("uvicorn.error").warning(
+            "config: %s stored password(s) are NOT encrypted — FERNET_KEY is unset. "
+            "Set it and re-save the password in Settings to encrypt it at rest.",
+            rows[0][0])
 
 
 @asynccontextmanager
@@ -27,6 +46,7 @@ async def lifespan(app: FastAPI):
     # once, before serving requests.
     verify_startup_config()
     migrate_to_head()
+    _warn_unencrypted_secrets()
     yield
 
 
@@ -65,12 +85,14 @@ async def _unhandled(request: Request, exc: Exception):
     error middleware — outside CORSMiddleware — so the browser saw a response
     without Access-Control-Allow-Origin and reported an opaque "NetworkError"
     with the real cause invisible. Handling it here keeps the response inside
-    the middleware stack, and the message reaches the toast on screen.
+    the middleware stack.
+
+    What it must NOT do is repeat the exception text: these routes include
+    unauthenticated ones, and a psycopg2 error carries the database host and
+    user, so an outage would have answered an anonymous login with them.
     """
-    _log.error("Unhandled error on %s %s\n%s", request.method, request.url.path,
-               "".join(traceback.format_exception(exc)))
-    return JSONResponse(status_code=500,
-                        content={"detail": f"{type(exc).__name__}: {exc}"})
+    ref = log_and_reference(exc, f"{request.method} {request.url.path}")
+    return JSONResponse(status_code=500, content={"detail": client_detail(ref)})
 
 
 _auth = [Depends(require_auth)]
@@ -188,8 +210,10 @@ _SIGNATURE_PAD_HTML = """<!DOCTYPE html>
   <div id="msg"></div>
 </div>
 <script>
-// Injected server-side; empty when the API runs without a password gate.
+// Both filled in by the frontend before this document is mounted with srcDoc,
+// so the token never appears in a URL (and so never in an access log).
 const TOKEN = "__SIG_TOKEN__";
+const API_BASE = "__API_BASE__";
 const canvas = document.getElementById('sig');
 const ctx    = canvas.getContext('2d');
 ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#000';
@@ -276,10 +300,11 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   msg.style.color = '#333';
   msg.textContent = 'Saving…';
   try {
-    const url = '/api/signature' + (TOKEN ? ('?token=' + encodeURIComponent(TOKEN)) : '');
-    const res = await fetch(url, {
+    // Absolute: under srcDoc a relative path would resolve against the
+    // frontend's origin, not the API's.
+    const res = await fetch(API_BASE + '/api/signature', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN},
       body: JSON.stringify({data_url: cropDataUrl()}),
     });
     if (res.ok) {
@@ -299,16 +324,20 @@ document.getElementById('btn-save').addEventListener('click', async () => {
 </html>"""
 
 
-def _signature_owner(request: Request, token: str | None) -> int:
-    """Guard the signature endpoints and return the owner id. These are registered
-    on `app` (outside the require_auth-protected routers) because the browser loads
-    them via <img>/<iframe>, which can't set an Authorization header — so a token is
-    accepted in the query string as well. The signature file is scoped per user."""
+def _signature_owner(request: Request) -> int:
+    """Guard the signature endpoints and return the owner id.
+
+    Header only. These used to accept `?token=` as well, because <img> and
+    <iframe> cannot set an Authorization header — but uvicorn's access log
+    records the full query string, so every load wrote a week-long session JWT
+    into the log. The frontend now fetches both the image and the pad with a
+    normal authenticated request and hands the result to the element (a blob
+    URL, and srcDoc), which needs no token in a URL at all.
+    """
     auth_header = request.headers.get("Authorization", "")
-    tok = auth_header[7:] if auth_header.startswith("Bearer ") else token
-    if not tok:
+    if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authentication required")
-    uid = verify_access_token(tok)  # raises 401 if invalid/expired
+    uid = verify_access_token(auth_header[7:])  # raises 401 if invalid/expired
     user = users_db.get_user_by_id(uid)
     if not user or not user["is_active"]:
         raise HTTPException(status_code=401, detail="User not found or inactive")
@@ -320,8 +349,8 @@ def _signature_path(owner: int) -> Path:
 
 
 @app.get("/api/signature", tags=["Files"])
-def get_signature(request: Request, token: str | None = None):
-    owner = _signature_owner(request, token)
+def get_signature(request: Request):
+    owner = _signature_owner(request)
     dest = _signature_path(owner)
     if not dest.exists():
         raise HTTPException(status_code=404, detail="No signature on file")
@@ -329,11 +358,15 @@ def get_signature(request: Request, token: str | None = None):
 
 
 @app.get("/api/signature-pad", tags=["Files"], response_class=HTMLResponse)
-def signature_pad(request: Request, token: str | None = None):
-    _signature_owner(request, token)
-    # Inject the caller's token so the pad's POST can authenticate too.
-    html = _SIGNATURE_PAD_HTML.replace("__SIG_TOKEN__", token or "")
-    return HTMLResponse(html)
+def signature_pad(request: Request):
+    """The pad's markup, with __SIG_TOKEN__ and __API_BASE__ left in place.
+
+    The frontend fills those in and mounts the result with srcDoc, so the token
+    lives in the document rather than in a URL. It knows the API's public base
+    and this process does not — behind a proxy the request's own host is not it.
+    """
+    _signature_owner(request)
+    return HTMLResponse(_SIGNATURE_PAD_HTML)
 
 
 class SignaturePayload(BaseModel):
@@ -343,8 +376,8 @@ class SignaturePayload(BaseModel):
 
 
 @app.post("/api/signature", tags=["Files"])
-def save_signature(body: SignaturePayload, request: Request, token: str | None = None):
-    owner = _signature_owner(request, token)
+def save_signature(body: SignaturePayload, request: Request):
+    owner = _signature_owner(request)
     _, _, b64 = body.data_url.partition(",")
     if not b64:
         raise HTTPException(status_code=400, detail="Invalid data URL")

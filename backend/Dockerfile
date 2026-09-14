@@ -37,6 +37,10 @@ COPY rag/ ./rag/
 # request. This makes the image large (~3.5 GB) and needs network during
 # `docker build`; HF_HUB_DOWNLOAD_TIMEOUT gives the large weight files headroom
 # on a slow link. build_index needs no DB/API keys (corpus + embedder only).
+# Unbuffered stdout, or uvicorn's access log sits in a block buffer and
+# `docker logs` shows nothing for the last few hundred requests — which is
+# exactly when you look at it.
+ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/app/.hf_cache HF_HUB_DOWNLOAD_TIMEOUT=120
 # The bake reaches huggingface.co. On offline / firewalled build hosts that
 # download fails — but it must NOT break the build: the models power only the

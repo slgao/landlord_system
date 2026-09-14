@@ -29,6 +29,10 @@ services:
     env_file: .env
     environment:
       JWT_SECRET: ${JWT_SECRET:-change-this-in-production-32chars}
+      # Arms the startup guard: with this set, the API refuses to boot on a
+      # missing or placeholder JWT_SECRET instead of only warning. Set
+      # APP_ENV=development in .env to get the warning-only behaviour back.
+      APP_ENV: ${APP_ENV:-production}
     ports:
       - "8000:8000"
     volumes:

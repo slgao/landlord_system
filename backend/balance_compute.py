@@ -151,6 +151,24 @@ def _load_costs(owner) -> dict:
     return out
 
 
+def _load_one_off(owner, year: int) -> dict:
+    """{(property_id, 'YYYY-MM'): Decimal} — one-off expenses dated in `year`.
+
+    Deliberately the FULL amount in the month it is dated, not the §82b share
+    the tax report uses: this is a cash view, and the whole sum left the bank
+    that month whatever the spreading does to its deductibility. `deductible`
+    is ignored for the same reason — a non-deductible cost is still money out.
+    A Gutschrift is a negative amount and correctly reduces that month's costs.
+    """
+    rows = fetch("""
+        SELECT property_id, substr(expense_date, 1, 7), COALESCE(SUM(amount), 0)
+        FROM expenses
+        WHERE owner_id = ? AND substr(expense_date, 1, 4) = ?
+        GROUP BY property_id, substr(expense_date, 1, 7)
+    """, (owner, str(year)))
+    return {(pid, ym): total for pid, ym, total in rows}
+
+
 def _load_payments(owner, year: int) -> dict:
     """{(property_id, 'YYYY-MM'): Decimal} — everything received in `year`.
     payments.amount is always the EUR value that counts (see the currency
@@ -166,9 +184,17 @@ def _load_payments(owner, year: int) -> dict:
     return {(pid, ym): total for pid, ym, total in rows}
 
 
-def _compute_snapshot(year: int, owner=None):
+def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     """Return (snapshot, props) suitable for balance_sheet_pdf / the API,
-    scoped to the given owner."""
+    scoped to the given owner.
+
+    `include_one_off` folds the one-off expenses (Tax Setup) into each month's
+    costs. They are real money out — a Hausgeld settlement, a repair — but they
+    are lumpy, so the two views answer different questions: recurring-only asks
+    whether the rent covers the running costs, and including them asks what the
+    property actually cost. The current-month snapshot is a projection from
+    contracts and running costs, so it never includes them.
+    """
     today = date.today()
     y = int(year)
     max_month = today.month if y == today.year else 12
@@ -177,6 +203,7 @@ def _compute_snapshot(year: int, owner=None):
     contracts = _load_contracts(owner)
     costs = _load_costs(owner)
     paid = _load_payments(owner, y)
+    one_off = _load_one_off(owner, y) if include_one_off else {}
 
     snap_start = str(today.replace(day=1))
     snap_end = str(today.replace(day=calendar.monthrange(today.year, today.month)[1]))
@@ -189,16 +216,19 @@ def _compute_snapshot(year: int, owner=None):
     props = []
     for prop_id, prop_name in properties:
         rows = []
-        tot_expected = tot_actual = tot_costs = _ZERO
+        tot_expected = tot_actual = tot_costs = tot_one_off = _ZERO
         for m in range(1, max_month + 1):
             m_start = f"{y}-{m:02d}-01"
             m_end = f"{y}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
             expected = expected_rent(contracts.get(prop_id, []), m_start, m_end)
             actual = paid.get((prop_id, m_start[:7]), _ZERO)
-            month_cost = month_costs(costs.get(prop_id, []), m_start, m_end, y, m)
+            recurring = month_costs(costs.get(prop_id, []), m_start, m_end, y, m)
+            once = one_off.get((prop_id, m_start[:7]), _ZERO)
+            month_cost = recurring + once
             tot_expected += expected
             tot_actual += actual
             tot_costs += month_cost
+            tot_one_off += once
             rows.append({
                 "Month": date(y, m, 1).strftime("%b %Y"),
                 "Expected rent (€)": round(expected, 2),
@@ -214,6 +244,9 @@ def _compute_snapshot(year: int, owner=None):
             "tot_expected": tot_expected,
             "tot_actual": tot_actual,
             "tot_costs": tot_costs,
+            # How much of tot_costs came from one-off expenses, so the page can
+            # show the split rather than just a bigger number.
+            "tot_one_off": tot_one_off,
             "flat_rows": [],
             "insights": [],
             **_financing(prop_id, owner, y),

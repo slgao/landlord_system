@@ -498,6 +498,17 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
           The Belegliste PDF lists every bill of a year per property with subtotals and a
           grand total across all flats.
         </p>
+        {/* The capability was always there — a negative amount nets correctly and
+            the Belegliste prints it — but nothing said so, which is why a
+            Guthaben tended to go unrecorded. */}
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium">Money back?</span> Enter a{" "}
+          <span className="font-medium">negative amount</span>. A Guthaben from a
+          Hausgeld- or utility settlement nets against the payments in the same
+          category, so keep it under the category it refunds
+          (a WEG settlement under <span className="font-medium">Hausgeld</span>).
+          Date it when the money actually moved (Abflussprinzip §11 EStG).
+        </p>
         {expenses.length > 0 && (
           <Table>
             <TableHeader><TableRow>
@@ -517,7 +528,12 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
                   <TableCell className="text-muted-foreground text-xs" title={e.source_file ?? undefined}>
                     {e.source_file ? e.source_file.split("/").pop() : "—"}
                   </TableCell>
-                  <TableCell className="text-right font-mono">{eur(e.amount)}</TableCell>
+                  <TableCell className={`text-right font-mono ${e.amount < 0 ? "text-primary" : ""}`}>
+                    {eur(e.amount)}
+                    {e.amount < 0 && (
+                      <span className="block text-[10px] font-sans">Guthaben</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right font-mono">{e.distribute_years > 1 ? `${e.distribute_years}y` : "—"}</TableCell>
                   <TableCell>
                     <ConfirmButton onConfirm={() => del.mutate(e.id)}
@@ -541,7 +557,9 @@ function ExpenseSection({ profiles }: { profiles: TaxProfile[] }) {
           <div className="space-y-1"><Label className="text-xs">Date paid</Label>
             <Input type="date" className="h-8 w-36" value={f.expense_date} onChange={(e) => setF({ ...f, expense_date: e.target.value })} /></div>
           <div className="space-y-1"><Label className="text-xs">Amount €</Label>
-            <Input type="number" step="0.01" className="h-8 w-28 font-mono" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
+            <Input type="number" step="0.01" className="h-8 w-28 font-mono" value={f.amount}
+              placeholder="− for Guthaben"
+              onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
           <div className="space-y-1"><Label className="text-xs">Category</Label>
             <Select value={f.category} onValueChange={(v) => setF({ ...f, category: v })}>
               <SelectTrigger className="h-8 w-44"><SelectValue /></SelectTrigger>

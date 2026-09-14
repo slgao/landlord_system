@@ -147,7 +147,7 @@ export function HandoverCard({
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["handover-protocols", contract.id] });
     // A handover writes meter readings, so the readings pages must refetch too.
-    qc.invalidateQueries({ queryKey: ["meter-readings"] });
+    qc.invalidateQueries({ queryKey: ["meters-overview"] });
     qc.invalidateQueries({ queryKey: ["strom-readings-all"] });
   };
 
@@ -452,7 +452,7 @@ function ProtocolDialog({
   const invalidateItems = () => qc.invalidateQueries({ queryKey: ["protocol-items", pid] });
   const invalidateReadings = () => {
     qc.invalidateQueries({ queryKey: ["protocol-readings", pid] });
-    qc.invalidateQueries({ queryKey: ["meter-readings"] });
+    qc.invalidateQueries({ queryKey: ["meters-overview"] });
     qc.invalidateQueries({ queryKey: ["strom-readings-all"] });
   };
 

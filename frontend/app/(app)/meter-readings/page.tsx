@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo, memo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
 import { todayISO } from "@/lib/utils";
-import { MeterReading, StromMeter, GasMeter, WasserMeter, HeizungMeter, Apartment } from "@/lib/types";
+import { MeterReading, StromMeter, GasMeter, WasserMeter, HeizungMeter, Apartment, MetersOverview } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { GroupCard } from "@/components/group-card";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,15 @@ import {
 } from "recharts";
 
 type MeterType = "strom" | "gas" | "wasser" | "heizung";
+
+// Frozen module-level constants, not `[]` inline: MeterBlock is memoized on
+// `readings` by reference, and a new array each render would defeat it.
+const EMPTY_APARTMENTS: Apartment[] = [];
+const EMPTY_READINGS: MeterReading[] = [];
+const EMPTY_STROM: StromMeter[] = [];
+const EMPTY_GAS: GasMeter[] = [];
+const EMPTY_WASSER: WasserMeter[] = [];
+const EMPTY_HEIZUNG: HeizungMeter[] = [];
 
 const TYPE_META: Record<MeterType, { label: string; icon: string; badge: string }> = {
   strom:   { label: "Strom",   icon: "⚡", badge: "bg-amber-500/15 text-amber-400 border-amber-500/20" },
@@ -184,24 +193,31 @@ export default function MeterReadingsPage() {
   const [wasserForm, setWasserForm] = useState({ apartment_id: 0, serial_number: "", description: "", type: "kalt", scope: "shared" });
   const [heizungForm, setHeizungForm] = useState({ apartment_id: 0, serial_number: "", description: "", unit_price: 0, unit_label: "Einheiten", conversion_factor: 1.0, scope: "room" });
 
-  const { data: apartments = [] } = useQuery<Apartment[]>({ queryKey: ["apartments"], queryFn: () => api.get("/api/apartments/").then((r) => r.data) });
-  const { data: readings = [], isLoading } = useQuery<MeterReading[]>({ queryKey: ["meter-readings"], queryFn: () => api.get("/api/meters/readings").then((r) => r.data) });
-  const { data: stromMeters = [] } = useQuery<StromMeter[]>({ queryKey: ["strom-meters"], queryFn: () => api.get("/api/meters/strom").then((r) => r.data) });
-  const { data: gasMeters = [] } = useQuery<GasMeter[]>({ queryKey: ["gas-meters"], queryFn: () => api.get("/api/meters/gas").then((r) => r.data) });
-  const { data: wasserMeters = [] } = useQuery<WasserMeter[]>({ queryKey: ["wasser-meters"], queryFn: () => api.get("/api/meters/wasser").then((r) => r.data) });
-  const { data: heizungMeters = [] } = useQuery<HeizungMeter[]>({ queryKey: ["heizung-meters"], queryFn: () => api.get("/api/meters/heizung").then((r) => r.data) });
+  // One request for the whole page. It used to be six — apartments, readings
+  // and one per meter type — and each of those also cost a round trip of its
+  // own just to re-validate the token.
+  const { data: overview, isLoading } = useQuery<MetersOverview>({
+    queryKey: ["meters-overview"],
+    queryFn: () => api.get("/api/meters/overview").then((r) => r.data),
+  });
+  const apartments = overview?.apartments ?? EMPTY_APARTMENTS;
+  const readings = overview?.readings ?? EMPTY_READINGS;
+  const stromMeters = overview?.strom ?? EMPTY_STROM;
+  const gasMeters = overview?.gas ?? EMPTY_GAS;
+  const wasserMeters = overview?.wasser ?? EMPTY_WASSER;
+  const heizungMeters = overview?.heizung ?? EMPTY_HEIZUNG;
 
   const metersByType = (type: MeterType): any[] =>
     type === "strom" ? stromMeters : type === "gas" ? gasMeters : type === "wasser" ? wasserMeters : heizungMeters;
 
   const addReading = useMutation({
     mutationFn: () => api.post("/api/meters/readings", readForm),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["meter-readings"] }); setReadingOpen(false); toast.success("Reading added"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["meters-overview"] }); setReadingOpen(false); toast.success("Reading added"); },
     onError: (e) => toast.error(errorMessage(e, "Failed to add reading")),
   });
   const deleteReading = useMutation({
     mutationFn: (id: number) => api.delete(`/api/meters/readings/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["meter-readings"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["meters-overview"] }),
     onError: (e) => toast.error(errorMessage(e, "Could not delete the reading")),
   });
 
@@ -211,7 +227,7 @@ export default function MeterReadingsPage() {
       const endpoint = `/api/meters/${meterType}`;
       const body = meterType === "strom" ? stromForm : meterType === "gas" ? gasForm : meterType === "wasser" ? wasserForm : heizungForm;
       isEdit ? await api.put(`${endpoint}/${editingMeter.id}`, body) : await api.post(endpoint, body);
-      qc.invalidateQueries({ queryKey: [`${meterType}-meters`] });
+      qc.invalidateQueries({ queryKey: ["meters-overview"] });
       toast.success(isEdit ? "Updated" : "Meter created");
       setMeterOpen(false);
     } catch (e) { toast.error(errorMessage(e, "Could not save the meter")); }
@@ -224,8 +240,7 @@ export default function MeterReadingsPage() {
       toast.error(errorMessage(e, "Could not delete the meter"));
       return;
     }
-    qc.invalidateQueries({ queryKey: [`${type}-meters`] });
-    qc.invalidateQueries({ queryKey: ["meter-readings"] });
+    qc.invalidateQueries({ queryKey: ["meters-overview"] });
     toast.success("Deleted");
   }, [qc]);
 

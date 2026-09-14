@@ -827,7 +827,19 @@ export default function ContractsPage() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5"><Label>Monthly Rent (€)</Label><Input type="number" step="0.01" value={form.rent} onChange={(e) => setForm((f) => ({ ...f, rent: Number(e.target.value) }))} /></div>
+              <div className="space-y-1.5"><Label>Monthly Rent (€)</Label>
+                <Input type="number" step="0.01" value={form.rent}
+                  onChange={(e) => setForm((f) => {
+                    const rent = Number(e.target.value);
+                    // Raising the rent raises the Kaltmiete; it does not
+                    // quietly become a bigger utilities prepayment. The stored
+                    // figure is rent − kalt, so holding the utilities fixed
+                    // means moving the cold rent by the same amount.
+                    if (f.kaltmiete === "") return { ...f, rent };
+                    const utilities = f.rent - Number(f.kaltmiete);
+                    return { ...f, rent,
+                      kaltmiete: String(Math.round((rent - utilities) * 100) / 100) };
+                  })} /></div>
               {/* The rent owed is always EUR — no picker, because a foreign rent
                   would be compared against EUR payments everywhere downstream.
                   A tenant paying in another currency is recorded on the payment

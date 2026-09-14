@@ -21,9 +21,10 @@ export default function SettingsPage() {
   // so the field stays blank and blank on save means "keep the stored one".
   const [passwordSet, setPasswordSet] = useState(false);
   const [sigUrl, setSigUrl] = useState<string | null>(null);
-  // Built in an effect (not during render) so reading localStorage doesn't
-  // cause a server/client hydration mismatch on the iframe src.
-  const [padSrc, setPadSrc] = useState<string | null>(null);
+  // The pad's markup, fetched with a normal authenticated request and mounted
+  // with srcDoc. It used to be an iframe src carrying ?token=<session JWT>,
+  // which uvicorn writes into its access log in full.
+  const [padHtml, setPadHtml] = useState<string | null>(null);
 
   const { data: config } = useQuery<Config>({
     queryKey: ["config"],
@@ -39,8 +40,19 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    setPadSrc(`${API}/api/signature-pad${token ? `?token=${token}` : ""}`);
+    let cancelled = false;
+    api.get("/api/signature-pad", { responseType: "text" })
+      .then((r) => {
+        if (cancelled) return;
+        const token = localStorage.getItem("token") ?? "";
+        // The token lives in the document, not in a URL. API_BASE has to be
+        // absolute: under srcDoc a relative path resolves against this origin.
+        setPadHtml(String(r.data)
+          .replace("__SIG_TOKEN__", token)
+          .replace("__API_BASE__", API));
+      })
+      .catch(() => { if (!cancelled) toast.error("Could not load the signature pad"); });
+    return () => { cancelled = true; };
   }, []);
   useEffect(() => { if (config) setForm(config); }, [config]);
   useEffect(() => {
@@ -85,10 +97,19 @@ export default function SettingsPage() {
     );
   }
 
-  function loadSig() {
-    const token = localStorage.getItem("token");
-    setSigUrl(`${API}/api/signature?t=${Date.now()}&token=${token}`);
+  // Fetched as a blob and shown from an object URL, so the <img> needs no
+  // credentials of its own and no token ends up in a URL.
+  async function loadSig() {
+    try {
+      const res = await api.get("/api/signature", { responseType: "blob" });
+      setSigUrl((old) => { if (old) URL.revokeObjectURL(old); return URL.createObjectURL(res.data); });
+    } catch (e) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      toast.error(status === 404 ? "No signature saved yet" : errorMessage(e, "Could not load the signature"));
+    }
   }
+  // Release the object URL when the page goes away.
+  useEffect(() => () => { if (sigUrl) URL.revokeObjectURL(sigUrl); }, [sigUrl]);
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -133,7 +154,10 @@ export default function SettingsPage() {
         <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Signature</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">Draw your signature below. It will be used in all generated PDFs.</p>
-          {padSrc && <iframe src={padSrc} className="w-full h-48 rounded-md border border-border bg-white" />}
+          {padHtml
+            ? <iframe srcDoc={padHtml} title="Signature pad"
+                className="w-full h-48 rounded-md border border-border bg-white" />
+            : <p className="text-xs text-muted-foreground">Loading the pad…</p>}
           <Button variant="outline" size="sm" onClick={loadSig}>View saved signature</Button>
           {sigUrl && (
             <div className="p-3 rounded-md border border-border bg-white inline-block">

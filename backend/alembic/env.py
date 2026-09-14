@@ -12,7 +12,13 @@ config = context.config
 config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False is load-bearing, not tidiness. The API
+    # runs `alembic upgrade head` inside its own startup (db.migrate_to_head),
+    # so this runs in the live uvicorn process — and fileConfig's default of
+    # True disables every logger that already exists. That silently killed
+    # uvicorn.access and uvicorn.error for the life of the process: no request
+    # log, no tracebacks, not even "Application startup complete".
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = None
 

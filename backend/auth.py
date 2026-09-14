@@ -11,6 +11,8 @@ JWT_SECRET — signing key for JWT tokens (random per process if unset)
 """
 import logging
 import os
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -86,6 +88,65 @@ def verify_access_token(token: str) -> int:
         )
 
 
+# ── Who the token belongs to, cached briefly ─────────────────────────────────
+# Verifying a token needs no database — the signature and expiry are in the
+# token itself. The row lookup answers one further question: does this user
+# still exist and is it still active. That question was asked on *every*
+# request, so a page firing six of them paid six round trips to a database
+# 38 ms away before doing any work.
+#
+# The cost of caching it is the window in which a deactivated user still gets
+# in. That is bounded by the TTL, and deliberately short. Nothing in this app
+# can flip is_active today — there is no such endpoint — so the window only
+# applies to a change made directly in the database. Set AUTH_CACHE_TTL=0 to
+# turn the cache off entirely.
+_AUTH_CACHE_TTL_S = float(os.environ.get("AUTH_CACHE_TTL", "30"))
+_AUTH_CACHE_MAX = 1024
+
+_user_cache: dict[int, tuple[float, Optional[dict]]] = {}
+_user_cache_lock = threading.Lock()
+
+
+def invalidate_user(user_id: Optional[int] = None) -> None:
+    """Drop a cached user, or all of them. Call this from anything that
+    deactivates a user or changes their credentials."""
+    with _user_cache_lock:
+        if user_id is None:
+            _user_cache.clear()
+        else:
+            _user_cache.pop(user_id, None)
+
+
+def active_user(user_id: int) -> Optional[dict]:
+    """The user row behind a verified token, or None if it cannot be used.
+
+    A miss and a hit both cache: an unknown id would otherwise re-query on
+    every request, which is exactly the case an attacker replaying a stale
+    token produces.
+    """
+    if _AUTH_CACHE_TTL_S <= 0:
+        user = users_db.get_user_by_id(user_id)
+        return user if user and user["is_active"] else None
+
+    now = time.monotonic()
+    hit = _user_cache.get(user_id)
+    if hit is not None and hit[0] > now:
+        return hit[1]
+
+    user = users_db.get_user_by_id(user_id)
+    usable = user if user and user["is_active"] else None
+    with _user_cache_lock:
+        if len(_user_cache) >= _AUTH_CACHE_MAX:
+            # Cheap bound: drop what has already expired, and failing that
+            # start over rather than grow without limit.
+            for k in [k for k, (exp, _) in _user_cache.items() if exp <= now]:
+                _user_cache.pop(k, None)
+            if len(_user_cache) >= _AUTH_CACHE_MAX:
+                _user_cache.clear()
+        _user_cache[user_id] = (now + _AUTH_CACHE_TTL_S, usable)
+    return usable
+
+
 # ── FastAPI dependency ─────────────────────────────────────────────────────────
 
 _basic = HTTPBasic(auto_error=False)
@@ -95,8 +156,7 @@ def _authenticate(request: Request, basic_creds: Optional[HTTPBasicCredentials])
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         uid = verify_access_token(auth_header[7:])
-        user = users_db.get_user_by_id(uid)
-        if not user or not user["is_active"]:
+        if active_user(uid) is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                                 detail="User not found or inactive")
         return uid

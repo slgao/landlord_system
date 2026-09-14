@@ -54,3 +54,124 @@ def test_production_accepts_strong_config(monkeypatch):
                        bcrypt.hashpw(b"pw", bcrypt.gensalt()).decode())
     # Strong secret + password hash set → no exception.
     auth.verify_startup_config()
+
+
+# ── the auth lookup cache ─────────────────────────────────────────────────────
+
+ACTIVE = {"id": 7, "email": "a@b.de", "is_active": True}
+
+
+@pytest.fixture(autouse=True)
+def _clear_auth_cache():
+    """Each test starts from an empty cache and leaves one behind."""
+    auth.invalidate_user()
+    yield
+    auth.invalidate_user()
+
+
+class _Counter:
+    """Stands in for users_db.get_user_by_id and counts the round trips."""
+
+    def __init__(self, row):
+        self.row = row
+        self.calls = 0
+
+    def __call__(self, user_id):
+        self.calls += 1
+        return self.row
+
+
+def test_second_lookup_does_not_hit_the_database(monkeypatch):
+    spy = _Counter(ACTIVE)
+    monkeypatch.setattr(auth.users_db, "get_user_by_id", spy)
+
+    assert auth.active_user(7) == ACTIVE
+    assert auth.active_user(7) == ACTIVE
+    assert auth.active_user(7) == ACTIVE
+    assert spy.calls == 1
+
+
+def test_expired_entry_is_looked_up_again(monkeypatch):
+    spy = _Counter(ACTIVE)
+    monkeypatch.setattr(auth.users_db, "get_user_by_id", spy)
+    monkeypatch.setattr(auth, "_AUTH_CACHE_TTL_S", 30.0)
+
+    clock = [1000.0]
+    monkeypatch.setattr(auth.time, "monotonic", lambda: clock[0])
+
+    auth.active_user(7)
+    clock[0] += 29.0          # still inside the window
+    auth.active_user(7)
+    assert spy.calls == 1
+
+    clock[0] += 2.0           # past it
+    auth.active_user(7)
+    assert spy.calls == 2
+
+
+def test_inactive_and_missing_users_are_cached_as_unusable(monkeypatch):
+    """A rejected token must not cost a query per request either."""
+    for row in (None, {"id": 7, "is_active": False}):
+        auth.invalidate_user()
+        spy = _Counter(row)
+        monkeypatch.setattr(auth.users_db, "get_user_by_id", spy)
+
+        assert auth.active_user(7) is None
+        assert auth.active_user(7) is None
+        assert spy.calls == 1
+
+
+def test_invalidate_user_forces_a_fresh_lookup(monkeypatch):
+    spy = _Counter(ACTIVE)
+    monkeypatch.setattr(auth.users_db, "get_user_by_id", spy)
+
+    auth.active_user(7)
+    auth.invalidate_user(7)
+    auth.active_user(7)
+    assert spy.calls == 2
+
+    auth.active_user(7)
+    auth.invalidate_user()        # no argument clears everything
+    auth.active_user(7)
+    assert spy.calls == 3
+
+
+def test_ttl_zero_disables_the_cache(monkeypatch):
+    spy = _Counter(ACTIVE)
+    monkeypatch.setattr(auth.users_db, "get_user_by_id", spy)
+    monkeypatch.setattr(auth, "_AUTH_CACHE_TTL_S", 0.0)
+
+    auth.active_user(7)
+    auth.active_user(7)
+    assert spy.calls == 2
+
+
+def test_cache_does_not_grow_without_bound(monkeypatch):
+    spy = _Counter(ACTIVE)
+    monkeypatch.setattr(auth.users_db, "get_user_by_id", spy)
+    monkeypatch.setattr(auth, "_AUTH_CACHE_MAX", 8)
+
+    for uid in range(40):
+        auth.active_user(uid)
+    assert len(auth._user_cache) <= 8
+
+
+def test_authenticate_rejects_a_token_whose_user_is_gone(monkeypatch):
+    """The cache must not turn a 401 into a pass."""
+    monkeypatch.setattr(auth.users_db, "get_user_by_id", lambda uid: None)
+
+    class _Req:
+        headers = {"Authorization": f"Bearer {auth.create_access_token(7)}"}
+
+    with pytest.raises(HTTPException) as exc:
+        auth._authenticate(_Req(), None)
+    assert exc.value.status_code == 401
+
+
+def test_authenticate_accepts_an_active_user(monkeypatch):
+    monkeypatch.setattr(auth.users_db, "get_user_by_id", lambda uid: ACTIVE)
+
+    class _Req:
+        headers = {"Authorization": f"Bearer {auth.create_access_token(7)}"}
+
+    assert auth._authenticate(_Req(), None) == 7

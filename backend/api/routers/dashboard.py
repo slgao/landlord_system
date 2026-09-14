@@ -11,17 +11,20 @@ def stats(owner: int = Depends(require_auth)):
     # A contract signed ahead of the move-in is not running yet, so it is
     # counted separately instead of inflating the "active" number.
     today = date.today().isoformat()
-    return {
-        "properties": fetch("SELECT COUNT(*) FROM properties WHERE owner_id=?", (owner,))[0][0],
-        "apartments":  fetch("SELECT COUNT(*) FROM apartments WHERE owner_id=?", (owner,))[0][0],
-        "tenants":     fetch("SELECT COUNT(*) FROM tenants WHERE owner_id=?", (owner,))[0][0],
-        "contracts":   fetch("SELECT COUNT(*) FROM contracts WHERE owner_id=? "
-                             "AND COALESCE(terminated,0)=0 AND start_date<=?",
-                             (owner, today))[0][0],
-        "upcoming":    fetch("SELECT COUNT(*) FROM contracts WHERE owner_id=? "
-                             "AND COALESCE(terminated,0)=0 AND start_date>?",
-                             (owner, today))[0][0],
-    }
+    # One round trip, not five. Every figure is a COUNT over a different table,
+    # which is exactly what scalar subqueries are for — and on a database 38 ms
+    # away four saved round trips are most of the endpoint's latency.
+    r = fetch("""
+        SELECT (SELECT COUNT(*) FROM properties WHERE owner_id=?),
+               (SELECT COUNT(*) FROM apartments WHERE owner_id=?),
+               (SELECT COUNT(*) FROM tenants    WHERE owner_id=?),
+               (SELECT COUNT(*) FROM contracts  WHERE owner_id=?
+                  AND COALESCE(terminated,0)=0 AND start_date<=?),
+               (SELECT COUNT(*) FROM contracts  WHERE owner_id=?
+                  AND COALESCE(terminated,0)=0 AND start_date>?)
+    """, (owner, owner, owner, owner, today, owner, today))[0]
+    return {"properties": r[0], "apartments": r[1], "tenants": r[2],
+            "contracts": r[3], "upcoming": r[4]}
 
 
 @router.get("/alerts")

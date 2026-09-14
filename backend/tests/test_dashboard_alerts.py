@@ -70,12 +70,19 @@ def test_stats_split_running_from_upcoming(monkeypatch):
 
     def fake_fetch(sql, params=()):
         seen.append((" ".join(sql.split()), params))
-        return [[7]]
+        return [[1, 2, 3, 4, 5]]
 
     monkeypatch.setattr(dashboard, "fetch", fake_fetch)
     out = dashboard.stats(owner=1)
-    assert out["contracts"] == 7 and out["upcoming"] == 7
-    contract_queries = [(sql, p) for sql, p in seen if "FROM contracts" in sql]
-    assert [p[1] for _, p in contract_queries] == [today, today]
-    assert "start_date<=?" in contract_queries[0][0]
-    assert "start_date>?" in contract_queries[1][0]
+    assert out == {"properties": 1, "apartments": 2, "tenants": 3,
+                   "contracts": 4, "upcoming": 5}
+
+    # One round trip, not one per figure: on a remote database that is most of
+    # the endpoint's latency.
+    assert len(seen) == 1
+    sql, params = seen[0]
+    assert sql.count("SELECT COUNT(*)") == 5
+    # Running contracts have started, upcoming ones have not.
+    assert "start_date<=?" in sql and "start_date>?" in sql
+    assert params.count(today) == 2
+    assert params.count(1) == 5          # owner on every subquery

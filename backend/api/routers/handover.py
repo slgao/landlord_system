@@ -422,6 +422,47 @@ def _meter_meta(meter_type: str, meter_id: int):
     return (rows[0][0], rows[0][1]) if rows else (None, None)
 
 
+def _meter_meta_bulk(pairs) -> dict:
+    """{(meter_type, meter_id): (serial, description)} — one query per meter
+    *type* present rather than one per reading."""
+    by_type: dict[str, set] = {}
+    for mtype, mid in pairs:
+        by_type.setdefault(mtype, set()).add(mid)
+    out: dict = {}
+    for mtype, ids in by_type.items():
+        table = _METER_TABLES.get(mtype)
+        if not table or not ids:
+            continue
+        placeholders = ",".join("?" for _ in ids)
+        for mid, serial, desc in fetch(
+                f"SELECT id, serial_number, description FROM {table} "
+                f"WHERE id IN ({placeholders})", tuple(ids)):
+            out[(mtype, mid)] = (serial, desc)
+    return out
+
+
+def _attribution_bulk(reading_ids, owner: int, exclude: int | None = None) -> dict:
+    """{reading_id: [labels]} for many readings in one query."""
+    if not reading_ids:
+        return {}
+    placeholders = ",".join("?" for _ in reading_ids)
+    rows = fetch(f"""
+        SELECT mrp.reading_id, p.id, p.kind, t.name
+        FROM meter_reading_protocols mrp
+        JOIN handover_protocols p ON p.id = mrp.protocol_id
+        LEFT JOIN contracts c ON c.id = p.contract_id
+        LEFT JOIN tenants   t ON t.id = c.tenant_id
+        WHERE mrp.reading_id IN ({placeholders}) AND mrp.owner_id=?
+        ORDER BY p.date, p.id
+    """, (*reading_ids, owner))
+    out: dict = {}
+    for rid, pid, kind, tenant in rows:
+        if exclude is not None and pid == exclude:
+            continue
+        out.setdefault(rid, []).append(protocol_label(kind, tenant))
+    return out
+
+
 @router.get("/{protocol_id}/readings", response_model=list[ProtocolReadingOut])
 def list_protocol_readings(protocol_id: int, owner: int = Depends(require_auth)):
     _own_protocol(protocol_id, owner)
@@ -432,13 +473,17 @@ def list_protocol_readings(protocol_id: int, owner: int = Depends(require_auth))
         WHERE mrp.protocol_id=? AND m.owner_id=?
         ORDER BY m.meter_type, m.meter_id
     """, (protocol_id, owner))
+    # Two bulk lookups instead of two queries per reading: a WG flat reads six
+    # meters, which cost fourteen round trips on a database 38 ms away.
+    meta = _meter_meta_bulk({(r[1], r[2]) for r in rows})
+    also = _attribution_bulk([r[0] for r in rows], owner, exclude=protocol_id)
     out = []
     for r in rows:
-        serial, desc = _meter_meta(r[1], r[2])
+        serial, desc = meta.get((r[1], r[2]), (None, None))
         out.append(ProtocolReadingOut(
             id=r[0], meter_type=r[1], meter_id=r[2], reading_date=r[3],
             reading=float(r[4]), note=r[5], serial_number=serial, description=desc,
-            also_at=_attribution(r[0], owner, exclude=protocol_id),
+            also_at=also.get(r[0], []),
         ))
     return out
 

@@ -118,6 +118,12 @@ export default function NKSettlementsPage() {
                 <div>
                   <p className="text-sm font-medium">{p.tenant_name} · {p.year}</p>
                   <p className="text-xs text-muted-foreground">{p.apartment_name} · {p.property_name}</p>
+                  {p.deposit_deductions.map((d) => (
+                    <p key={d.id} className="text-xs text-primary mt-0.5">
+                      {eur(d.amount)} Nebenkosten already kept from the deposit{d.date ? ` on ${fmtDate(d.date)}` : ""} —
+                      probably what settled this year.
+                    </p>
+                  ))}
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="text-right">
@@ -130,10 +136,21 @@ export default function NKSettlementsPage() {
                     </Badge>
                     <p className="text-xs text-muted-foreground mt-0.5">Deadline {fmtDate(p.deadline)}</p>
                   </div>
+                  {p.deposit_deductions.map((d) => (
+                    <Button key={d.id} size="sm" onClick={() => setDialog({
+                      draft: {
+                        contract_id: p.contract_id, period_start: p.period_start, period_end: p.period_end,
+                        amount: d.amount, issued_date: null,
+                        kaution_deduction: { id: d.id, date: d.date, amount: d.amount },
+                      },
+                    })}>
+                      Record from deposit{p.deposit_deductions.length > 1 ? ` (${eur(d.amount)})` : ""}
+                    </Button>
+                  ))}
                   <Button size="sm" variant="outline" onClick={() => setDialog({
                     draft: { contract_id: p.contract_id, period_start: p.period_start, period_end: p.period_end },
                   })}>
-                    Record
+                    {p.deposit_deductions.length ? "Record other" : "Record"}
                   </Button>
                 </div>
               </div>

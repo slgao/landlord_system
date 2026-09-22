@@ -86,6 +86,10 @@ class PendingAbrechnungOut(BaseModel):
     deadline: str
     days_remaining: int
     level: str                        # 'due' | 'missed'
+    # Nebenkosten already kept from this tenancy's deposit and not yet tied to
+    # a settlement — most likely what settled this year. Recording the
+    # settlement from one clears the reminder.
+    deposit_deductions: list[dict] = []
 
 
 # Deposit still held: the agreed amount less what was already deducted or
@@ -231,11 +235,44 @@ def pending(owner: int = Depends(require_auth)):
     settlements = fetch("SELECT contract_id, period_start, period_end FROM nk_settlements "
                         "WHERE owner_id=?", (owner,))
     names = {r[0]: (r[7], r[8], r[9]) for r in contracts}
+    tenancy = {r[0]: (r[1], r[2]) for r in contracts}
     due = logic.pending_abrechnungen([r[:7] for r in contracts], settlements, date.today())
-    return [PendingAbrechnungOut(**d, tenant_name=names[d["contract_id"]][0],
-                                 apartment_name=names[d["contract_id"]][1],
-                                 property_name=names[d["contract_id"]][2])
-            for d in due]
+
+    # Unlinked NK deductions per tenancy (a follow-on contract is the same one).
+    by_tenancy: dict[tuple, list[dict]] = {}
+    if due:
+        for did, cid, d_date, amount in fetch(f"""
+            SELECT d.id, d.contract_id, d.date, d.amount FROM kaution_deductions d
+            WHERE d.owner_id = ? AND {_UNLINKED_NK_DEDUCTION}
+            ORDER BY d.date, d.id
+        """, (owner, NK_CATEGORY)):
+            if cid in tenancy:
+                by_tenancy.setdefault(tenancy[cid], []).append(
+                    {"id": did, "date": _clean(d_date), "amount": float(amount)})
+
+    out = []
+    for d in due:
+        # A deduction can only settle a year that had begun by the time the
+        # deposit was kept.
+        candidates = [x for x in by_tenancy.get(tenancy[d["contract_id"]], [])
+                      if x["date"] and x["date"] >= d["period_start"]]
+        out.append(PendingAbrechnungOut(
+            **d, tenant_name=names[d["contract_id"]][0],
+            apartment_name=names[d["contract_id"]][1],
+            property_name=names[d["contract_id"]][2],
+            deposit_deductions=candidates))
+    return out
+
+
+# A Kaution deduction for Nebenkosten that no settlement points at yet: in the
+# NK category, or with a reason that says Nebenkosten. Alias `d`, one `?` for
+# NK_CATEGORY. Shared by the import card and the reminder rows.
+_UNLINKED_NK_DEDUCTION = f"""
+    COALESCE(d.reference_type, '') <> '{REF_TYPE}'
+    AND (d.category = ?
+         OR d.reason ILIKE '%nebenkosten%' OR d.reason ILIKE '%betriebskosten%'
+         OR d.reason ILIKE '%nk-abrechnung%' OR d.reason ILIKE '%nk abrechnung%')
+"""
 
 
 class UnlinkedKautionOut(BaseModel):
@@ -265,11 +302,7 @@ def unlinked_kaution(owner: int = Depends(require_auth)):
         JOIN tenants    t ON t.id = c.tenant_id
         JOIN apartments a ON a.id = c.apartment_id
         JOIN properties p ON p.id = a.property_id
-        WHERE d.owner_id = ?
-          AND COALESCE(d.reference_type, '') <> '{REF_TYPE}'
-          AND (d.category = ?
-               OR d.reason ILIKE '%nebenkosten%' OR d.reason ILIKE '%betriebskosten%'
-               OR d.reason ILIKE '%nk-abrechnung%' OR d.reason ILIKE '%nk abrechnung%')
+        WHERE d.owner_id = ? AND {_UNLINKED_NK_DEDUCTION}
         ORDER BY d.date DESC, d.id DESC
     """, (owner, NK_CATEGORY))
     open_by_tenancy: dict[tuple, list[int]] = {}

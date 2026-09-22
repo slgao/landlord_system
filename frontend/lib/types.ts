@@ -556,6 +556,19 @@ export interface NkSplit {
   end_date: string | null;
 }
 
+/** A one-off expense as the report carries it: what the page lists and what
+ *  the Anlage V PDF prints. The whole row lives at /api/tax/expenses — the
+ *  report used to repeat all of it, notes and all, for every property. */
+export interface TaxReportOneOff {
+  id: number;
+  category: string;
+  vendor: string | null;
+  expense_date: string;
+  distribute_years: number;
+  source_file: string | null;
+  share_this_year: number;
+}
+
 export interface TaxReportProperty {
   property_id: number;
   property_name: string;
@@ -585,7 +598,7 @@ export interface TaxReportProperty {
     recurring_total: number;
     recurring_computed: number;
     recurring_source: "computed" | "override";
-    one_off: (TaxExpense & { share_this_year: number })[];
+    one_off: TaxReportOneOff[];
     one_off_total: number;
     total: number;
   };

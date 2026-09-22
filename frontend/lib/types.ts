@@ -196,6 +196,8 @@ export interface PendingAbrechnung {
   deadline: string;
   days_remaining: number;
   level: "due" | "missed";
+  // NK kept from this tenancy's deposit, not yet tied to a settlement.
+  deposit_deductions: { id: number; date: string | null; amount: number }[];
 }
 
 export interface FlatCost {

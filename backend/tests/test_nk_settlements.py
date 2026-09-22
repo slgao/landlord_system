@@ -188,3 +188,13 @@ def test_a_lone_settlement_does_not_replace_the_rent_estimate(monkeypatch):
     inc = _tax_books(monkeypatch, [("nk_settlement", 180.0, 1)])
     assert inc["source"] == "estimate"
     assert inc["final"] == 12180.0
+
+
+def test_a_nachzahlung_kept_from_the_deposit_is_umlagen_too(monkeypatch):
+    # The deduction arrives in the same UNION as the settlement payments,
+    # as a second nk_settlement row for the property; both must add up.
+    inc = _tax_books(monkeypatch, [("rent", 12000.0, 12), ("nk_settlement", 100.0, 1),
+                                   ("nk_settlement", 150.0, 1)])
+    assert inc["nk_settlements"] == 250.0
+    assert inc["umlagen"] == 1450.0
+    assert inc["kaltmiete"] == 10800.0

@@ -165,6 +165,8 @@ def _books(monkeypatch, costs=(), expenses=(), payments=()):
             return []
         if "FROM flat_costs" in q:
             return list(costs)
+        if "FROM kaution_deductions" in q:          # the settlements loader
+            return [r[:3] for r in payments if r[3] != "rent"]
         if "FROM payments" in q:
             kind = params[-1]
             return [r[:3] for r in payments if r[3] == kind]

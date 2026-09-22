@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useId } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
 import { Contract, GasMeter, StromMeter, MeterReading, BillingProfile } from "@/lib/types";
@@ -318,10 +318,11 @@ function FieldRow({ children }: { children: React.ReactNode }) {
 function Num({ label, value, onChange, step = "0.01", min = "0" }: {
   label: string; value: number; onChange: (v: number) => void; step?: string; min?: string;
 }) {
+  const id = useId();
   return (
     <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      <Input type="number" step={step} min={min} className="h-8 text-sm"
+      <Label htmlFor={id} className="text-xs">{label}</Label>
+      <Input id={id} type="number" step={step} min={min} className="h-8 text-sm"
         value={value} onChange={(e) => onChange(Number(e.target.value))} />
     </div>
   );
@@ -340,10 +341,11 @@ function DateF({ label, value, onChange }: { label: string; value: string; onCha
 function NumOpt({ label, value, onChange, step = "0.01", placeholder = "" }: {
   label: string; value: number | ""; onChange: (v: number | "") => void; step?: string; placeholder?: string;
 }) {
+  const id = useId();
   return (
     <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      <Input type="number" step={step} min="0" className="h-8 text-sm" placeholder={placeholder}
+      <Label htmlFor={id} className="text-xs">{label}</Label>
+      <Input id={id} type="number" step={step} min="0" className="h-8 text-sm" placeholder={placeholder}
         value={value === "" || value === null || value === undefined ? "" : value}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))} />
     </div>
@@ -1074,7 +1076,7 @@ export default function NebenkostenabrechnungPage() {
       const period = billingSpan();
       if (Number.isFinite(total) && period) {
         setGenerated({ contract_id: selected.id, period_start: period[0], period_end: period[1],
-                       amount: total, pdf: blob });
+                       amount: total, pdf: blob, offsetKaution: deductKaution && total > 0 });
       }
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1575,7 +1577,7 @@ export default function NebenkostenabrechnungPage() {
               <p className="text-xs text-muted-foreground">
                 Save it once it has gone out: it tracks what is still open, keeps the PDF, and books the
                 money as an NK settlement instead of rent.
-                {deductKaution && (generated.amount ?? 0) > 0 && " You offset it against the Kaution — record the payment on the day you do."}
+                {generated.offsetKaution && " The PDF offsets it against the Kaution — saving can book that deduction for you."}
               </p>
             </div>
             <Button size="sm" onClick={() => setSaveOpen(true)}>

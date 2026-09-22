@@ -230,13 +230,13 @@ export default function ContractsPage() {
 
   const addDeduction = useMutation({
     mutationFn: () => api.post("/api/kaution-deductions/", { ...kdForm, contract_id: selectedContract!.id }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); toast.success("Deduction added"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); toast.success("Deduction added"); },
     onError: (e) => toast.error(errorMessage(e, "Could not add the deduction")),
   });
 
   const removeDeduction = useMutation({
     mutationFn: (id: number) => api.delete(`/api/kaution-deductions/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); },
     onError: (e) => toast.error(errorMessage(e, "Could not delete the deduction")),
   });
 
@@ -246,7 +246,7 @@ export default function ContractsPage() {
         contract_id: selectedContract!.id, date: d.date, amount: d.amount,
         category: d.category, reason: d.reason || null,
       }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); setEditDed(null); toast.success("Deduction updated"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); setEditDed(null); toast.success("Deduction updated"); },
     onError: (e) => toast.error(errorMessage(e, "Could not update the deduction")),
   });
 
@@ -551,7 +551,14 @@ export default function ContractsPage() {
                       ) : (
                         <TableRow key={d.id}>
                           <TableCell className="text-muted-foreground">{d.date}</TableCell>
-                          <TableCell>{d.category}</TableCell>
+                          <TableCell>
+                            {d.category}
+                            {d.reference_type === "nk_settlement" && (
+                              <span className="block text-[11px] text-primary" title="Linked on the NK Settlements page">
+                                settles an NK Abrechnung
+                              </span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-muted-foreground text-xs">{d.reason || "—"}</TableCell>
                           <TableCell className="text-right font-mono">{d.amount.toFixed(2)}</TableCell>
                           <TableCell className="flex gap-1">

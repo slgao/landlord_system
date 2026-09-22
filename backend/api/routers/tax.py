@@ -18,6 +18,8 @@ from auth import require_auth
 from api.schemas.common import IsoDate, OptIsoDate
 import tax_logic
 
+from api.routers.nk_settlements import NK_CATEGORY, REF_TYPE as NK_REF_TYPE
+
 router = APIRouter(prefix="/tax", tags=["Tax"])
 
 # A tax year outside this range is a typo; the date arithmetic would throw.
@@ -625,6 +627,8 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
     # Nachzahlung must not switch a property with no rent recorded over to
     # "payments" and report the Nachzahlung as the year's whole income.
     # Settlements are cash in the year they move (§11 EStG) and are Umlagen.
+    # That includes a Nachzahlung kept back from the deposit: the offset is
+    # when it is received, so those Kaution deductions count here too.
     pay: dict[int, tuple] = {}
     settle: dict[int, float] = {}
     for pid_, kind, total, cnt in fetch("""
@@ -634,9 +638,17 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
         JOIN apartments a ON a.id = c.apartment_id
         WHERE substr(pm.payment_date,1,4) = ? AND pm.owner_id = ?
         GROUP BY a.property_id, pm.kind
-    """, (str(year), owner)):
+        UNION ALL
+        SELECT a.property_id, 'nk_settlement', COALESCE(SUM(d.amount),0), COUNT(d.id)
+        FROM kaution_deductions d
+        JOIN contracts c ON c.id = d.contract_id
+        JOIN apartments a ON a.id = c.apartment_id
+        WHERE substr(d.date,1,4) = ? AND d.owner_id = ?
+          AND (d.category = ? OR d.reference_type = ?)
+        GROUP BY a.property_id
+    """, (str(year), owner, str(year), owner, NK_CATEGORY, NK_REF_TYPE)):
         if kind == "nk_settlement":
-            settle[pid_] = float(total)
+            settle[pid_] = settle.get(pid_, 0.0) + float(total)
         else:
             pay[pid_] = (float(total), int(cnt))
 

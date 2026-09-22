@@ -52,6 +52,34 @@ function monthsBetween(s: string, e: string) {
 // Intersection of a billing period with the tenant's contract period (the
 // tenant's actual living period within that bill). Falls back to the full
 // billing period when no contract dates are given.
+// What the flat cost per day over a billing, when it can be derived from what
+// was entered: a direct total, or meter readings times the tariff. Undefined
+// where the rate needs meters we cannot sum here (Warmwasser, Heizung) — the
+// estimate is then left blank for you to fill.
+function dailyFlatCost(b: any, kind: string, sField = "bill_start", eField = "bill_end"): number | undefined {
+  const days = b[sField] && b[eField] ? billDays(b[sField], b[eField]) : 0;
+  if (!days) return undefined;
+  const grund = (Number(b.grundpreis_monthly) || 0) * 12 / 365 * days;
+  const num = (v: any) => Number(v) || 0;
+  let total: number | undefined;
+  // Betriebskosten always state the period's total; the utilities only do in
+  // "Total cost only" mode.
+  if (kind === "bk" || b.mode === "sum") total = num(b.cost_flat);
+  else if (kind === "strom") total = (num(b.end_kwh) - num(b.start_kwh)) * num(b.arbeitspreis) + grund;
+  else if (kind === "gas")
+    total = (num(b.end_m3) - num(b.start_m3)) * num(b.umrechnungsfaktor) * num(b.arbeitspreis) + grund;
+  else if (kind === "water")
+    total = (num(b.end_m3) - num(b.start_m3)) * (num(b.frischwasser_per_m3) + num(b.abwasser_per_m3));
+  if (total === undefined || !isFinite(total) || total <= 0) return undefined;
+  return total / days;
+}
+
+function addDaysISO(iso: string, n: number) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(y, m - 1, d + n);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+}
+
 function clampPeriod(billStart: string, billEnd: string, cStart?: string, cEnd?: string) {
   const iso = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -243,6 +271,9 @@ function baseBilling() {
     // raise via Nachtrag) be billed over its true continuous living period.
     eff_start: "", eff_end: "",
     prepay_monthly: 0, is_pauschale: false, cost_flat: 0,
+    // A stretch the provider has not billed yet: the tenant lived past the
+    // last Abrechnung, so its cost is estimated and the PDF says so.
+    is_estimate: false,
   };
 }
 
@@ -300,6 +331,7 @@ const defHeiz = () => ({ ...baseBilling(), meters: [{ start: 0, end: 0, unit_pri
 const defBk = (tenants = 1) => ({
   cost_flat: 0, tenants,
   bk_start: isoDate(thisYear(), 1, 1), bk_end: isoDate(thisYear(), 12, 31),
+  is_estimate: false,
   // Ihr Zeitraum (tenant's living period) — auto-filled from the contract, editable.
   eff_start: "", eff_end: "",
   limit_per_month: 206,
@@ -565,6 +597,24 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
 
 // Shared wrapper for one billing period: dates, mode toggle, total-cost field
 // (sum mode) OR the utility-specific meter inputs (children), prepay + Pauschale.
+// An estimated period is not a normal billing: it says so here, on the PDF,
+// and in the closing paragraph of the letter.
+function EstimateBanner({ b, set }: { b: any; set: (patch: any) => void }) {
+  if (!b.is_estimate) return null;
+  return (
+    <div className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 flex flex-wrap items-center justify-between gap-2">
+      <span>
+        <b>Estimated period</b> — no provider bill yet. The cost below is estimated from the previous
+        period; the PDF says so and states that the final bill governs.
+      </span>
+      <button type="button" className="underline hover:no-underline"
+        onClick={() => set({ is_estimate: false })}>
+        It is a real bill
+      </button>
+    </div>
+  );
+}
+
 function BillingShell({ idx, count, b, set, onRemove, costLabel, preview, children }: {
   idx: number; count: number; b: any; set: (patch: any) => void; onRemove: () => void;
   costLabel: string; preview: React.ReactNode; children: React.ReactNode;
@@ -579,6 +629,7 @@ function BillingShell({ idx, count, b, set, onRemove, costLabel, preview, childr
           </Button>
         )}
       </div>
+      <EstimateBanner b={b} set={set} />
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">Abrechnungszeitraum (billing period)</Label>
         <FieldRow>
@@ -669,6 +720,42 @@ export default function NebenkostenabrechnungPage() {
         : { start: "", end: "" };
       return [...a, { ...nb, eff_start: eff.start, eff_end: eff.end }];
     });
+  }
+
+  // The tenant lived past the last Abrechnung and the provider has not billed
+  // that stretch yet. Rather than stretching "Ihr Zeitraum" beyond its bill —
+  // which would quietly charge those days at the old bill's rate — the stretch
+  // becomes its own billing period, estimated from the previous one and
+  // marked as an estimate wherever it shows up.
+  function addEstimatedBilling(
+    setter: React.Dispatch<React.SetStateAction<any[]>>, arr: any[], def: () => any, kind: string,
+  ) {
+    const [sField, eField] = kind === "bk" ? ["bk_start", "bk_end"] : ["bill_start", "bill_end"];
+    const prev = arr[arr.length - 1];
+    if (!prev?.[eField]) { toast.error("Fill in the billing period above first."); return; }
+    const start = addDaysISO(prev[eField], 1);
+    const end = selected?.end_date && selected.end_date > prev[eField] ? selected.end_date : "";
+    if (!end) {
+      toast.error("No move-out date on the contract — set the period on the new billing yourself.");
+    }
+    const days = end ? billDays(start, end) : 0;
+    const rate = dailyFlatCost(prev, kind, sField, eField);
+    const cost = rate && days ? Math.round(rate * days * 100) / 100 : 0;
+    setter((a) => [...a, {
+      ...def(), mode: "sum", cost_flat: cost,
+      [sField]: start, [eField]: end || start,
+      eff_start: start, eff_end: end || start,
+      // Betriebskosten carry the person count and the prepayment under their
+      // own names.
+      ...(kind === "bk"
+        ? { tenants: prev.tenants, limit_per_month: prev.limit_per_month }
+        : { num_tenants: prev.num_tenants, prepay_monthly: prev.prepay_monthly,
+            is_pauschale: prev.is_pauschale }),
+      is_estimate: true,
+    }]);
+    if (rate && days) {
+      toast.success(`Estimated ${cost.toFixed(2)} € for ${days} days at the previous period's rate`);
+    }
   }
 
   // ── all contracts (active + expired) ──
@@ -1001,6 +1088,7 @@ export default function NebenkostenabrechnungPage() {
         monthly_limit: b._prepay_base ?? b.prepay_monthly,
         prepay_tenants: b._base_tenants ?? (b.num_tenants ?? numTenants),
         cost: c.cost_tenant, limit: c.prepay, is_pauschale: b.is_pauschale, mode: b.mode,
+        is_estimate: !!b.is_estimate,
         // Tarifwechsel: label the price period and flag interpolated readings, so
         // the tenant can see which Zählerstand was measured and which was computed.
         tariff_label: b._tariff_label, start_estimated: !!b._start_estimated,
@@ -1034,6 +1122,7 @@ export default function NebenkostenabrechnungPage() {
           prepay_tenants: b._base_tenants ?? b.tenants,
           bill_period: fmtPeriod(b.bk_start, b.bk_end),
           num_months: monthsBetween(b.bk_start, b.bk_end),
+          is_estimate: !!b.is_estimate,
           period: fmtPeriod(effS, effE),
           months: b._occ_months ?? monthsBetween(effS, effE),
           cost: c.period_cost,
@@ -1370,9 +1459,15 @@ export default function NebenkostenabrechnungPage() {
               onChange={(tarife) => updateAt(setStromB, i, { tarife })} />
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setStromB, defStrom)}>
-          <Plus className="size-4 mr-1" /> Add billing
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setStromB, defStrom)}>
+            <Plus className="size-4 mr-1" /> Add billing
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => addEstimatedBilling(setStromB, stromB, defStrom, "strom")}
+            title="The tenant lived past the last bill and the next one has not arrived: add that stretch as its own, estimated period">
+            <Plus className="size-4 mr-1" /> Add estimated period
+          </Button>
+        </div>
       </SectionCard>
 
       {/* ── Gas ── */}
@@ -1399,9 +1494,15 @@ export default function NebenkostenabrechnungPage() {
             </>
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setGasB, defGas)}>
-          <Plus className="size-4 mr-1" /> Add billing
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setGasB, defGas)}>
+            <Plus className="size-4 mr-1" /> Add billing
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => addEstimatedBilling(setGasB, gasB, defGas, "gas")}
+            title="The tenant lived past the last bill and the next one has not arrived: add that stretch as its own, estimated period">
+            <Plus className="size-4 mr-1" /> Add estimated period
+          </Button>
+        </div>
       </SectionCard>
 
       {/* ── Kaltwasser ── */}
@@ -1420,9 +1521,15 @@ export default function NebenkostenabrechnungPage() {
             </FieldRow>
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setWaterB, defWater)}>
-          <Plus className="size-4 mr-1" /> Add billing
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setWaterB, defWater)}>
+            <Plus className="size-4 mr-1" /> Add billing
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => addEstimatedBilling(setWaterB, waterB, defWater, "water")}
+            title="The tenant lived past the last bill and the next one has not arrived: add that stretch as its own, estimated period">
+            <Plus className="size-4 mr-1" /> Add estimated period
+          </Button>
+        </div>
       </SectionCard>
 
       {/* ── Warmwasser ── */}
@@ -1460,9 +1567,15 @@ export default function NebenkostenabrechnungPage() {
             </>
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setWarmB, defWarm)}>
-          <Plus className="size-4 mr-1" /> Add billing
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setWarmB, defWarm)}>
+            <Plus className="size-4 mr-1" /> Add billing
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => addEstimatedBilling(setWarmB, warmB, defWarm, "warmwater")}
+            title="The tenant lived past the last bill and the next one has not arrived: add that stretch as its own, estimated period">
+            <Plus className="size-4 mr-1" /> Add estimated period
+          </Button>
+        </div>
       </SectionCard>
 
       {/* ── Heizung ── */}
@@ -1499,9 +1612,15 @@ export default function NebenkostenabrechnungPage() {
             </>
           </BillingShell>
         ))}
-        <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setHeizB, defHeiz)}>
-          <Plus className="size-4 mr-1" /> Add billing
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => addMeteredBilling(setHeizB, defHeiz)}>
+            <Plus className="size-4 mr-1" /> Add billing
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => addEstimatedBilling(setHeizB, heizB, defHeiz, "heizung")}
+            title="The tenant lived past the last bill and the next one has not arrived: add that stretch as its own, estimated period">
+            <Plus className="size-4 mr-1" /> Add estimated period
+          </Button>
+        </div>
       </SectionCard>
 
       {/* ── Betriebskosten ── */}
@@ -1518,6 +1637,7 @@ export default function NebenkostenabrechnungPage() {
                   </Button>
                 )}
               </div>
+              <EstimateBanner b={b} set={(patch) => updateAt(setBkB, i, patch)} />
               <FieldRow>
                 <Num label="Total cost (€)" value={b.cost_flat} onChange={(v) => updateAt(setBkB, i, { cost_flat: v })} />
                 <Num label="Tenants" value={b.tenants} step="1" min="1" onChange={(v) => updateAt(setBkB, i, { tenants: v })} />
@@ -1557,13 +1677,20 @@ export default function NebenkostenabrechnungPage() {
             </div>
           );
         })}
-        <Button variant="outline" size="sm" onClick={() => setBkB((a) => {
-          const nb = defBk(numTenants);
-          const eff = selected ? clampPeriod(nb.bk_start, nb.bk_end, selected.start_date, selected.end_date) : { start: "", end: "" };
-          return [...a, { ...nb, eff_start: eff.start, eff_end: eff.end }];
-        })}>
-          <Plus className="size-4 mr-1" /> Add billing
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => setBkB((a) => {
+            const nb = defBk(numTenants);
+            const eff = selected ? clampPeriod(nb.bk_start, nb.bk_end, selected.start_date, selected.end_date) : { start: "", end: "" };
+            return [...a, { ...nb, eff_start: eff.start, eff_end: eff.end }];
+          })}>
+            <Plus className="size-4 mr-1" /> Add billing
+          </Button>
+          <Button variant="ghost" size="sm"
+            onClick={() => addEstimatedBilling(setBkB, bkB, () => defBk(numTenants), "bk")}
+            title="The tenant lived past the last Abrechnung and the next one has not arrived">
+            <Plus className="size-4 mr-1" /> Add estimated period
+          </Button>
+        </div>
       </SectionCard>
 
       {/* ── Extra items ── */}

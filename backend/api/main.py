@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from db import migrate_to_head
@@ -67,6 +68,11 @@ _cors_origins = [
     for o in os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
     if o.strip()
 ]
+
+# Added before CORS, so CORS stays the outermost layer and still answers
+# preflights and stamps its headers on errors. Reports and lists are JSON that
+# compresses roughly ten to one; below a kilobyte it is not worth the CPU.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
     CORSMiddleware,

@@ -694,6 +694,12 @@ def _afa_items(afa: dict, ov) -> list[dict]:
     return []
 
 
+# What a one-off row carries in the report: what the tax page lists and what
+# the Anlage V PDF prints, and nothing else.
+_ONE_OFF_FIELDS = ("id", "category", "vendor", "expense_date", "distribute_years",
+                   "source_file")
+
+
 def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
     """Returns (per-property blocks for tax-relevant properties,
     names of excluded properties) for the given owner."""
@@ -915,14 +921,18 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
         else:
             recurring_source = "computed"
 
-        # One-off expenses (Schuldzinsen rows live in the Schuldzinsen block)
+        # One-off expenses (Schuldzinsen rows live in the Schuldzinsen block).
+        # Only the fields the report shows: the full rows carry the scanned
+        # receipt's note, the bill columns and the property again, which made
+        # them 38 KB of a 40 KB report that nothing read. The whole rows are a
+        # request away at /api/tax/expenses.
         one_off, one_off_total = [], 0.0
         for e in expenses.get(pid, []):
             if e["category"] == "Schuldzinsen":
                 continue
             share = tax_logic.expense_share_for_year(
                 e["expense_date"], e["amount"], e["distribute_years"], year)
-            one_off.append({**e, "share_this_year": share})
+            one_off.append({k: e[k] for k in _ONE_OFF_FIELDS} | {"share_this_year": share})
             one_off_total += share
         one_off_total = round(one_off_total, 2)
 

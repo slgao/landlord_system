@@ -156,7 +156,7 @@ def _tax_books(monkeypatch, payments, nk=100.0):
     def fake_bundle(parts):
         got = {name for name, _, _ in parts}
         assert got == {"props", "profiles", "mortgages", "money", "contracts",
-                       "flat", "overrides"}, got
+                       "flat", "overrides", "expenses"}, got
         return {
             "props": [[1, "Haus A", 1]],
             "profiles": [],
@@ -165,10 +165,10 @@ def _tax_books(monkeypatch, payments, nk=100.0):
             "contracts": [[1, "Mieter", 1000.0, "2025-01-01", None, nk]],
             "flat": [],
             "overrides": [],
+            "expenses": [],
         }
     monkeypatch.setattr(tax, "fetch_bundle", fake_bundle)
     monkeypatch.setattr(tax, "fetch", lambda sql, params=(): pytest.fail(f"unbundled query: {sql}"))
-    monkeypatch.setattr(tax, "list_expenses", lambda year, owner: [])
     blocks, _ = tax.build_report(2025, 1)
     return blocks[0]["income"]
 

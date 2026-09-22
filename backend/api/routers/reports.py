@@ -124,9 +124,42 @@ def _norm_billings(x):
     return x if isinstance(x, list) else [x]
 
 
+# Every utility prorates the flat's cost as cost × eff_days / bill_days: the
+# share of the billing period the tenant lived there. A living period longer
+# than the billing period would charge them more than the flat's whole cost
+# for it — days outside the bill are not in the bill. Betriebskosten does the
+# same with months.
+def _check_period(label: str, part, whole, unit: str) -> None:
+    try:
+        part_f, whole_f = float(part or 0), float(whole or 0)
+    except (TypeError, ValueError):
+        return
+    if whole_f > 0 and part_f > whole_f + 1e-6:
+        raise HTTPException(422, f"{label}: „Ihr Zeitraum“ is {part_f:g} {unit} but the "
+                                 f"Abrechnungszeitraum is only {whole_f:g}. The tenant's period "
+                                 "has to lie inside the billing period.")
+
+
+def _check_billings(body) -> None:
+    for label, key in (("Strom", "strom"), ("Gas", "gas"), ("Kaltwasser", "water"),
+                       ("Warmwasser", "warmwater"), ("Heizung", "heizung")):
+        for b in _norm_billings(getattr(body, key, None)):
+            _check_period(label, b.get("eff_days"), b.get("bill_days"), "days")
+    for b in _norm_billings(getattr(body, "bk", None)):
+        try:
+            bk_start = date.fromisoformat(b["bk_start"])
+            bk_end = date.fromisoformat(b["bk_end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        num_months = ((bk_end.year - bk_start.year) * 12
+                      + (bk_end.month - bk_start.month + 1))
+        _check_period("Betriebskosten", b.get("months"), num_months, "months")
+
+
 @router.post("/nebenkostenabrechnung/calculate")
 @_surface_errors
 def nk_calculate(body: NKCalcRequest, owner: int = Depends(require_auth)):
+    _check_billings(body)
     from logic import (strom_calc_detail, gas_calc_detail, water_calc_detail,
                        warmwasser_calc_detail, heizung_calc_detail,
                        betriebskosten_calc, sum_cost_calc)
@@ -212,6 +245,14 @@ class NKRequest(BaseModel):
 @router.post("/nebenkostenabrechnung/pdf")
 @_surface_errors
 def nebenkostenabrechnung_pdf(body: NKRequest, owner: int = Depends(require_auth)):
+    # The PDF is built from figures the caller already computed, so it is
+    # checked here too rather than trusting them.
+    for label, key in (("Strom", "strom"), ("Gas", "gas"), ("Kaltwasser", "water"),
+                       ("Warmwasser", "warmwater"), ("Heizung", "heizung")):
+        for b in _norm_billings(getattr(body, key, None)):
+            _check_period(label, b.get("days"), b.get("bill_days"), "days")
+    for b in _norm_billings(getattr(body, "bk", None)):
+        _check_period("Betriebskosten", b.get("months"), b.get("num_months"), "months")
     from pdfgen import invoice_pdf
     # Resolve the primary tenant's gender for the salutation/honorific (the
     # frontend sends a placeholder "diverse").

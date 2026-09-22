@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 from typing import Literal, Optional
 
-from db import fetch, fetch_bundle, execute, execute_returning, insert
+from db import fetch, fetch_bundle, json_part, execute, execute_returning, insert
 from auth import require_auth
 from api.schemas.common import IsoDate, OptIsoDate
 import tax_logic
@@ -446,11 +446,14 @@ def _expense_row(r) -> dict:
     }
 
 
-@router.get("/expenses")
-def list_expenses(year: int | None = None, property_id: int | None = None,
-                  owner: int = Depends(require_auth)):
-    rows = [_expense_row(r) for r in fetch(
-        f"{_EXPENSE_SELECT} WHERE e.owner_id=? ORDER BY e.expense_date DESC", (owner,))]
+def _q_expenses(owner):
+    return json_part("expenses", f"{_EXPENSE_SELECT} WHERE e.owner_id=? "
+                                 "ORDER BY e.expense_date DESC", (owner,))
+
+
+def _expenses_from(rows, year: int | None = None, property_id: int | None = None):
+    """The expense rows a caller asked for, from rows already fetched."""
+    rows = [_expense_row(r) for r in rows]
     if property_id:
         rows = [r for r in rows if r["property_id"] == property_id]
     if year:
@@ -472,6 +475,12 @@ def list_expenses(year: int | None = None, property_id: int | None = None,
                 out.append({**r, "share_this_year": share})
         return out
     return rows
+
+
+@router.get("/expenses")
+def list_expenses(year: int | None = None, property_id: int | None = None,
+                  owner: int = Depends(require_auth)):
+    return _expenses_from(fetch_bundle([_q_expenses(owner)])["expenses"], year, property_id)
 
 
 @router.post("/expenses", status_code=201)
@@ -740,6 +749,7 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
             WHERE fc.owner_id = ?""", (owner,)),
         ("overrides", "SELECT json_build_array(property_id, field, value, note) "
                       "FROM tax_year_overrides WHERE tax_year=? AND owner_id=?", (year, owner)),
+        _q_expenses(owner),
     ])
 
     all_props = loaded["props"]
@@ -782,7 +792,7 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
         flat.setdefault(r[0], []).append(r)
 
     expenses: dict[int, list] = {}
-    for e in list_expenses(year=year, owner=owner):
+    for e in _expenses_from(loaded["expenses"], year=year):
         if e["deductible"]:
             expenses.setdefault(e["property_id"], []).append(e)
 

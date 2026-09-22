@@ -285,7 +285,8 @@ def test_list_expenses_reports_what_each_row_contributes_to_the_year(monkeypatch
         (3, 1, "Haus A", None, "2024-07-01", -450, "Hausgeld", None, None, 1, 1, None,
          None, None, None, None, 0, False),
     ]
-    monkeypatch.setattr(tax_router, "fetch", lambda sql, params=(): rows)
+    monkeypatch.setattr(tax_router, "fetch_bundle",
+                        lambda parts: {name: rows for name, _, _ in parts})
 
     # The year it was paid: the one-year rows at face value, the spread one at a third.
     y2024 = {r["id"]: r for r in tax_router.list_expenses(year=2024, owner=1)}

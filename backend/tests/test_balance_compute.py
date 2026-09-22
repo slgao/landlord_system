@@ -149,12 +149,13 @@ def test_a_blank_zinsbindung_changes_nothing(monkeypatch):
 # full amount lands in the month it was paid (no §82b spreading), and a
 # non-deductible cost still counts.
 
-def _books(monkeypatch, costs=(), expenses=()):
+def _books(monkeypatch, costs=(), expenses=(), payments=()):
     """Route balance_compute's loads to canned rows.
 
-    `costs` rows are (property_id, amount, frequency, valid_from, valid_to) and
-    `expenses` rows (property_id, 'YYYY-MM', amount) — the shapes the two
-    loaders select, not the shapes the tables hold.
+    `costs` rows are (property_id, amount, frequency, valid_from, valid_to),
+    `expenses` rows (property_id, 'YYYY-MM', amount) and `payments` rows
+    (property_id, 'YYYY-MM', amount, kind) — the shapes the loaders select,
+    plus the kind the payments loader filters on.
     """
     def fake_fetch(sql, params=()):
         q = " ".join(sql.split())
@@ -165,7 +166,8 @@ def _books(monkeypatch, costs=(), expenses=()):
         if "FROM flat_costs" in q:
             return list(costs)
         if "FROM payments" in q:
-            return []
+            kind = params[-1]
+            return [r[:3] for r in payments if r[3] == kind]
         if "FROM expenses" in q:
             return list(expenses)
         if "FROM mortgages" in q:
@@ -236,3 +238,43 @@ def test_the_current_month_snapshot_stays_a_projection(monkeypatch):
     _books(monkeypatch, expenses=[(1, ym, Decimal("5000"))])
     snap, _ = balance_compute._compute_snapshot(y, 1, include_one_off=True)
     assert snap[0]["costs"] == 0.0
+
+
+# ── Tenant NK settlements ─────────────────────────────────────────────────────
+# The other half of the Hausgeldabrechnung: they net into the one-off figure,
+# and never into "Actual received", which is compared against contracted rent.
+
+def test_settlement_is_not_rent_received(monkeypatch):
+    from decimal import Decimal
+    y = _year()
+    _books(monkeypatch, payments=[(1, f"{y}-01", Decimal("800"), "rent"),
+                                  (1, f"{y}-01", Decimal("150"), "nk_settlement")])
+    _, props = balance_compute._compute_snapshot(y, 1, include_one_off=True)
+    assert float(props[0]["tot_actual"]) == 800.0
+    assert float(props[0]["monthly_rows"][0]["Actual received (€)"]) == 800.0
+
+
+def test_settlement_nets_against_the_hga_it_recovers(monkeypatch):
+    from decimal import Decimal
+    y = _year()
+    _books(monkeypatch,
+           expenses=[(1, f"{y}-03", Decimal("600"))],                        # HGA Nachzahlung
+           payments=[(1, f"{y}-03", Decimal("250"), "nk_settlement"),      # tenant pays share
+                     (1, f"{y}-05", Decimal("-40"), "nk_settlement")])     # refund to another
+    _, props = balance_compute._compute_snapshot(y, 1, include_one_off=True)
+    assert _costs_of(props, 2) == 350.0           # March: 600 − 250
+    assert _costs_of(props, 4) == 40.0            # May: the refund is money out
+    assert float(props[0]["tot_one_off"]) == 390.0
+    assert float(props[0]["tot_settlements"]) == 210.0
+
+
+def test_running_costs_view_leaves_settlements_out_with_the_hga(monkeypatch):
+    from decimal import Decimal
+    y = _year()
+    _books(monkeypatch,
+           expenses=[(1, f"{y}-03", Decimal("600"))],
+           payments=[(1, f"{y}-03", Decimal("250"), "nk_settlement")])
+    _, props = balance_compute._compute_snapshot(y, 1)
+    assert float(props[0]["tot_costs"]) == 0.0
+    assert float(props[0]["tot_settlements"]) == 0.0
+    assert float(props[0]["tot_actual"]) == 0.0

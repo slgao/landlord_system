@@ -129,6 +129,48 @@ export interface Payment {
   currency?: string;       // always "EUR" for the counted value
   orig_amount?: number | null;    // foreign tender note, if paid in another currency
   orig_currency?: string | null;
+  // 'rent', or money moving because of a Nebenkostenabrechnung: a Nachzahlung
+  // from the tenant (positive) or a refund to them (negative).
+  kind: PaymentKind;
+  settlement_id?: number | null;
+}
+
+export type PaymentKind = "rent" | "nk_settlement";
+
+/** A Nebenkostenabrechnung sent to a tenant. `amount` is signed from your
+ *  side: + Nachzahlung the tenant owes, − Guthaben you owe them. Paid/open
+ *  are derived from the payments linked to it. */
+export interface NKSettlement {
+  id: number;
+  contract_id: number;
+  tenant_name?: string | null;
+  apartment_name?: string | null;
+  property_name?: string | null;
+  period_start: string;
+  period_end: string;
+  amount: number;
+  issued_date?: string | null;
+  note?: string | null;
+  has_pdf: boolean;
+  paid: number;
+  open: number;
+  status: "open" | "partial" | "settled";
+  deadline?: string | null;        // §556 Abs. 3 BGB
+  issued_on_time?: boolean | null;
+}
+
+/** A finished year with no Abrechnung recorded for a tenancy yet. */
+export interface PendingAbrechnung {
+  contract_id: number;
+  tenant_name?: string | null;
+  apartment_name?: string | null;
+  property_name?: string | null;
+  year: number;
+  period_start: string;
+  period_end: string;
+  deadline: string;
+  days_remaining: number;
+  level: "due" | "missed";
 }
 
 export interface FlatCost {
@@ -439,6 +481,7 @@ export interface TaxReportProperty {
     override_note: string | null;
     nk_known: boolean;
     umlagen: number | null;
+    nk_settlements: number;        // Nachzahlungen − refunds, already inside umlagen
     kaltmiete: number | null;
     split_source: "contracts" | "override" | null;
   };

@@ -15,7 +15,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex md:h-screen md:overflow-hidden">
       <Sidebar />
       {/* pt-14 on mobile clears the fixed top bar */}
-      <main className="flex-1 md:overflow-y-auto p-4 md:p-6 pt-[4.5rem] md:pt-6">{children}</main>
+      <main className="flex-1 min-w-0 md:overflow-y-auto p-4 md:p-6 pt-[4.5rem] md:pt-6">{children}</main>
     </div>
   );
 }

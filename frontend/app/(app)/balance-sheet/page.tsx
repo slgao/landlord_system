@@ -134,6 +134,8 @@ export default function BalanceSheetPage() {
   const totalActual = properties.reduce((s: number, p: any) => s + (p.tot_actual || 0), 0);
   const totalCosts = properties.reduce((s: number, p: any) => s + (p.tot_costs || 0), 0);
   const totalOneOff = properties.reduce((s: number, p: any) => s + (p.tot_one_off || 0), 0);
+  // Tenants' NK settlements, already netted into the one-off figure.
+  const totalSettlements = properties.reduce((s: number, p: any) => s + (p.tot_settlements || 0), 0);
   const totalNet = totalActual - totalCosts;
 
   // Financing (mortgages): rough remaining debt + interest/equity paid this year.
@@ -164,7 +166,7 @@ export default function BalanceSheetPage() {
             onClick={() => setWithOneOff(true)}
             className={`px-2.5 py-1 border-l border-border transition-colors ${withOneOff
               ? "bg-primary/15 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
-            title="Also the one-off expenses from Tax Setup — Hausgeld settlements, repairs — in the month they were paid"
+            title="Also the one-off expenses from Tax Setup — Hausgeld settlements, repairs — in the month they were paid, net of what tenants paid or got back on their NK settlements"
           >
             + one-off
           </button>
@@ -217,8 +219,14 @@ export default function BalanceSheetPage() {
               positive={totalActual >= totalExpected} accent={C.actual} icon={Banknote} />
             <MetricCard label="Total Costs" value={fmt(totalCosts)} accent={C.costs} icon={Receipt}
               sub={withOneOff
-                ? (totalOneOff !== 0
-                    ? `incl. ${fmt(totalOneOff)} one-off`
+                ? (totalOneOff !== 0 || totalSettlements !== 0
+                    // tot_one_off is already net of the tenants' settlements;
+                    // show the two halves rather than one netted figure.
+                    ? [
+                        (totalOneOff + totalSettlements) !== 0 && `incl. ${fmt(totalOneOff + totalSettlements)} one-off`,
+                        totalSettlements > 0 && `less ${fmt(totalSettlements)} recovered from tenants`,
+                        totalSettlements < 0 && `plus ${fmt(-totalSettlements)} refunded to tenants`,
+                      ].filter(Boolean).join(", ")
                     : "no one-off expenses this year")
                 : "running costs only"} />
             <MetricCard label="Net (actual)" value={fmt(totalNet)} positive={totalNet >= 0} accent={C.net} icon={Wallet} />

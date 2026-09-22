@@ -2,7 +2,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { DashboardStats, ContractAlert } from "@/lib/types";
+import { DashboardStats, ContractAlert, NKSettlement, PendingAbrechnung } from "@/lib/types";
+import Link from "next/link";
+import { eur, fmtDate, resultLabel } from "@/components/nk-settlements";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Building2, Home, Users, FileText } from "lucide-react";
@@ -41,6 +43,18 @@ export default function DashboardPage() {
     queryKey: ["dashboard-alerts"],
     queryFn: () => api.get("/api/dashboard/alerts").then((r) => r.data),
   });
+  const { data: nkPending = [] } = useQuery<PendingAbrechnung[]>({
+    queryKey: ["nk-pending"],
+    queryFn: () => api.get("/api/nk-settlements/pending").then((r) => r.data),
+  });
+  const { data: nkSettlements = [] } = useQuery<NKSettlement[]>({
+    queryKey: ["nk-settlements"],
+    queryFn: () => api.get("/api/nk-settlements/").then((r) => r.data),
+  });
+  // Only what needs doing soon: a deadline inside four months, one just
+  // missed, or money still open either way.
+  const nkDue = nkPending.filter((p) => p.days_remaining <= 120);
+  const nkOpen = nkSettlements.filter((s) => s.status !== "settled");
   const { data: bs } = useQuery({
     queryKey: ["balance-sheet-dash", currentYear],
     queryFn: () => api.get(`/api/reports/balance-sheet/${currentYear}`).then((r) => r.data),
@@ -103,6 +117,42 @@ export default function DashboardPage() {
                   dot={false} activeDot={{ r: 3 }} />
               </ComposedChart>
             </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {(nkDue.length > 0 || nkOpen.length > 0) && (
+        <Card>
+          <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-sm font-medium">Nebenkostenabrechnungen</CardTitle>
+            <Link href="/nk-settlements" className="text-xs text-primary hover:underline">NK Settlements →</Link>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {nkDue.map((p) => (
+              <div key={`d-${p.contract_id}-${p.year}`} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                <div>
+                  <p className="text-sm font-medium">{p.tenant_name} · Abrechnung {p.year}</p>
+                  <p className="text-xs text-muted-foreground">{p.apartment_name} · {p.property_name}</p>
+                </div>
+                <div className="text-right space-y-1">
+                  <Badge variant={p.level === "missed" ? "destructive" : "secondary"}>
+                    {p.level === "missed" ? `Deadline passed ${-p.days_remaining}d ago` : `Send within ${p.days_remaining}d`}
+                  </Badge>
+                  <p className="text-xs text-muted-foreground">{fmtDate(p.deadline)}</p>
+                </div>
+              </div>
+            ))}
+            {nkOpen.map((s) => (
+              <div key={`o-${s.id}`} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                <div>
+                  <p className="text-sm font-medium">{s.tenant_name} · {resultLabel(s.amount)}</p>
+                  <p className="text-xs text-muted-foreground">{fmtDate(s.period_start)}–{fmtDate(s.period_end)}</p>
+                </div>
+                <p className="text-sm font-mono">
+                  {s.amount > 0 ? "owes you " : "you owe "}{eur(Math.abs(s.open))}
+                </p>
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}

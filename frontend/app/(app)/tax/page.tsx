@@ -335,7 +335,13 @@ export default function TaxReportPage() {
                                 field="income_kaltmiete" value={b.income.kaltmiete}
                                 overridden={b.income.split_source === "override"} />
                             </div>
-                            <div className="flex justify-between"><span className="text-muted-foreground">Umlagen (NK-Vorauszahlungen)</span><span className="font-mono">{eur(b.income.umlagen!)}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Umlagen (NK-Vorauszahlungen{b.income.nk_settlements ? " + Abrechnungen" : ""})</span><span className="font-mono">{eur(b.income.umlagen!)}</span></div>
+                            {b.income.nk_settlements !== 0 && (
+                              <div className="flex justify-between pl-3 text-muted-foreground">
+                                <span>davon NK-Abrechnungen ({b.income.nk_settlements > 0 ? "Nachzahlungen" : "Erstattungen"} im Jahr gezahlt)</span>
+                                <span className="font-mono">{eur(b.income.nk_settlements)}</span>
+                              </div>
+                            )}
                             <div className="flex justify-between font-medium"><span>Einnahmen gesamt</span><span className="font-mono">{eur(b.income.final)}</span></div>
                           </div>
                         ) : (

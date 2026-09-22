@@ -8,9 +8,10 @@ via tax_year_overrides. Manual always wins over computed.
 import json
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from starlette.concurrency import run_in_threadpool
 from typing import Literal, Optional
 
 from db import fetch, execute, execute_returning, insert
@@ -35,8 +36,15 @@ EXPENSE_CATEGORIES = [
     "Erhaltungsaufwand", "Renovierung", "Instandhaltung",
     "Schuldzinsen", "Geldbeschaffungskosten",
     "Grundsteuer", "Versicherung", "Verwaltung", "Hausgeld",
-    "Fahrtkosten", "Sonstige",
+    "Versorgerabrechnung", "Fahrtkosten", "Sonstige",
 ]
+
+# What a provider bill bills. Setting one on an expense makes it a bill that
+# tenant Nebenkostenabrechnungen can be linked to (see nk_settlements).
+UTILITIES = ("strom", "gas", "wasser", "heizung", "betriebskosten", "muell", "sonstige")
+Utility = Literal["strom", "gas", "wasser", "heizung", "betriebskosten", "muell", "sonstige"]
+
+_MAX_PDF_BYTES = 5 * 1024 * 1024
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -75,6 +83,23 @@ class ExpenseIn(BaseModel):
     deductible: int = 1
     distribute_years: int = 1
     source_file: Optional[str] = None  # scanned receipt this row came from
+    # Provider bill: only written when sent, so the Tax Setup form, which
+    # does not know about them, cannot wipe them by saving an edit.
+    utility: Optional[Utility] = None
+    period_start: OptIsoDate = None
+    period_end: OptIsoDate = None
+    bill_total: Optional[float] = None    # Gesamtkosten of the period, per the bill
+
+    @model_validator(mode="after")
+    def _bill(self):
+        if self.utility and not (self.period_start and self.period_end):
+            raise ValueError("a provider bill needs its billing period")
+        if self.period_start and self.period_end and self.period_end < self.period_start:
+            raise ValueError("period_end must not be before period_start")
+        return self
+
+
+_BILL_FIELDS = ("utility", "period_start", "period_end", "bill_total")
 
 
 class NkSplitIn(BaseModel):
@@ -401,7 +426,9 @@ def amortization(owner: int = Depends(require_auth)):
 
 _EXPENSE_SELECT = """
     SELECT e.id, e.property_id, p.name, e.apartment_id, e.expense_date, e.amount,
-           e.category, e.vendor, e.note, e.deductible, e.distribute_years, e.source_file
+           e.category, e.vendor, e.note, e.deductible, e.distribute_years, e.source_file,
+           e.utility, e.period_start, e.period_end, e.bill_total,
+           COALESCE(e.tenant_settled, 0), e.pdf IS NOT NULL
     FROM expenses e JOIN properties p ON p.id = e.property_id
 """
 
@@ -413,6 +440,9 @@ def _expense_row(r) -> dict:
         "category": r[6], "vendor": _clean(r[7]), "note": _clean(r[8]),
         "deductible": int(r[9] or 0), "distribute_years": int(r[10] or 1),
         "source_file": _clean(r[11]),
+        "utility": r[12], "period_start": _clean(r[13]), "period_end": _clean(r[14]),
+        "bill_total": float(r[15]) if r[15] is not None else None,
+        "tenant_settled": bool(r[16]), "has_pdf": bool(r[17]),
     }
 
 
@@ -448,9 +478,17 @@ def list_expenses(year: int | None = None, property_id: int | None = None,
 def create_expense(body: ExpenseIn, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (body.property_id, owner)):
         raise HTTPException(status_code=404, detail="Property not found")
-    new_id = insert("expenses", (body.property_id, body.apartment_id, body.expense_date,
-                                 body.amount, body.category, body.vendor, body.note,
-                                 body.deductible, body.distribute_years, body.source_file))
+    # Named columns: the bill columns sit after owner_id, so the positional
+    # db.insert() would put values in the wrong places.
+    new_id = execute_returning("""
+        INSERT INTO expenses (property_id, apartment_id, expense_date, amount, category,
+                              vendor, note, deductible, distribute_years, source_file,
+                              utility, period_start, period_end, bill_total, owner_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id
+    """, (body.property_id, body.apartment_id, body.expense_date, body.amount,
+          body.category, body.vendor, body.note, body.deductible, body.distribute_years,
+          body.source_file, body.utility, body.period_start, body.period_end,
+          body.bill_total, owner))[0][0]
     r = fetch(f"{_EXPENSE_SELECT} WHERE e.id=?", (new_id,))[0]
     return _expense_row(r)
 
@@ -467,8 +505,43 @@ def update_expense(expense_id: int, body: ExpenseIn, owner: int = Depends(requir
             (body.property_id, body.apartment_id, body.expense_date, body.amount,
              body.category, body.vendor, body.note, body.deductible,
              body.distribute_years, body.source_file, expense_id, owner))
+    sent = [f for f in _BILL_FIELDS if f in body.model_fields_set]
+    if sent:
+        execute(f"UPDATE expenses SET {', '.join(f + '=?' for f in sent)} "
+                "WHERE id=? AND owner_id=?",
+                (*(getattr(body, f) for f in sent), expense_id, owner))
     r = fetch(f"{_EXPENSE_SELECT} WHERE e.id=?", (expense_id,))[0]
     return _expense_row(r)
+
+
+@router.put("/expenses/{expense_id:int}/pdf")
+async def upload_expense_pdf(expense_id: int, file: UploadFile = File(...),
+                             owner: int = Depends(require_auth)):
+    """The bill itself, kept in the database next to the row."""
+    data = await file.read(_MAX_PDF_BYTES + 1)
+    if len(data) > _MAX_PDF_BYTES:
+        raise HTTPException(413, "The PDF is larger than 5 MB")
+    if not data.startswith(b"%PDF"):
+        raise HTTPException(422, "That file is not a PDF")
+
+    def _store():
+        if not fetch("SELECT id FROM expenses WHERE id=? AND owner_id=?", (expense_id, owner)):
+            raise HTTPException(404, "Expense not found")
+        execute("UPDATE expenses SET pdf=? WHERE id=? AND owner_id=?", (data, expense_id, owner))
+        return _expense_row(fetch(f"{_EXPENSE_SELECT} WHERE e.id=?", (expense_id,))[0])
+    return await run_in_threadpool(_store)
+
+
+# :int — otherwise "/expenses/inventory/pdf" (the Belegliste) would match here.
+@router.get("/expenses/{expense_id:int}/pdf")
+def download_expense_pdf(expense_id: int, owner: int = Depends(require_auth)):
+    rows = fetch("SELECT pdf, expense_date FROM expenses WHERE id=? AND owner_id=?",
+                 (expense_id, owner))
+    if not rows or rows[0][0] is None:
+        raise HTTPException(404, "No PDF stored for this expense")
+    return Response(content=bytes(rows[0][0]), media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'inline; filename="Rechnung_{rows[0][1]}.pdf"'})
 
 
 @router.delete("/expenses/{expense_id}", status_code=204)

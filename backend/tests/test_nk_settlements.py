@@ -235,3 +235,36 @@ def test_switching_to_a_pauschale_ends_the_obligation():
                  (2, 1, 1, "2025-04-01", None, 150, "flat")]
     [row] = logic.pending_abrechnungen(contracts, [], TODAY)
     assert (row["year"], row["contract_id"]) == (2025, 1)
+
+
+# ── Provider bills on expenses ────────────────────────────────────────────────
+
+def _exp(**kw):
+    from api.routers.tax import ExpenseIn
+    return ExpenseIn(**{"property_id": 1, "expense_date": "2026-03-01", "amount": 120.0,
+                        "category": "Versorgerabrechnung", **kw})
+
+
+def test_a_provider_bill_needs_its_period():
+    with pytest.raises(ValidationError):
+        _exp(utility="strom")
+    b = _exp(utility="strom", period_start="2025-01-01", period_end="2025-12-31", bill_total=980.0)
+    assert b.utility == "strom" and b.bill_total == 980.0
+
+
+def test_bill_period_must_run_forwards():
+    with pytest.raises(ValidationError):
+        _exp(utility="gas", period_start="2025-12-31", period_end="2025-01-01")
+
+
+def test_unknown_utility_is_refused():
+    with pytest.raises(ValidationError):
+        _exp(utility="internet", period_start="2025-01-01", period_end="2025-12-31")
+
+
+def test_a_plain_expense_edit_does_not_touch_bill_fields():
+    # The Tax Setup form sends none of them; update_expense writes only
+    # fields that were sent, so saving there cannot wipe a bill's period.
+    from api.routers.tax import _BILL_FIELDS
+    plain = _exp()
+    assert not set(_BILL_FIELDS) & plain.model_fields_set

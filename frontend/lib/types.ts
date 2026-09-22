@@ -164,6 +164,7 @@ export interface NKSettlement {
   paid_from_kaution: number;
   kaution_available: number | null; // still held, when it can be used
   kaution_deductions: { id: number; date: string; amount: number }[];
+  bills: BillBrief[];              // provider bills this Abrechnung covers
   open: number;
   status: "open" | "partial" | "settled";
   deadline?: string | null;        // §556 Abs. 3 BGB
@@ -481,6 +482,47 @@ export interface TaxExpense {
   deductible: number;
   distribute_years: number;
   source_file: string | null;
+  // Set on a provider bill (Rechnung) — see ProviderBill.
+  utility?: Utility | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  bill_total?: number | null;
+  tenant_settled?: boolean;
+  has_pdf?: boolean;
+}
+
+export type Utility = "strom" | "gas" | "wasser" | "heizung" | "betriebskosten" | "muell" | "sonstige";
+
+/** A provider bill: the supplier's Jahresabrechnung, the water bill, the
+ *  Hausgeldabrechnung behind the Betriebskosten. `amount` is what was paid
+ *  beyond the Abschläge (negative: a Guthaben). */
+export interface ProviderBill {
+  id: number;
+  property_id: number;
+  property_name?: string | null;
+  utility: Utility;
+  vendor?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  bill_total?: number | null;
+  amount: number;
+  expense_date: string;
+  category: string;
+  note?: string | null;
+  has_pdf: boolean;
+  tenant_settled: boolean;           // your call: fully passed on to the tenants
+  settlements: { id: number; tenant_name: string; period_start: string; period_end: string }[];
+}
+
+export interface BillBrief {
+  id: number;
+  utility: Utility;
+  vendor?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  bill_total?: number | null;
+  amount: number;
+  tenant_settled: boolean;
 }
 
 export interface NkSplit {

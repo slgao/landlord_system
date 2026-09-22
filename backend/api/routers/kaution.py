@@ -23,11 +23,15 @@ class KautionDeductionOut(BaseModel):
     amount: float
     category: str
     reason: Optional[str] = None
+    # Set when the deduction settles a Nebenkostenabrechnung ('nk_settlement').
+    reference_type: Optional[str] = None
+    reference_id: Optional[int] = None
 
 
 def _row(r) -> KautionDeductionOut:
     return KautionDeductionOut(id=r[0], contract_id=r[1], date=r[2],
-                               amount=float(r[3]), category=r[4], reason=r[5])
+                               amount=float(r[3]), category=r[4], reason=r[5],
+                               reference_type=r[6], reference_id=r[7])
 
 
 def _own_contract(contract_id, owner):
@@ -38,7 +42,7 @@ def _own_contract(contract_id, owner):
 @router.get("/", response_model=list[KautionDeductionOut])
 def list_deductions(contract_id: int, owner: int = Depends(require_auth)):
     rows = fetch("""
-        SELECT id,contract_id,date,amount,category,reason
+        SELECT id,contract_id,date,amount,category,reason,reference_type,reference_id
         FROM kaution_deductions WHERE contract_id=? AND owner_id=? ORDER BY date
     """, (contract_id, owner))
     return [_row(r) for r in rows]
@@ -51,7 +55,7 @@ def create_deduction(body: KautionDeductionIn, owner: int = Depends(require_auth
         INSERT INTO kaution_deductions (contract_id,date,amount,category,reason,owner_id)
         VALUES (?,?,?,?,?,?) RETURNING id
     """, (body.contract_id, body.date, body.amount, body.category, body.reason, owner))[0][0]
-    rows = fetch("SELECT id,contract_id,date,amount,category,reason FROM kaution_deductions WHERE id=?",
+    rows = fetch("SELECT id,contract_id,date,amount,category,reason,reference_type,reference_id FROM kaution_deductions WHERE id=?",
                  (new_id,))
     return _row(rows[0])
 
@@ -65,7 +69,7 @@ def update_deduction(ded_id: int, body: KautionDeductionIn, owner: int = Depends
         SET date=?, amount=?, category=?, reason=?
         WHERE id=? AND owner_id=?
     """, (body.date, body.amount, body.category, body.reason, ded_id, owner))
-    rows = fetch("SELECT id,contract_id,date,amount,category,reason FROM kaution_deductions WHERE id=?",
+    rows = fetch("SELECT id,contract_id,date,amount,category,reason,reference_type,reference_id FROM kaution_deductions WHERE id=?",
                  (ded_id,))
     return _row(rows[0])
 

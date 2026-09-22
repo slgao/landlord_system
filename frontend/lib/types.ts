@@ -79,6 +79,9 @@ export interface KautionDeduction {
   amount: number;
   category: string;
   reason?: string;
+  // Set when the deduction settles a Nebenkostenabrechnung.
+  reference_type?: "nk_settlement" | null;
+  reference_id?: number | null;
 }
 
 export interface KautionPayment {
@@ -152,11 +155,28 @@ export interface NKSettlement {
   issued_date?: string | null;
   note?: string | null;
   has_pdf: boolean;
-  paid: number;
+  paid: number;                    // payments + deposit kept back
+  paid_from_kaution: number;
+  kaution_available: number | null; // still held, when it can be used
+  kaution_deductions: { id: number; date: string; amount: number }[];
   open: number;
   status: "open" | "partial" | "settled";
   deadline?: string | null;        // §556 Abs. 3 BGB
   issued_on_time?: boolean | null;
+}
+
+/** A Kaution deduction for Nebenkosten that no settlement points at yet. */
+export interface UnlinkedKaution {
+  id: number;
+  contract_id: number;
+  tenant_name?: string | null;
+  apartment_name?: string | null;
+  property_name?: string | null;
+  date?: string | null;
+  amount: number;
+  category?: string | null;
+  reason?: string | null;
+  candidates: number[];            // open Nachzahlungen of the same tenancy
 }
 
 /** A finished year with no Abrechnung recorded for a tenancy yet. */

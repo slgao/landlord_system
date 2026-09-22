@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
-import { Contract, NKSettlement, PendingAbrechnung } from "@/lib/types";
+import { Contract, NKSettlement, PendingAbrechnung, UnlinkedKaution } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,11 +13,14 @@ import {
 } from "@/components/ui/table";
 import { ConfirmButton } from "@/components/confirm-button";
 import {
-  SettlementDialog, SettlementPaymentDialog, SettlementDraft,
+  SettlementDialog, SettlementPaymentDialog, SettlementDraft, KautionSettleDialog,
   downloadSettlementPdf, eur, fmtDate, invalidateSettlementViews, resultLabel,
 } from "@/components/nk-settlements";
 import { toast } from "sonner";
-import { FileDown, Pencil, Trash2, Banknote, CalendarClock } from "lucide-react";
+import { FileDown, Pencil, Trash2, Banknote, CalendarClock, Vault, Link2, X } from "lucide-react";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 
 const STATUS: Record<NKSettlement["status"], { label: string; cls: string }> = {
   open:     { label: "Open",    cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20" },
@@ -29,6 +32,7 @@ export default function NKSettlementsPage() {
   const qc = useQueryClient();
   const [dialog, setDialog] = useState<{ draft?: SettlementDraft; editing?: NKSettlement } | null>(null);
   const [paying, setPaying] = useState<NKSettlement | null>(null);
+  const [fromKaution, setFromKaution] = useState<NKSettlement | null>(null);
 
   const { data: settlements = [], isLoading } = useQuery<NKSettlement[]>({
     queryKey: ["nk-settlements"],
@@ -42,6 +46,35 @@ export default function NKSettlementsPage() {
     queryKey: ["contracts-all"],
     queryFn: () => api.get("/api/contracts/").then((r) => r.data),
   });
+
+  const { data: unlinked = [] } = useQuery<UnlinkedKaution[]>({
+    queryKey: ["nk-unlinked-kaution"],
+    queryFn: () => api.get("/api/nk-settlements/unlinked-kaution").then((r) => r.data),
+  });
+
+  const link = useMutation({
+    mutationFn: ({ settlementId, deductionId }: { settlementId: number; deductionId: number }) =>
+      api.post(`/api/nk-settlements/${settlementId}/kaution-links`, { deduction_id: deductionId }),
+    onSuccess: () => { invalidateSettlementViews(qc); toast.success("Linked to the settlement"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not link the deduction")),
+  });
+  const unlink = useMutation({
+    mutationFn: ({ settlementId, deductionId }: { settlementId: number; deductionId: number }) =>
+      api.delete(`/api/nk-settlements/${settlementId}/kaution-links/${deductionId}`),
+    onSuccess: () => { invalidateSettlementViews(qc); toast.success("Unlinked — the deduction stays on the Kaution"); },
+    onError: (e) => toast.error(errorMessage(e, "Could not unlink the deduction")),
+  });
+  const byId = useMemo(() => new Map(settlements.map((s) => [s.id, s])), [settlements]);
+
+  // An imported deduction most likely settled the year before it was taken.
+  function importDraft(u: UnlinkedKaution): SettlementDraft {
+    const y = u.date ? Number(u.date.slice(0, 4)) - 1 : new Date().getFullYear() - 1;
+    return {
+      contract_id: u.contract_id, period_start: `${y}-01-01`, period_end: `${y}-12-31`,
+      amount: u.amount, issued_date: null, note: u.reason || null,
+      kaution_deduction: { id: u.id, date: u.date, amount: u.amount },
+    };
+  }
 
   const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/api/nk-settlements/${id}`),
@@ -115,6 +148,54 @@ export default function NKSettlementsPage() {
         </Card>
       )}
 
+      {unlinked.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Vault className="size-4" /> Already settled from a deposit
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Kaution deductions for Nebenkosten that no settlement points at yet. Turn each into a
+              settlement — or link it to one you already recorded — so the year counts as done.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            {unlinked.map((u) => (
+              <div key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-border last:border-0">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{u.tenant_name} · {eur(u.amount)} kept on {fmtDate(u.date)}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {u.apartment_name} · {u.property_name} · {u.category}{u.reason ? ` — ${u.reason}` : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {u.candidates.length > 0 && (
+                    <Select value="" onValueChange={(v) => link.mutate({ settlementId: Number(v), deductionId: u.id })}>
+                      <SelectTrigger className="h-8 w-44 text-xs" aria-label="Link to settlement">
+                        <SelectValue placeholder="Link to settlement…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {u.candidates.map((id) => {
+                          const s = byId.get(id);
+                          return s ? (
+                            <SelectItem key={id} value={String(id)}>
+                              {fmtDate(s.period_start)}–{fmtDate(s.period_end)} · open {eur(s.open)}
+                            </SelectItem>
+                          ) : null;
+                        })}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <Button size="sm" variant="outline" onClick={() => setDialog({ draft: importDraft(u) })}>
+                    Create settlement
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-2 gap-4">
         <Card>
           <CardContent className="p-4">
@@ -164,7 +245,20 @@ export default function NKSettlementsPage() {
                   <TableCell className={`whitespace-nowrap ${s.amount > 0 ? "text-destructive" : "text-primary"}`}>
                     {resultLabel(s.amount)}
                   </TableCell>
-                  <TableCell className="text-right font-mono whitespace-nowrap">{eur(Math.abs(s.paid))}</TableCell>
+                  <TableCell className="text-right font-mono whitespace-nowrap">
+                    {eur(Math.abs(s.paid))}
+                    {s.kaution_deductions.map((d) => (
+                      <span key={d.id} className="flex items-center justify-end gap-1 text-[11px] text-muted-foreground font-sans">
+                        <Link2 className="size-3" /> Kaution {eur(d.amount)}
+                        <button type="button" title="Unlink (the deduction stays on the Kaution)"
+                          aria-label={`Unlink Kaution deduction of ${eur(d.amount)}`}
+                          onClick={() => unlink.mutate({ settlementId: s.id, deductionId: d.id })}
+                          className="hover:text-destructive">
+                          <X className="size-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </TableCell>
                   <TableCell className="text-right font-mono whitespace-nowrap">{eur(Math.abs(s.open))}</TableCell>
                   <TableCell><Badge className={STATUS[s.status].cls}>{STATUS[s.status].label}</Badge></TableCell>
                   <TableCell className="text-xs whitespace-nowrap">
@@ -175,6 +269,12 @@ export default function NKSettlementsPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-0.5">
+                      {s.status !== "settled" && s.amount > 0 && (s.kaution_available ?? 0) > 0.005 && (
+                        <Button variant="ghost" size="icon" title="Settle from Kaution" aria-label="Settle from Kaution"
+                          onClick={() => setFromKaution(s)}>
+                          <Vault className="size-4" />
+                        </Button>
+                      )}
                       {s.status !== "settled" && (
                         <Button variant="ghost" size="icon" title={s.amount < 0 ? "Record refund" : "Record payment"}
                           aria-label={s.amount < 0 ? "Record refund" : "Record payment"} onClick={() => setPaying(s)}>
@@ -215,6 +315,7 @@ export default function NKSettlementsPage() {
         editing={dialog?.editing ?? null}
       />
       <SettlementPaymentDialog settlement={paying} onOpenChange={(o) => { if (!o) setPaying(null); }} />
+      <KautionSettleDialog settlement={fromKaution} onOpenChange={(o) => { if (!o) setFromKaution(null); }} />
     </div>
   );
 }

@@ -206,6 +206,32 @@ def _load_payments(owner, year: int, kind: str = "rent") -> dict:
     return {(pid, ym): total for pid, ym, total in rows}
 
 
+def _load_settlements(owner, year: int) -> dict:
+    """{(property_id, 'YYYY-MM'): Decimal} — money that settled tenants' NK
+    Abrechnungen in `year`: settlement payments, and Nachzahlungen kept back
+    from the deposit (which never pass through payments)."""
+    from api.routers.nk_settlements import NK_CATEGORY, REF_TYPE
+    rows = fetch("""
+        SELECT property_id, ym, COALESCE(SUM(amount), 0) FROM (
+            SELECT a.property_id, substr(p.payment_date, 1, 7) AS ym, p.amount
+            FROM payments p
+            JOIN contracts c ON p.contract_id = c.id
+            JOIN apartments a ON c.apartment_id = a.id
+            WHERE p.owner_id = ? AND substr(p.payment_date, 1, 4) = ?
+              AND p.kind = 'nk_settlement'
+            UNION ALL
+            SELECT a.property_id, substr(d.date, 1, 7), d.amount
+            FROM kaution_deductions d
+            JOIN contracts c ON d.contract_id = c.id
+            JOIN apartments a ON c.apartment_id = a.id
+            WHERE d.owner_id = ? AND substr(d.date, 1, 4) = ?
+              AND (d.category = ? OR d.reference_type = ?)
+        ) x
+        GROUP BY property_id, ym
+    """, (owner, str(year), owner, str(year), NK_CATEGORY, REF_TYPE))
+    return {(pid, ym): total for pid, ym, total in rows}
+
+
 def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     """Return (snapshot, props) suitable for balance_sheet_pdf / the API,
     scoped to the given owner.
@@ -231,7 +257,7 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     # of it. So it goes where the HGA goes — into the one-off figure, netted,
     # and only when one-offs are shown. Recurring-only would otherwise show
     # the recovery without the cost it recovers.
-    settled = _load_payments(owner, y, "nk_settlement") if include_one_off else {}
+    settled = _load_settlements(owner, y) if include_one_off else {}
     mortgages = _load_mortgages(owner)
 
     snap_start = str(today.replace(day=1))

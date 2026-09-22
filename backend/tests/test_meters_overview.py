@@ -1,9 +1,10 @@
 """The Meter Readings page's single request.
 
 It used to make six — apartments, readings and one per meter type — and each
-also cost a round trip of its own to re-validate the token. The endpoint must
-return exactly what those six returned, or the page silently renders
-something subtly different from what it did before.
+also cost a round trip of its own to re-validate the token. The endpoint now
+answers all of it in one query as well, and must still return exactly what
+those six return, or the page silently renders something subtly different
+from what it did before.
 """
 import pytest
 
@@ -30,7 +31,14 @@ def stub(monkeypatch):
         if "FROM meter_reading_protocols mrp" in q:
             return []
         raise AssertionError(f"unexpected query: {q}")
+    def fake_bundle(parts):
+        # The overview asks for all of it in one round trip; each part still
+        # carries the query the individual handler uses, so the same canned
+        # rows answer both paths.
+        return {name: fake_fetch(sql, ps) for name, sql, ps in parts}
+
     monkeypatch.setattr(meters, "fetch", fake_fetch)
+    monkeypatch.setattr(meters, "fetch_bundle", fake_bundle)
     from api.routers import apartments
     monkeypatch.setattr(apartments, "fetch", fake_fetch)
     return fake_fetch

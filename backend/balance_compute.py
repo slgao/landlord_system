@@ -12,10 +12,19 @@ the dashboard's load time.
 import calendar
 from datetime import date
 from decimal import Decimal
-from db import fetch
+from db import fetch, fetch_bundle
 from tax_logic import monthly_equivalent
 
 _ZERO = Decimal("0")
+
+
+from kaution_rules import (NK_CATEGORY as _NK_CATEGORY, NK_REF_TYPE as _NK_REF_TYPE,
+                           RENT_CATEGORIES as _RENT_CATEGORIES)
+
+
+def _dec(v):
+    """Money arrives as text from a bundled query, so it stays exact."""
+    return _ZERO if v is None else Decimal(str(v))
 
 
 def _load_mortgages(owner) -> dict:
@@ -271,19 +280,89 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     today = date.today()
     y = int(year)
     max_month = today.month if y == today.year else 12
-    properties = fetch("SELECT id, name FROM properties WHERE owner_id=? ORDER BY name", (owner,))
 
-    contracts = _load_contracts(owner)
-    costs = _load_costs(owner)
-    paid = _load_rent(owner, y)
-    one_off = _load_one_off(owner, y) if include_one_off else {}
+    # One round trip for every load the snapshot needs. Money columns travel
+    # as text and come back as Decimal: the monthly arithmetic below is exact,
+    # and a JSON number would make it float.
+    loaded = fetch_bundle([
+        ("properties", "SELECT json_build_array(id, name) FROM properties "
+                       "WHERE owner_id=? ORDER BY name", (owner,)),
+        ("contracts", """
+            SELECT json_build_array(a.property_id, c.apartment_id, c.rent::text,
+                                    c.start_date, c.end_date, c.id)
+            FROM contracts c JOIN apartments a ON c.apartment_id = a.id
+            WHERE c.owner_id = ?""", (owner,)),
+        ("costs", """
+            SELECT json_build_array(a.property_id, fc.amount::text, fc.frequency,
+                                    fc.valid_from, fc.valid_to)
+            FROM flat_costs fc JOIN apartments a ON fc.apartment_id = a.id
+            WHERE fc.owner_id = ?""", (owner,)),
+        ("mortgages", """
+            SELECT json_build_array(property_id, principal::text, interest_rate_pct::text,
+                                    tilgung_rate_pct::text, start_date, fixed_until,
+                                    follow_up_rate_pct::text)
+            FROM mortgages WHERE owner_id = ?""", (owner,)),
+        ("rent", f"""
+            SELECT json_build_array(property_id, ym, SUM(amount)::text) FROM (
+                SELECT a.property_id, substr(p.payment_date, 1, 7) AS ym, p.amount
+                FROM payments p
+                JOIN contracts c ON p.contract_id = c.id
+                JOIN apartments a ON c.apartment_id = a.id
+                WHERE p.owner_id = ? AND substr(p.payment_date, 1, 4) = ? AND p.kind = 'rent'
+                UNION ALL
+                SELECT a.property_id, substr(d.date, 1, 7), d.amount
+                FROM kaution_deductions d
+                JOIN contracts c ON d.contract_id = c.id
+                JOIN apartments a ON c.apartment_id = a.id
+                WHERE d.owner_id = ? AND substr(d.date, 1, 4) = ?
+                  AND d.category IN (?, ?) AND COALESCE(d.reference_type, '') <> ?
+            ) r GROUP BY property_id, ym""",
+         (owner, str(y), owner, str(y), *_RENT_CATEGORIES, _NK_REF_TYPE)),
+        ("one_off", """
+            SELECT json_build_array(property_id, substr(expense_date, 1, 7),
+                                    COALESCE(SUM(amount), 0)::text)
+            FROM expenses WHERE owner_id = ? AND substr(expense_date, 1, 4) = ?
+            GROUP BY property_id, substr(expense_date, 1, 7)""", (owner, str(y))),
+        ("settlements", f"""
+            SELECT json_build_array(property_id, ym, SUM(amount)::text) FROM (
+                SELECT a.property_id, substr(p.payment_date, 1, 7) AS ym, p.amount
+                FROM payments p
+                JOIN contracts c ON p.contract_id = c.id
+                JOIN apartments a ON c.apartment_id = a.id
+                WHERE p.owner_id = ? AND substr(p.payment_date, 1, 4) = ?
+                  AND p.kind = 'nk_settlement'
+                UNION ALL
+                SELECT a.property_id, substr(d.date, 1, 7), d.amount
+                FROM kaution_deductions d
+                JOIN contracts c ON d.contract_id = c.id
+                JOIN apartments a ON c.apartment_id = a.id
+                WHERE d.owner_id = ? AND substr(d.date, 1, 4) = ?
+                  AND (d.category = ? OR d.reference_type = ?)
+            ) s GROUP BY property_id, ym""",
+         (owner, str(y), owner, str(y), _NK_CATEGORY, _NK_REF_TYPE)),
+    ])
+
+    properties = [tuple(r) for r in loaded["properties"]]
+    contracts: dict = {}
+    for pid, apt, rent, cs, ce, cid in loaded["contracts"]:
+        contracts.setdefault(pid, []).append((apt, _dec(rent), cs, ce, cid))
+    costs: dict = {}
+    for pid, amt, freq, vf, vt in loaded["costs"]:
+        costs.setdefault(pid, []).append((_dec(amt), freq, vf, vt))
+    mortgages: dict = {}
+    for pid, principal, ir, tr, sd, fixed_until, follow in loaded["mortgages"]:
+        mortgages.setdefault(pid, []).append(
+            (_dec(principal), _dec(ir), _dec(tr), sd, fixed_until, _dec(follow)))
+    paid = {(r[0], r[1]): _dec(r[2]) for r in loaded["rent"]}
+    one_off = ({(r[0], r[1]): _dec(r[2]) for r in loaded["one_off"]}
+               if include_one_off else {})
     # A tenant's NK settlement is the other half of the Hausgeldabrechnung:
     # you pay the Hausverwaltung's Nachzahlung and recover your tenant's share
     # of it. So it goes where the HGA goes — into the one-off figure, netted,
     # and only when one-offs are shown. Recurring-only would otherwise show
     # the recovery without the cost it recovers.
-    settled = _load_settlements(owner, y) if include_one_off else {}
-    mortgages = _load_mortgages(owner)
+    settled = ({(r[0], r[1]): _dec(r[2]) for r in loaded["settlements"]}
+               if include_one_off else {})
 
     snap_start = str(today.replace(day=1))
     snap_end = str(today.replace(day=calendar.monthrange(today.year, today.month)[1]))

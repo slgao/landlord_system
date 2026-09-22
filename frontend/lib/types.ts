@@ -166,9 +166,26 @@ export interface NKSettlement {
   kaution_deductions: { id: number; date: string; amount: number }[];
   bills: BillBrief[];              // provider bills this Abrechnung covers
   open: number;
-  status: "open" | "partial" | "settled";
+  // 'overpaid': more came in than was owed (or more went back than was due),
+  // so `open` has the opposite sign — something has to go back.
+  status: "open" | "partial" | "settled" | "overpaid";
   deadline?: string | null;        // §556 Abs. 3 BGB
   issued_on_time?: boolean | null;
+}
+
+/** Everything the NK Settlements page needs, in one request. */
+export interface NKOverview {
+  settlements: NKSettlement[];
+  pending: PendingAbrechnung[];
+  unlinked_kaution: UnlinkedKaution[];
+  bills: ProviderBill[];
+  bill_candidates: TaxExpense[];
+}
+
+/** The dashboard's Nebenkosten card. */
+export interface NKDashboard {
+  pending: PendingAbrechnung[];
+  open_settlements: NKSettlement[];
 }
 
 /** A Kaution deduction for Nebenkosten that no settlement points at yet. */

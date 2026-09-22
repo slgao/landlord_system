@@ -223,19 +223,42 @@ def set_secret_config(key, value):
     set_config(key, value)
 
 
+_columns_cache: dict[str, list[str]] = {}
+
+
+def _insert_columns(conn, table: str, n: int) -> list[str]:
+    """The first `n` writable columns of `table`, in schema order, skipping id
+    and owner_id.
+
+    Positional inserts used to rely on owner_id being the trailing column. It
+    no longer is: add_column appends after it, and seven tables have gained
+    columns that way. Naming the columns keeps a positional caller writing the
+    same fields it always did, whatever is appended later."""
+    cols = _columns_cache.get(table)
+    if cols is None:
+        with conn.cursor() as c:
+            c.execute("SELECT column_name FROM information_schema.columns "
+                      "WHERE table_name = %s AND table_schema = ANY(current_schemas(false)) "
+                      "ORDER BY ordinal_position", (table,))
+            cols = [r[0] for r in c.fetchall() if r[0] not in ("id", "owner_id")]
+        _columns_cache[table] = cols
+    if len(cols) < n:
+        raise ValueError(f"{table} has {len(cols)} writable columns, got {n} values")
+    return cols[:n]
+
+
 def insert(table, values):
-    """Positional insert into an owner-scoped table. Stamps owner_id (the last
-    column on every owned table) from the current request's owner and returns
-    the generated id. All callers operate on owner-scoped tables."""
+    """Positional insert into an owner-scoped table. Stamps owner_id from the
+    current request's owner and returns the generated id. All callers operate
+    on owner-scoped tables."""
     owner = require_owner()
     conn = get_conn()
     try:
         c = conn.cursor()
         placeholders = ",".join(["%s"] * len(values))
-        # owner_id is the trailing column on every owned table (see the
-        # add_users_and_owner_id migration).
+        cols = ",".join(_insert_columns(conn, table, len(values)))
         c.execute(
-            f"INSERT INTO {table} VALUES (DEFAULT,{placeholders},%s) RETURNING id",
+            f"INSERT INTO {table} ({cols},owner_id) VALUES ({placeholders},%s) RETURNING id",
             (*values, owner),
         )
         new_id = c.fetchone()[0]
@@ -287,6 +310,25 @@ def _run_once(query, params, commit, returning=False):
     else:
         put_conn(conn)
         return result
+
+
+def fetch_bundle(parts):
+    """Run several independent SELECTs in ONE round trip.
+
+    `parts` is a list of (name, sql, params). Each sql must select a single
+    column built with json_build_array(...), so the rows come back positional,
+    exactly as fetch() would return them — Postgres decides the column order of
+    json_agg(t) otherwise, which a positional caller cannot rely on.
+
+    Against a database ~40 ms away, eight independent loads cost eight round
+    trips; bundled they cost one. Returns {name: [row, ...]}.
+    """
+    selects, args = [], []
+    for name, sql, ps in parts:
+        selects.append(f"(SELECT COALESCE(json_agg(x.v), '[]') FROM ({sql}) x(v)) AS {name}")
+        args.extend(ps)
+    row = fetch("SELECT " + ", ".join(selects), tuple(args))[0]
+    return {name: row[i] for i, (name, _, _) in enumerate(parts)}
 
 
 def fetch(query, params=()):

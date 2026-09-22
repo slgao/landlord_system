@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { DashboardStats, ContractAlert, NKSettlement, PendingAbrechnung } from "@/lib/types";
+import { DashboardStats, ContractAlert, NKDashboard } from "@/lib/types";
 import Link from "next/link";
 import { eur, fmtDate, resultLabel } from "@/components/nk-settlements";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,18 +43,14 @@ export default function DashboardPage() {
     queryKey: ["dashboard-alerts"],
     queryFn: () => api.get("/api/dashboard/alerts").then((r) => r.data),
   });
-  const { data: nkPending = [] } = useQuery<PendingAbrechnung[]>({
-    queryKey: ["nk-pending"],
-    queryFn: () => api.get("/api/nk-settlements/pending").then((r) => r.data),
+  // One request: the server picks what needs doing soon — a deadline inside
+  // four months or just missed — and the settlements still open either way.
+  const { data: nk } = useQuery<NKDashboard>({
+    queryKey: ["nk-dashboard"],
+    queryFn: () => api.get("/api/nk-settlements/dashboard").then((r) => r.data),
   });
-  const { data: nkSettlements = [] } = useQuery<NKSettlement[]>({
-    queryKey: ["nk-settlements"],
-    queryFn: () => api.get("/api/nk-settlements/").then((r) => r.data),
-  });
-  // Only what needs doing soon: a deadline inside four months, one just
-  // missed, or money still open either way.
-  const nkDue = nkPending.filter((p) => p.days_remaining <= 120);
-  const nkOpen = nkSettlements.filter((s) => s.status !== "settled");
+  const nkDue = nk?.pending ?? [];
+  const nkOpen = nk?.open_settlements ?? [];
   const { data: bs } = useQuery({
     queryKey: ["balance-sheet-dash", currentYear],
     queryFn: () => api.get(`/api/reports/balance-sheet/${currentYear}`).then((r) => r.data),

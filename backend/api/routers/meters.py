@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from db import fetch, execute, execute_returning
+from db import fetch, fetch_bundle, execute, execute_returning
 from auth import require_auth
 from api.schemas.apartment import ApartmentOut
 from api.schemas.common import IsoDate
@@ -357,11 +357,13 @@ class ApartmentMeterOut(BaseModel):
     own: bool
 
 
+# Per type: the columns a meter row is read as, and its table. One entry per
+# meter type, queried together rather than one round trip each.
 _TYPE_SELECTS = {
-    "strom":   "SELECT id, apartment_id, serial_number, description, COALESCE(scope,'shared') FROM strom_meters",
-    "gas":     "SELECT id, apartment_id, serial_number, description, COALESCE(scope,'shared') FROM gas_meters",
-    "wasser":  "SELECT id, apartment_id, serial_number, COALESCE(description, type), COALESCE(scope,'shared') FROM wasser_meters",
-    "heizung": "SELECT id, apartment_id, serial_number, description, COALESCE(scope,'room')   FROM heizung_meters",
+    "strom":   ("id, apartment_id, serial_number, description, COALESCE(scope,'shared')", "strom_meters"),
+    "gas":     ("id, apartment_id, serial_number, description, COALESCE(scope,'shared')", "gas_meters"),
+    "wasser":  ("id, apartment_id, serial_number, COALESCE(description, type), COALESCE(scope,'shared')", "wasser_meters"),
+    "heizung": ("id, apartment_id, serial_number, description, COALESCE(scope,'room')", "heizung_meters"),
 }
 
 
@@ -388,12 +390,17 @@ def meters_for_apartment(apartment_id: int, owner: int = Depends(require_auth)):
     if not names:
         return []
 
+    placeholders = ",".join("?" for _ in names)
+    loaded = fetch_bundle([
+        (mtype, f"SELECT json_build_array({cols}) FROM {table} "
+                f"WHERE apartment_id IN ({placeholders}) AND owner_id=? ORDER BY id",
+         (*names.keys(), owner))
+        for mtype, (cols, table) in _TYPE_SELECTS.items()
+    ])
+
     out: list[ApartmentMeterOut] = []
-    for mtype, sel in _TYPE_SELECTS.items():
-        placeholders = ",".join("?" for _ in names)
-        rows = fetch(f"{sel} WHERE apartment_id IN ({placeholders}) AND owner_id=? ORDER BY id",
-                     (*names.keys(), owner))
-        for r in rows:
+    for mtype in _TYPE_SELECTS:
+        for r in loaded[mtype]:
             if not meter_belongs_to_room(r[1], r[4], apartment_id):
                 continue
             out.append(ApartmentMeterOut(

@@ -34,6 +34,9 @@ import { eur, fmtDate, invalidateSettlementViews } from "@/lib/nk-format";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const EMPTY_BILLS: ProviderBill[] = [];
+const EMPTY_CANDIDATES: TaxExpense[] = [];
+
 export const UTILITY_LABEL: Record<Utility, string> = {
   strom: "Strom", gas: "Gas", wasser: "Wasser", heizung: "Heizung / Warmwasser",
   betriebskosten: "Betriebskosten", muell: "Müll", sonstige: "Sonstiges",
@@ -239,23 +242,21 @@ export function BillDialog({
 
 // ── The list ─────────────────────────────────────────────────────────────────
 
-export function BillsSection() {
+export function BillsSection({ bills, candidates }: {
+  // Both arrive with the page's overview request; undefined while it loads.
+  bills?: ProviderBill[];
+  candidates?: TaxExpense[];
+}) {
   const qc = useQueryClient();
   const [onlyOpen, setOnlyOpen] = useState(true);
   const [dialog, setDialog] = useState<{ editing?: TaxExpense | ProviderBill } | null>(null);
 
-  const { data: bills = [], isLoading } = useQuery<ProviderBill[]>({
-    queryKey: ["provider-bills"],
-    queryFn: () => api.get("/api/nk-settlements/bills").then((r) => r.data),
-  });
+  const isLoading = bills === undefined;
+  const allBills = bills ?? EMPTY_BILLS;
   // Expenses that are not bills yet but could be — a Hausgeldabrechnung
-  // recorded before bills existed, say.
-  const { data: expenses = [] } = useQuery<TaxExpense[]>({
-    queryKey: ["tax-expenses", "convertible"],
-    queryFn: () => api.get("/api/tax/expenses").then((r) => r.data),
-  });
-  const convertible = expenses.filter((e) => !e.utility
-    && ["Hausgeld", "Versorgerabrechnung", "Sonstige"].includes(e.category));
+  // recorded before bills existed, say. The server picks them, so the page
+  // no longer downloads every expense (35 KB of notes) for a dropdown.
+  const convertible = candidates ?? EMPTY_CANDIDATES;
 
   const settle = useMutation({
     mutationFn: ({ id, tenant_settled }: { id: number; tenant_settled: boolean }) =>
@@ -272,8 +273,8 @@ export function BillsSection() {
     onError: (e) => toast.error(errorMessage(e, "Could not delete the bill")),
   });
 
-  const shown = onlyOpen ? bills.filter((b) => !b.tenant_settled) : bills;
-  const hidden = bills.length - shown.length;
+  const shown = onlyOpen ? allBills.filter((b) => !b.tenant_settled) : allBills;
+  const hidden = allBills.length - shown.length;
 
   return (
     <Card>
@@ -327,7 +328,7 @@ export function BillsSection() {
               <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
             ) : shown.length === 0 ? (
               <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                {bills.length === 0 ? "No provider bills yet." : "Every bill is fully settled with the tenants."}
+                {allBills.length === 0 ? "No provider bills yet." : "Every bill is fully settled with the tenants."}
               </TableCell></TableRow>
             ) : shown.map((b) => (
               <TableRow key={b.id}>

@@ -46,10 +46,15 @@ def settlement_state(amount: float, paid: float) -> tuple[float, str]:
     against it. Both are signed the same way: a Nachzahlung is positive and
     the tenant's transfer is positive; a Guthaben is negative and the refund
     you send is negative."""
-    open_ = round(float(amount) - float(paid), 2)
+    amount, paid = float(amount), float(paid)
+    open_ = round(amount - paid, 2)
     if abs(open_) < 0.005:
         return 0.0, "settled"
-    return open_, ("partial" if abs(float(paid)) >= 0.005 else "open")
+    # More came in than was owed — or more went back than was due. It is not
+    # "partly paid": nothing is outstanding, something has to go back.
+    if amount >= 0 and paid > amount or amount < 0 and paid < amount:
+        return open_, "overpaid"
+    return open_, ("partial" if abs(paid) >= 0.005 else "open")
 
 
 def _overlaps(a_start: date, a_end: date | None, b_start: date, b_end: date) -> bool:

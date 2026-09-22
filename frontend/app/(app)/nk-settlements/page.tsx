@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
-import { Contract, NKSettlement, PendingAbrechnung, UnlinkedKaution } from "@/lib/types";
+import { Contract, NKOverview, NKSettlement, UnlinkedKaution } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -23,10 +23,17 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
+// Frozen module-level fallbacks: a fresh [] on every render would make the
+// memoised children below see new props each time.
+const EMPTY_SETTLEMENTS: NKOverview["settlements"] = [];
+const EMPTY_PENDING: NKOverview["pending"] = [];
+const EMPTY_UNLINKED: NKOverview["unlinked_kaution"] = [];
+
 const STATUS: Record<NKSettlement["status"], { label: string; cls: string }> = {
   open:     { label: "Open",    cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20" },
   partial:  { label: "Partly paid", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/20" },
   settled:  { label: "Settled", cls: "bg-primary/15 text-primary border-primary/20" },
+  overpaid: { label: "Overpaid", cls: "bg-destructive/15 text-destructive border-destructive/20" },
 };
 
 export default function NKSettlementsPage() {
@@ -35,23 +42,20 @@ export default function NKSettlementsPage() {
   const [paying, setPaying] = useState<NKSettlement | null>(null);
   const [fromKaution, setFromKaution] = useState<NKSettlement | null>(null);
 
-  const { data: settlements = [], isLoading } = useQuery<NKSettlement[]>({
-    queryKey: ["nk-settlements"],
-    queryFn: () => api.get("/api/nk-settlements/").then((r) => r.data),
+  // The page's five lists come from one request: five serialised round trips
+  // to a database 40 ms away cost far more than the queries themselves.
+  const { data: overview, isLoading } = useQuery<NKOverview>({
+    queryKey: ["nk-overview"],
+    queryFn: () => api.get("/api/nk-settlements/overview").then((r) => r.data),
   });
-  const { data: pending = [] } = useQuery<PendingAbrechnung[]>({
-    queryKey: ["nk-pending"],
-    queryFn: () => api.get("/api/nk-settlements/pending").then((r) => r.data),
-  });
+  const settlements = overview?.settlements ?? EMPTY_SETTLEMENTS;
+  const pending = overview?.pending ?? EMPTY_PENDING;
   const { data: contracts = [] } = useQuery<Contract[]>({
     queryKey: ["contracts-all"],
     queryFn: () => api.get("/api/contracts/").then((r) => r.data),
   });
 
-  const { data: unlinked = [] } = useQuery<UnlinkedKaution[]>({
-    queryKey: ["nk-unlinked-kaution"],
-    queryFn: () => api.get("/api/nk-settlements/unlinked-kaution").then((r) => r.data),
-  });
+  const unlinked = overview?.unlinked_kaution ?? EMPTY_UNLINKED;
 
   const link = useMutation({
     mutationFn: ({ settlementId, deductionId }: { settlementId: number; deductionId: number }) =>
@@ -282,7 +286,12 @@ export default function NKSettlementsPage() {
                       </span>
                     ))}
                   </TableCell>
-                  <TableCell className="text-right font-mono whitespace-nowrap">{eur(Math.abs(s.open))}</TableCell>
+                  <TableCell className="text-right font-mono whitespace-nowrap">
+                    {eur(Math.abs(s.open))}
+                    {s.status === "overpaid" && (
+                      <span className="block text-[11px] text-destructive font-sans">too much booked</span>
+                    )}
+                  </TableCell>
                   <TableCell><Badge className={STATUS[s.status].cls}>{STATUS[s.status].label}</Badge></TableCell>
                   <TableCell className="text-xs whitespace-nowrap">
                     {s.issued_date ? fmtDate(s.issued_date) : <span className="text-muted-foreground">not recorded</span>}
@@ -292,13 +301,14 @@ export default function NKSettlementsPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-0.5">
-                      {s.status !== "settled" && s.amount > 0 && (s.kaution_available ?? 0) > 0.005 && (
+                      {(s.status === "open" || s.status === "partial") && s.amount > 0
+                        && (s.kaution_available ?? 0) > 0.005 && (
                         <Button variant="ghost" size="icon" title="Settle from Kaution" aria-label="Settle from Kaution"
                           onClick={() => setFromKaution(s)}>
                           <Vault className="size-4" />
                         </Button>
                       )}
-                      {s.status !== "settled" && (
+                      {(s.status === "open" || s.status === "partial") && (
                         <Button variant="ghost" size="icon" title={s.amount < 0 ? "Record refund" : "Record payment"}
                           aria-label={s.amount < 0 ? "Record refund" : "Record payment"} onClick={() => setPaying(s)}>
                           <Banknote className="size-4" />
@@ -330,7 +340,7 @@ export default function NKSettlementsPage() {
         </div>
       </Card>
 
-      <BillsSection />
+      <BillsSection bills={overview?.bills} candidates={overview?.bill_candidates} />
 
       <SettlementDialog
         open={!!dialog}

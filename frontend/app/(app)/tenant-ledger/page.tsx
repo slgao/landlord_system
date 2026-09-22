@@ -134,6 +134,11 @@ export default function TenantLedgerPage() {
                         <TableCell>{p.apartment_name}</TableCell>
                         <TableCell className="font-mono">
                           {p.amount.toFixed(2)} EUR
+                          {p.kind === "nk_settlement" && (
+                            <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
+                              NK {p.amount < 0 ? "refund" : "Nachzahlung"}
+                            </Badge>
+                          )}
                           {p.orig_currency && p.orig_amount != null && (
                             <span className="block text-xs text-muted-foreground">
                               (paid {CURRENCY_SYMBOLS[p.orig_currency] || p.orig_currency}{p.orig_amount.toFixed(2)})

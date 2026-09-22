@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from db import fetch, execute, insert
+from db import fetch, execute, execute_returning
 from auth import require_auth
 from api.schemas.payment import PaymentIn, PaymentOut
 
@@ -14,12 +14,15 @@ def _row(r) -> PaymentOut:
         currency=r[6] or "EUR",
         orig_amount=float(r[7]) if r[7] is not None else None,
         orig_currency=r[8],
+        kind=r[9] or "rent",
+        settlement_id=r[10],
     )
 
 
 _SELECT = """
     SELECT p.id, p.contract_id, t.name, a.name, p.amount, p.payment_date,
-           COALESCE(p.currency,'EUR'), p.orig_amount, p.orig_currency
+           COALESCE(p.currency,'EUR'), p.orig_amount, p.orig_currency,
+           p.kind, p.settlement_id
     FROM payments p
     JOIN contracts c ON c.id = p.contract_id
     JOIN tenants t ON t.id = c.tenant_id
@@ -50,8 +53,19 @@ def create_payment(body: PaymentIn, owner: int = Depends(require_auth)):
     has_foreign = bool(body.orig_currency) and body.orig_currency != "EUR"
     orig_currency = body.orig_currency if has_foreign else None
     orig_amount = body.orig_amount if has_foreign else None
-    new_id = insert("payments", (body.contract_id, body.amount, body.payment_date,
-                                 "EUR", orig_amount, orig_currency))
+    if body.settlement_id is not None and not fetch(
+            "SELECT id FROM nk_settlements WHERE id=? AND contract_id=? AND owner_id=?",
+            (body.settlement_id, body.contract_id, owner)):
+        raise HTTPException(status_code=404,
+                            detail="Settlement not found for this contract")
+    # Named columns: kind and settlement_id sit after owner_id, so the
+    # positional db.insert() would put values in the wrong places.
+    new_id = execute_returning("""
+        INSERT INTO payments (contract_id, amount, payment_date, currency,
+                              orig_amount, orig_currency, kind, settlement_id, owner_id)
+        VALUES (?,?,?,?,?,?,?,?,?) RETURNING id
+    """, (body.contract_id, body.amount, body.payment_date, "EUR", orig_amount,
+          orig_currency, body.kind, body.settlement_id, owner))[0][0]
     rows = fetch(f"{_SELECT} WHERE p.id=?", (new_id,))
     return _row(rows[0])
 

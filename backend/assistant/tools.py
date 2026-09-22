@@ -234,7 +234,7 @@ def _get_payments(landlord_id: int, apartment_id: int, limit: int = 12) -> dict:
     require_scope(landlord_id)
     limit = max(1, min(int(limit), 60))
     rows = db.fetch(
-        """SELECT pm.payment_date, pm.amount, COALESCE(pm.currency, 'EUR')
+        """SELECT pm.payment_date, pm.amount, COALESCE(pm.currency, 'EUR'), pm.kind
            FROM payments pm
            JOIN contracts c ON c.id = pm.contract_id
            JOIN apartments a ON a.id = c.apartment_id
@@ -247,8 +247,10 @@ def _get_payments(landlord_id: int, apartment_id: int, limit: int = 12) -> dict:
     return {
         "count": len(rows),
         "payments": [
-            {"date": d, "amount": float(amt), "currency": cur}
-            for d, amt, cur in rows
+            # kind: 'rent', or 'nk_settlement' for a Nebenkosten Nachzahlung
+            # (positive) or a refund to the tenant (negative).
+            {"date": d, "amount": float(amt), "currency": cur, "kind": kind}
+            for d, amt, cur, kind in rows
         ],
     }
 

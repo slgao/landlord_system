@@ -187,18 +187,22 @@ def _load_one_off(owner, year: int) -> dict:
     return {(pid, ym): total for pid, ym, total in rows}
 
 
-def _load_payments(owner, year: int) -> dict:
-    """{(property_id, 'YYYY-MM'): Decimal} — everything received in `year`.
+def _load_payments(owner, year: int, kind: str = "rent") -> dict:
+    """{(property_id, 'YYYY-MM'): Decimal} — payments of `kind` in `year`.
     payments.amount is always the EUR value that counts (see the currency
-    model), so summing across contracts is sound."""
+    model), so summing across contracts is sound.
+
+    Rent and NK settlements are loaded apart: "Actual received" is compared
+    with the contracted rent month by month, and a Nachzahlung in that column
+    would show up as the tenant overpaying."""
     rows = fetch("""
         SELECT a.property_id, substr(p.payment_date, 1, 7), COALESCE(SUM(p.amount), 0)
         FROM payments p
         JOIN contracts c ON p.contract_id = c.id
         JOIN apartments a ON c.apartment_id = a.id
-        WHERE p.owner_id = ? AND substr(p.payment_date, 1, 4) = ?
+        WHERE p.owner_id = ? AND substr(p.payment_date, 1, 4) = ? AND p.kind = ?
         GROUP BY a.property_id, substr(p.payment_date, 1, 7)
-    """, (owner, str(year)))
+    """, (owner, str(year), kind))
     return {(pid, ym): total for pid, ym, total in rows}
 
 
@@ -222,6 +226,12 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     costs = _load_costs(owner)
     paid = _load_payments(owner, y)
     one_off = _load_one_off(owner, y) if include_one_off else {}
+    # A tenant's NK settlement is the other half of the Hausgeldabrechnung:
+    # you pay the Hausverwaltung's Nachzahlung and recover your tenant's share
+    # of it. So it goes where the HGA goes — into the one-off figure, netted,
+    # and only when one-offs are shown. Recurring-only would otherwise show
+    # the recovery without the cost it recovers.
+    settled = _load_payments(owner, y, "nk_settlement") if include_one_off else {}
     mortgages = _load_mortgages(owner)
 
     snap_start = str(today.replace(day=1))
@@ -235,19 +245,23 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     props = []
     for prop_id, prop_name in properties:
         rows = []
-        tot_expected = tot_actual = tot_costs = tot_one_off = _ZERO
+        tot_expected = tot_actual = tot_costs = tot_one_off = tot_settlements = _ZERO
         for m in range(1, max_month + 1):
             m_start = f"{y}-{m:02d}-01"
             m_end = f"{y}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
             expected = expected_rent(contracts.get(prop_id, []), m_start, m_end)
             actual = paid.get((prop_id, m_start[:7]), _ZERO)
             recurring = month_costs(costs.get(prop_id, []), m_start, m_end, y, m)
-            once = one_off.get((prop_id, m_start[:7]), _ZERO)
+            settlement = settled.get((prop_id, m_start[:7]), _ZERO)
+            # Money in from a tenant lowers what the one-offs cost you; a
+            # refund you pay out raises it.
+            once = one_off.get((prop_id, m_start[:7]), _ZERO) - settlement
             month_cost = recurring + once
             tot_expected += expected
             tot_actual += actual
             tot_costs += month_cost
             tot_one_off += once
+            tot_settlements += settlement
             rows.append({
                 "Month": date(y, m, 1).strftime("%b %Y"),
                 "Expected rent (€)": round(expected, 2),
@@ -266,6 +280,8 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
             # How much of tot_costs came from one-off expenses, so the page can
             # show the split rather than just a bigger number.
             "tot_one_off": tot_one_off,
+            # The tenants' NK settlements already netted into tot_one_off.
+            "tot_settlements": tot_settlements,
             "flat_rows": [],
             "insights": [],
             **_financing(prop_id, owner, y, mortgages.get(prop_id, [])),

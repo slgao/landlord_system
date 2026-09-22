@@ -620,14 +620,25 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
                    "WHERE owner_id=? ORDER BY id", (owner,)):
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
 
-    pay = {r[0]: (float(r[1]), int(r[2])) for r in fetch("""
-        SELECT a.property_id, COALESCE(SUM(pm.amount),0), COUNT(pm.id)
+    # Rent and NK settlements apart. Whether income comes from payments or
+    # from the contract estimate is decided by the rent alone — a lone
+    # Nachzahlung must not switch a property with no rent recorded over to
+    # "payments" and report the Nachzahlung as the year's whole income.
+    # Settlements are cash in the year they move (§11 EStG) and are Umlagen.
+    pay: dict[int, tuple] = {}
+    settle: dict[int, float] = {}
+    for pid_, kind, total, cnt in fetch("""
+        SELECT a.property_id, pm.kind, COALESCE(SUM(pm.amount),0), COUNT(pm.id)
         FROM payments pm
         JOIN contracts c ON c.id = pm.contract_id
         JOIN apartments a ON a.id = c.apartment_id
         WHERE substr(pm.payment_date,1,4) = ? AND pm.owner_id = ?
-        GROUP BY a.property_id
-    """, (str(year), owner))}
+        GROUP BY a.property_id, pm.kind
+    """, (str(year), owner)):
+        if kind == "nk_settlement":
+            settle[pid_] = float(total)
+        else:
+            pay[pid_] = (float(total), int(cnt))
 
     contracts: dict[int, list] = {}
     for r in fetch("""
@@ -683,13 +694,17 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
         nk_known = active_contracts > 0 and nk_missing == 0
         umlagen_total = round(umlagen_total, 2)
         estimate_total = round(sum(r["total"] for r in est_rows), 2)
+        settlements = round(settle.get(pid, 0.0), 2)
         ov = overrides.get((pid, "income_total"))
         if ov is not None:
             income_final, income_source = ov[0], "override"
         elif pay_count > 0:
-            income_final, income_source = round(auto_total, 2), "payments"
+            income_final, income_source = round(auto_total + settlements, 2), "payments"
         else:
-            income_final, income_source = estimate_total, "estimate"
+            income_final, income_source = round(estimate_total + settlements, 2), "estimate"
+        # Both a Nachzahlung and a refund belong on the Umlagen line; the
+        # contractual prepayments alone would push them into the Kaltmiete.
+        umlagen_total = round(umlagen_total + settlements, 2)
         # Kaltmiete/Umlagen split (separate Anlage V lines; the sum is
         # unchanged). Umlagen come from the contractual monthly NK
         # prepayments; only trustworthy when every active contract has one.
@@ -789,6 +804,7 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
                 "override_note": ov[1] if ov else None,
                 "nk_known": nk_known,
                 "umlagen": umlagen_total if nk_known else None,
+                "nk_settlements": settlements,
                 "kaltmiete": kaltmiete,
                 "split_source": split_source,
             },

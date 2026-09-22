@@ -84,7 +84,8 @@ def balance_sheet_data(year: int = _Year, include_one_off: bool = False,
                              "tot_expected": _f(p["tot_expected"]),
                              "tot_actual": _f(p["tot_actual"]),
                              "tot_costs": _f(p["tot_costs"]),
-                             "tot_one_off": _f(p["tot_one_off"])})
+                             "tot_one_off": _f(p["tot_one_off"]),
+                             "tot_settlements": _f(p["tot_settlements"])})
     snap_clean = [{k: _f(v) for k, v in s.items()} for s in snapshot]
     # Echoed back so the page can label what its figures actually contain.
     return {"year": year, "include_one_off": include_one_off,
@@ -263,8 +264,8 @@ def nebenkostenabrechnung_pdf(body: NKRequest, owner: int = Depends(require_auth
             still_held = round(float(amount) - float(deducted) - float(returned), 2)
             if not settled and still_held > 0.005:
                 kaution_info = {"kaution_amount": still_held, "kaution_currency": currency}
-    # invoice_pdf writes to disk and returns the file path
-    path = invoice_pdf(
+    # invoice_pdf writes to disk and returns the file path and the result
+    path, total = invoice_pdf(
         tenant=body.tenant, address=address,
         landlord_name=_landlord_name(), gender=gender,
         signature_path=_sig(owner), strom=body.strom, gas=body.gas,
@@ -275,7 +276,9 @@ def nebenkostenabrechnung_pdf(body: NKRequest, owner: int = Depends(require_auth
     )
     pdf_bytes = Path(path).read_bytes()
     return Response(content=pdf_bytes, media_type="application/pdf",
-                    headers={"Content-Disposition": 'attachment; filename="Nebenkostenabrechnung.pdf"'})
+                    headers={"Content-Disposition": 'attachment; filename="Nebenkostenabrechnung.pdf"',
+                             # + Nachzahlung / − Guthaben, before any Kaution offset
+                             "X-NK-Total": f"{total:.2f}"})
 
 
 # ── Mahnung ───────────────────────────────────────────────────────────────────

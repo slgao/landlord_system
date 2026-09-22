@@ -14,7 +14,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, Trash2, Calculator, FileDown, Save, Upload } from "lucide-react";
+import { Plus, Trash2, Calculator, FileDown, Save, Upload, ReceiptText } from "lucide-react";
+import { SettlementDialog, SettlementDraft, resultLabel } from "@/components/nk-settlements";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -658,6 +659,13 @@ export default function NebenkostenabrechnungPage() {
 
   const selected = contracts.find((c) => String(c.id) === contractId);
 
+  // What the last generated PDF said, so it can be saved as a settlement with
+  // the same figure the tenant was sent. Dropped when the contract changes —
+  // it belongs to the tenant it was generated for.
+  const [generated, setGenerated] = useState<SettlementDraft | null>(null);
+  const [saveOpen, setSaveOpen] = useState(false);
+  useEffect(() => { setGenerated(null); }, [contractId]);
+
   const { data: profiles = [] } = useQuery<BillingProfile[]>({
     queryKey: ["billing-profiles", selected?.tenant_id],
     queryFn: () => api.get(`/api/billing-profiles/?tenant_id=${selected?.tenant_id}`).then((r) => r.data),
@@ -998,6 +1006,23 @@ export default function NebenkostenabrechnungPage() {
     }
   }
 
+  // The span the Abrechnung covers: earliest billing start to latest end
+  // across the sections that are switched on.
+  function billingSpan(): [string, string] | null {
+    const spans: [string, string][] = [];
+    const add = (list: any[], s: string, e: string) => {
+      for (const b of list) if (b?.[s] && b?.[e]) spans.push([b[s], b[e]]);
+    };
+    if (useStrom) add(stromB, "bill_start", "bill_end");
+    if (useGas) add(gasB, "bill_start", "bill_end");
+    if (useWater) add(waterB, "bill_start", "bill_end");
+    if (useWarmwater) add(warmB, "bill_start", "bill_end");
+    if (useHeizung) add(heizB, "bill_start", "bill_end");
+    if (useBK) add(bkB, "bk_start", "bk_end");
+    if (!spans.length) return null;
+    return [spans.map((x) => x[0]).sort()[0], spans.map((x) => x[1]).sort().reverse()[0]];
+  }
+
   async function generatePdf() {
     if (!selected) { toast.error("Select a contract first."); return; }
     setGenerating(true);
@@ -1045,6 +1070,12 @@ export default function NebenkostenabrechnungPage() {
       }
       const blob = await res.blob();
       if (!blob.size) { toast.error("API returned an empty PDF."); return; }
+      const total = Number(res.headers.get("X-NK-Total"));
+      const period = billingSpan();
+      if (Number.isFinite(total) && period) {
+        setGenerated({ contract_id: selected.id, period_start: period[0], period_end: period[1],
+                       amount: total, pdf: blob });
+      }
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1535,6 +1566,31 @@ export default function NebenkostenabrechnungPage() {
           </div>
         )}
       </div>
+
+      {generated && selected && generated.contract_id === selected.id && (
+        <Card className="border-primary/30">
+          <CardContent className="p-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm">
+              <p className="font-medium">{resultLabel(generated.amount ?? 0)} for {selected.tenant_name}</p>
+              <p className="text-xs text-muted-foreground">
+                Save it once it has gone out: it tracks what is still open, keeps the PDF, and books the
+                money as an NK settlement instead of rent.
+                {deductKaution && (generated.amount ?? 0) > 0 && " You offset it against the Kaution — record the payment on the day you do."}
+              </p>
+            </div>
+            <Button size="sm" onClick={() => setSaveOpen(true)}>
+              <ReceiptText className="size-4 mr-1" /> Save as settlement
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+      <SettlementDialog
+        open={saveOpen}
+        onOpenChange={(o) => { setSaveOpen(o); }}
+        contracts={contracts}
+        draft={generated ?? undefined}
+        onSaved={() => setGenerated(null)}
+      />
     </div>
   );
 }

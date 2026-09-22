@@ -11,7 +11,7 @@ import {
   LayoutDashboard, Building2, Home, Users, FileText,
   CreditCard, DollarSign, Gauge, BarChart3, Bell,
   FileWarning, Zap, Settings, LogOut, ChevronRight, Menu, X, Sparkles,
-  Landmark, Calculator, PiggyBank,
+  Landmark, Calculator, PiggyBank, ReceiptText,
 } from "lucide-react";
 
 const NAV = [
@@ -51,6 +51,7 @@ const NAV = [
       { href: "/financing", label: "Financing", icon: PiggyBank },
       { href: "/payment-reminders", label: "Payment Reminders", icon: Bell },
       { href: "/nebenkostenabrechnung", label: "Nebenkostenabrechnung", icon: Zap },
+      { href: "/nk-settlements", label: "NK Settlements", icon: ReceiptText },
       { href: "/mahnung", label: "Mahnung Generator", icon: FileWarning },
     ],
   },

@@ -1038,7 +1038,9 @@ def invoice_pdf(
         leftMargin=25*mm, rightMargin=20*mm, topMargin=20*mm, bottomMargin=20*mm
     )
     doc.build(story)
-    return file
+    # The result the tenant is told, so the caller can record the settlement
+    # with the same figure the letter states.
+    return file, round(total, 2)
 
 
 # ── Mahnung ────────────────────────────────────────────────────────────────────
@@ -1237,7 +1239,8 @@ def balance_sheet_pdf(year, snapshot, props, landlord_name="Hausverwaltung", sig
     # is the difference between them, so it is stated rather than implied.
     story.append(_info_box(
         "Kostenbasis: laufende Kosten <b>und einmalige Ausgaben</b> "
-        "(Hausgeldabrechnungen, Reparaturen) im Monat ihrer Zahlung."
+        "(Hausgeldabrechnungen, Reparaturen) im Monat ihrer Zahlung, "
+        "verrechnet mit den Nebenkostenabrechnungen der Mieter."
         if include_one_off else
         "Kostenbasis: <b>nur laufende Kosten</b>. Einmalige Ausgaben "
         "(Hausgeldabrechnungen, Reparaturen) sind nicht enthalten.", s))
@@ -1562,9 +1565,17 @@ def generate_tax_report(year, blocks):
             rows.append([_cell("Mieteinnahmen (Kaltmiete)", bold=True),
                          _cell(SOURCE_LABEL.get(inc["source"], ""), size=8),
                          _eur(inc["kaltmiete"], bold=True)])
-            rows.append([_cell("Umlagen (NK-Vorauszahlungen)", bold=True),
+            settled = inc.get("nk_settlements") or 0
+            rows.append([_cell("Umlagen (NK-Vorauszahlungen"
+                               + (" + Abrechnungen)" if settled else ")"), bold=True),
                          _cell(SOURCE_LABEL.get(inc.get("split_source") or "contracts", ""), size=8),
                          _eur(inc["umlagen"], bold=True)])
+            if settled:
+                # Nachzahlungen and Erstattungen are Umlagen of the year the
+                # money moved, whichever year they settle (§11 EStG).
+                rows.append([_cell("  davon NK-Abrechnungen"),
+                             _cell("Nachzahlungen − Erstattungen, im Jahr gezahlt", size=8),
+                             _eur(settled)])
             rows.append([_cell("Einnahmen gesamt"), _cell(""), _eur(inc["final"])])
         else:
             rows.append([_cell("Einnahmen (Miete inkl. Umlagen)", bold=True),

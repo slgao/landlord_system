@@ -19,6 +19,7 @@ from api.routers import (
     properties, buildings, apartments, tenants, contracts, payments,
     dashboard, flat_costs, meters, config, reports,
     co_tenants, kaution, billing_profiles, rag, tax, assistant, handover,
+    nk_settlements,
 )
 
 
@@ -73,6 +74,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The Nebenkostenabrechnung PDF reports its result here, so the page can
+    # offer to record the settlement without re-deriving the total.
+    expose_headers=["X-NK-Total"],
 )
 
 _log = logging.getLogger("uvicorn.error")
@@ -115,6 +119,7 @@ app.include_router(kaution.payments_router, prefix="/api", dependencies=_auth)
 app.include_router(kaution.returns_router,  prefix="/api", dependencies=_auth)
 app.include_router(handover.router,         prefix="/api", dependencies=_auth)
 app.include_router(handover.items_router,   prefix="/api", dependencies=_auth)
+app.include_router(nk_settlements.router,   prefix="/api", dependencies=_auth)
 app.include_router(billing_profiles.router, prefix="/api", dependencies=_auth)
 app.include_router(rag.router,              prefix="/api", dependencies=_auth)
 app.include_router(tax.router,              prefix="/api", dependencies=_auth)

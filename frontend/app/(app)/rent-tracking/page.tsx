@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
 import { todayISO } from "@/lib/utils";
-import { Payment, Contract } from "@/lib/types";
+import { Payment, Contract, NKSettlement, PaymentKind } from "@/lib/types";
 import { contractStatus, contractStatusSuffix, startsInLabel } from "@/lib/contract-status";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,8 @@ import {
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
 import { Trash2, Calendar } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { eur, fmtDate, invalidateSettlementViews, resultLabel } from "@/components/nk-settlements";
 
 const FOREIGN_CURRENCIES = ["CNY", "USD", "GBP"];
 const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "$", GBP: "£" };
@@ -32,6 +34,18 @@ const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "
 function foreignNote(p: { orig_amount?: number | null; orig_currency?: string | null }) {
   if (!p.orig_currency || p.orig_amount == null) return "";
   return `paid ${CURRENCY_SYMBOLS[p.orig_currency] || p.orig_currency}${p.orig_amount.toFixed(2)}`;
+}
+
+// Marks money that moved because of a Nebenkostenabrechnung, so it is not
+// read as rent — it is not counted as rent anywhere else either.
+function KindTag({ p }: { p: Payment }) {
+  if (p.kind !== "nk_settlement") return null;
+  return (
+    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0"
+      title={p.amount < 0 ? "Nebenkosten refund to the tenant" : "Nebenkosten Nachzahlung from the tenant"}>
+      NK {p.amount < 0 ? "refund" : "Nachzahlung"}
+    </Badge>
+  );
 }
 
 function currentYearMonth() {
@@ -44,7 +58,11 @@ export default function RentTrackingPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
-  const [form, setForm] = useState({ amount: 0, payment_date: todayISO(), paidForeign: false, orig_amount: 0, orig_currency: "CNY" });
+  const emptyForm = {
+    amount: 0, payment_date: todayISO(), paidForeign: false, orig_amount: 0, orig_currency: "CNY",
+    kind: "rent" as PaymentKind, settlementId: "", refund: false,
+  };
+  const [form, setForm] = useState(emptyForm);
   const [monthFilter, setMonthFilter] = useState(currentYearMonth());
 
   const { data: contracts = [] } = useQuery<Contract[]>({
@@ -57,23 +75,38 @@ export default function RentTrackingPage() {
     queryFn: () => api.get("/api/payments/").then((r) => r.data),
   });
 
+  const { data: contractSettlements = [] } = useQuery<NKSettlement[]>({
+    queryKey: ["nk-settlements", selectedContract?.id],
+    queryFn: () => api.get(`/api/nk-settlements/?contract_id=${selectedContract!.id}`).then((r) => r.data),
+    enabled: addOpen && form.kind === "nk_settlement" && !!selectedContract,
+  });
+
   // Filter payments for the selected month
   const monthPayments = allPayments.filter((p) => p.payment_date.startsWith(monthFilter));
 
-  // Per-currency totals for the month
+  // Per-currency rent totals for the month. NK settlements are shown apart:
+  // a Nachzahlung is not rent, and a refund would pull the rent total down.
   const monthTotals = monthPayments.reduce((acc, p) => {
+    if (p.kind === "nk_settlement") return acc;
     const curr = p.currency || "EUR";
     acc[curr] = (acc[curr] || 0) + p.amount;
     return acc;
   }, {} as Record<string, number>);
+  const monthSettlements = monthPayments
+    .filter((p) => p.kind === "nk_settlement")
+    .reduce((sum, p) => sum + p.amount, 0);
+  const hasMonthSettlements = monthPayments.some((p) => p.kind === "nk_settlement");
 
   const displayContracts = showInactive ? contracts : contracts.filter((c) => !c.terminated);
 
   const add = useMutation({
-    mutationFn: (data: { contract_id: number; amount: number; payment_date: string; orig_amount?: number | null; orig_currency?: string | null }) =>
-      api.post("/api/payments/", data),
+    mutationFn: (data: {
+      contract_id: number; amount: number; payment_date: string;
+      orig_amount?: number | null; orig_currency?: string | null;
+      kind: PaymentKind; settlement_id?: number | null;
+    }) => api.post("/api/payments/", data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["payments"] });
+      invalidateSettlementViews(qc);
       toast.success("Payment recorded");
       setAddOpen(false);
     },
@@ -83,7 +116,7 @@ export default function RentTrackingPage() {
   const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/api/payments/${id}`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["payments"] });
+      invalidateSettlementViews(qc);
       toast.success("Payment deleted");
     },
     onError: (e) => toast.error(errorMessage(e, "Could not delete the payment")),
@@ -91,14 +124,30 @@ export default function RentTrackingPage() {
 
   function openAdd() {
     setSelectedContract(null);
-    setForm({ amount: 0, payment_date: todayISO(), paidForeign: false, orig_amount: 0, orig_currency: "CNY" });
+    setForm(emptyForm);
     setAddOpen(true);
   }
 
   function handleContractSelect(contractId: string) {
     const c = contracts.find((c) => String(c.id) === contractId) || null;
     setSelectedContract(c);
-    if (c) setForm((f) => ({ ...f, amount: c.rent }));
+    if (c) setForm((f) => ({ ...f, settlementId: "", amount: f.kind === "rent" ? c.rent : 0 }));
+  }
+
+  function setKind(kind: PaymentKind) {
+    setForm((f) => ({
+      ...f, kind, settlementId: "", refund: false, paidForeign: false,
+      amount: kind === "rent" ? (selectedContract?.rent ?? 0) : 0,
+    }));
+  }
+
+  // Picking the Abrechnung fills in what is still open on it, and which way.
+  function pickSettlement(id: string) {
+    const s = contractSettlements.find((x) => String(x.id) === id);
+    setForm((f) => ({
+      ...f, settlementId: id === "none" ? "" : id,
+      ...(s ? { amount: Math.abs(s.open), refund: s.amount < 0 } : {}),
+    }));
   }
 
   // Build month options (current year ±1)
@@ -131,16 +180,22 @@ export default function RentTrackingPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {Object.keys(monthTotals).length === 0 ? (
+          {monthPayments.length === 0 ? (
             <p className="text-sm text-muted-foreground">No payments recorded for this month.</p>
           ) : (
             <div className="flex gap-6 mb-3">
               {Object.entries(monthTotals).map(([curr, total]) => (
                 <div key={curr}>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Total {curr}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Rent {curr}</p>
                   <p className="text-2xl font-semibold">{CURRENCY_SYMBOLS[curr] || curr} {total.toFixed(2)}</p>
                 </div>
               ))}
+              {hasMonthSettlements && (
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">NK settlements (net)</p>
+                  <p className="text-2xl font-semibold text-muted-foreground">€ {monthSettlements.toFixed(2)}</p>
+                </div>
+              )}
             </div>
           )}
           {monthPayments.length > 0 && (
@@ -161,7 +216,7 @@ export default function RentTrackingPage() {
                     <TableCell className="font-medium">{p.tenant_name}</TableCell>
                     <TableCell className="text-muted-foreground">{p.apartment_name}</TableCell>
                     <TableCell className="text-right font-mono">
-                      {p.amount.toFixed(2)} EUR
+                      {p.amount.toFixed(2)} EUR<KindTag p={p} />
                       {foreignNote(p) && <span className="block text-xs text-muted-foreground">({foreignNote(p)})</span>}
                     </TableCell>
                     <TableCell>
@@ -206,7 +261,7 @@ export default function RentTrackingPage() {
                   <TableCell className="font-medium">{p.tenant_name}</TableCell>
                   <TableCell className="text-muted-foreground">{p.apartment_name}</TableCell>
                   <TableCell className="text-right font-mono">
-                    {p.amount.toFixed(2)} EUR
+                    {p.amount.toFixed(2)} EUR<KindTag p={p} />
                     {foreignNote(p) && <span className="block text-xs text-muted-foreground">({foreignNote(p)})</span>}
                   </TableCell>
                   <TableCell>
@@ -256,11 +311,67 @@ export default function RentTrackingPage() {
               </p>
             )}
             <div className="space-y-1.5">
-              <Label>Amount (EUR)</Label>
-              <Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))} />
-              <p className="text-xs text-muted-foreground">The EUR value that counts as income. Defaults to the contract rent.</p>
+              <Label>Type</Label>
+              <div className="flex rounded-md border border-border overflow-hidden text-sm" role="radiogroup" aria-label="Payment type">
+                {([["rent", "Rent"], ["nk_settlement", "NK settlement"]] as const).map(([k, label]) => (
+                  <button key={k} type="button" role="radio" aria-checked={form.kind === k} onClick={() => setKind(k)}
+                    className={`flex-1 px-2 py-1.5 transition-colors ${form.kind === k
+                      ? "bg-primary/15 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {form.kind === "nk_settlement" && (
+                <p className="text-xs text-muted-foreground">
+                  A Nachzahlung the tenant pays after a Nebenkostenabrechnung, or a Guthaben you pay back.
+                  Kept out of rent arrears, and reported as Umlagen for tax.
+                </p>
+              )}
             </div>
+            {form.kind === "nk_settlement" && selectedContract && (
+              <div className="space-y-1.5">
+                <Label>Abrechnung</Label>
+                <Select value={form.settlementId || "none"} onValueChange={pickSettlement}>
+                  <SelectTrigger aria-label="Abrechnung"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Not linked</SelectItem>
+                    {contractSettlements.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {fmtDate(s.period_start)}–{fmtDate(s.period_end)} · {resultLabel(s.amount)}
+                        {s.status === "settled" ? " · settled" : ` · open ${eur(Math.abs(s.open))}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {contractSettlements.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    No settlement recorded for this contract. Record one under NK Settlements to track what is still open.
+                  </p>
+                )}
+              </div>
+            )}
+            {form.kind === "nk_settlement" && (
+              <div className="flex rounded-md border border-border overflow-hidden text-sm" role="radiogroup" aria-label="Direction">
+                {([[false, "Tenant paid you"], [true, "You refunded the tenant"]] as const).map(([r, label]) => (
+                  <button key={label} type="button" role="radio" aria-checked={form.refund === r}
+                    onClick={() => setForm((f) => ({ ...f, refund: r }))}
+                    className={`flex-1 px-2 py-1.5 transition-colors ${form.refund === r
+                      ? "bg-primary/15 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="space-y-1.5">
+              <Label>Amount (EUR)</Label>
+              <Input type="number" step="0.01" min="0" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: Math.abs(Number(e.target.value)) }))} />
+              <p className="text-xs text-muted-foreground">
+                {form.kind === "rent"
+                  ? "The EUR value that counts as income. Defaults to the contract rent."
+                  : "Enter it as a positive figure — the direction above decides the sign."}
+              </p>
+            </div>
+            {form.kind === "rent" && <div className="space-y-1.5">
               <label className="flex items-center gap-2 text-sm cursor-pointer">
                 <input type="checkbox" checked={form.paidForeign} onChange={(e) => setForm((f) => ({ ...f, paidForeign: e.target.checked }))} className="accent-primary" />
                 Tenant paid in another currency
@@ -281,7 +392,7 @@ export default function RentTrackingPage() {
                   <p className="col-span-2 text-xs text-muted-foreground -mt-1">Recorded as a note only — the {form.orig_currency} amount is never added into EUR totals.</p>
                 </div>
               )}
-            </div>
+            </div>}
             <div className="space-y-1.5">
               <Label>Payment Date</Label>
               <Input type="date" value={form.payment_date} onChange={(e) => setForm((f) => ({ ...f, payment_date: e.target.value }))} />
@@ -291,9 +402,13 @@ export default function RentTrackingPage() {
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
             <Button
               onClick={() => selectedContract && add.mutate({
-                contract_id: selectedContract.id, amount: form.amount, payment_date: form.payment_date,
+                contract_id: selectedContract.id,
+                amount: form.kind === "nk_settlement" && form.refund ? -form.amount : form.amount,
+                payment_date: form.payment_date,
                 orig_amount: form.paidForeign ? form.orig_amount : null,
                 orig_currency: form.paidForeign ? form.orig_currency : null,
+                kind: form.kind,
+                settlement_id: form.kind === "nk_settlement" && form.settlementId ? Number(form.settlementId) : null,
               })}
               disabled={!selectedContract || !form.amount || !form.payment_date || add.isPending}
             >

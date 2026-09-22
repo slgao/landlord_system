@@ -347,7 +347,9 @@ def detect_overdue(default_months_back=12, owner=None):
         starts[cid] = _add_months(_month_first(s), 1) if s else default_start
 
     # One grouped query: payments summed per (contract, calendar month) from the
-    # earliest needed month through today. payment_date is ISO text, so
+    # earliest needed month through today. Rent only: a Nebenkosten Nachzahlung
+    # is not rent, and counting it here would hide a missed month; a refund
+    # would invent one. payment_date is ISO text, so
     # substr(...,1,7) is 'YYYY-MM'.
     min_start = min(starts.values())
     paid_rows = fetch("""
@@ -356,6 +358,7 @@ def detect_overdue(default_months_back=12, owner=None):
         JOIN contracts c ON p.contract_id = c.id
         WHERE COALESCE(c.terminated, 0) = 0
           AND c.owner_id = ?
+          AND p.kind = 'rent'
           AND p.payment_date >= ? AND p.payment_date <= ?
         GROUP BY p.contract_id, substr(p.payment_date, 1, 7)
     """, (owner, str(min_start), str(today)))

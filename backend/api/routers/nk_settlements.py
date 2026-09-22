@@ -15,7 +15,7 @@ from pydantic import BaseModel, model_validator
 
 from auth import require_auth
 from api.schemas.common import IsoDate, OptIsoDate
-from db import execute, execute_returning, fetch
+from db import execute, execute_returning, fetch, fetch_bundle
 import nk_settlement_logic as logic
 
 router = APIRouter(prefix="/nk-settlements", tags=["NK settlements"])
@@ -112,15 +112,33 @@ _KAUTION_HELD = """
     END
 """
 
-_SELECT = f"""
-    SELECT s.id, s.contract_id, t.name, a.name, p.name,
+_SETTLEMENT_COLS = f"""
+           s.id, s.contract_id, t.name, a.name, p.name,
            s.period_start, s.period_end, s.amount, s.issued_date, s.note,
            s.pdf IS NOT NULL,
            COALESCE((SELECT SUM(pm.amount) FROM payments pm
                      WHERE pm.settlement_id = s.id), 0),
            COALESCE((SELECT SUM(d.amount) FROM kaution_deductions d
                      WHERE d.reference_type = '{REF_TYPE}' AND d.reference_id = s.id), 0),
-           {_KAUTION_HELD}
+           {_KAUTION_HELD},
+           -- Deposit kept and bills covered come back with the row rather than
+           -- as two more round trips; the database is 40 ms away.
+           COALESCE((SELECT json_agg(json_build_object('id', d.id, 'date', d.date,
+                                                       'amount', d.amount)
+                                     ORDER BY d.date, d.id)
+                     FROM kaution_deductions d
+                     WHERE d.reference_type = '{REF_TYPE}' AND d.reference_id = s.id), '[]'),
+           COALESCE((SELECT json_agg(json_build_object(
+                         'id', e.id, 'utility', e.utility, 'vendor', e.vendor,
+                         'period_start', e.period_start, 'period_end', e.period_end,
+                         'bill_total', e.bill_total, 'amount', e.amount,
+                         'tenant_settled', COALESCE(e.tenant_settled, 0) = 1)
+                         ORDER BY e.period_start, e.id)
+                     FROM nk_settlement_bills l JOIN expenses e ON e.id = l.expense_id
+                     WHERE l.settlement_id = s.id), '[]')
+"""
+
+_SETTLEMENT_FROM = """
     FROM nk_settlements s
     JOIN contracts  c ON c.id = s.contract_id
     JOIN tenants    t ON t.id = c.tenant_id
@@ -128,12 +146,20 @@ _SELECT = f"""
     JOIN properties p ON p.id = a.property_id
 """
 
+_SELECT = f"SELECT {_SETTLEMENT_COLS} {_SETTLEMENT_FROM}"
+
+
+def _part(name: str, cols: str, rest: str, params) -> tuple:
+    """One query of a bundle: the same SQL as the plain version, with its
+    columns wrapped so the rows come back positional (see db.fetch_bundle)."""
+    return (name, f"SELECT json_build_array({cols}) {rest}", params)
+
 
 def _clean(v):
     return None if v is None or str(v) == "None" else str(v)
 
 
-def _row(r, deductions=None, bills=None) -> NKSettlementOut:
+def _row(r) -> NKSettlementOut:
     paid = float(r[11]) + float(r[12])
     open_, status = logic.settlement_state(r[7], paid)
     period_end = logic._parse(r[6])
@@ -146,8 +172,8 @@ def _row(r, deductions=None, bills=None) -> NKSettlementOut:
         has_pdf=bool(r[10]), paid=round(paid, 2), open=open_,
         paid_from_kaution=round(float(r[12]), 2),
         kaution_available=round(float(r[13]), 2) if r[13] is not None else None,
-        kaution_deductions=deductions or [],
-        bills=bills or [],
+        kaution_deductions=r[14],
+        bills=r[15],
         status=status, deadline=str(deadline) if deadline else None,
         issued_on_time=(issued <= deadline) if (issued and deadline) else None,
     )
@@ -164,48 +190,8 @@ def _own_settlement(settlement_id: int, owner: int) -> None:
         raise HTTPException(404, "Settlement not found")
 
 
-def _linked_deductions(settlement_ids, owner) -> dict[int, list[dict]]:
-    if not settlement_ids:
-        return {}
-    marks = ",".join("?" * len(settlement_ids))
-    out: dict[int, list[dict]] = {}
-    for sid, did, d, amt in fetch(
-            f"SELECT reference_id, id, date, amount FROM kaution_deductions "
-            f"WHERE reference_type = '{REF_TYPE}' AND owner_id = ? "
-            f"AND reference_id IN ({marks}) ORDER BY date, id",
-            (owner, *settlement_ids)):
-        out.setdefault(sid, []).append({"id": did, "date": d, "amount": float(amt)})
-    return out
-
-
-def _linked_bills(settlement_ids, owner) -> dict[int, list[dict]]:
-    if not settlement_ids:
-        return {}
-    marks = ",".join("?" * len(settlement_ids))
-    out: dict[int, list[dict]] = {}
-    for sid, *b in fetch(
-            f"SELECT l.settlement_id, e.id, e.utility, e.vendor, e.period_start, e.period_end, "
-            f"e.bill_total, e.amount, COALESCE(e.tenant_settled, 0) "
-            f"FROM nk_settlement_bills l JOIN expenses e ON e.id = l.expense_id "
-            f"WHERE l.owner_id = ? AND l.settlement_id IN ({marks}) ORDER BY e.period_start, e.id",
-            (owner, *settlement_ids)):
-        out.setdefault(sid, []).append(_bill_brief(b))
-    return out
-
-
-def _bill_brief(b) -> dict:
-    eid, utility, vendor, ps, pe, total, amount, settled = b
-    return {"id": eid, "utility": utility, "vendor": _clean(vendor),
-            "period_start": _clean(ps), "period_end": _clean(pe),
-            "bill_total": float(total) if total is not None else None,
-            "amount": float(amount), "tenant_settled": bool(settled)}
-
-
 def _rows(rows, owner) -> list[NKSettlementOut]:
-    ids = [r[0] for r in rows]
-    linked = _linked_deductions(ids, owner)
-    bills = _linked_bills(ids, owner)
-    return [_row(r, linked.get(r[0]), bills.get(r[0])) for r in rows]
+    return [_row(r) for r in rows]
 
 
 def _check_bills(contract_id: int, bill_ids: list[int], owner: int) -> list[int]:
@@ -229,12 +215,20 @@ def _check_bills(contract_id: int, bill_ids: list[int], owner: int) -> list[int]
 
 
 def _set_bills(settlement_id: int, bill_ids: list[int], owner: int) -> None:
-    """Replace the bills an Abrechnung covers (already checked)."""
-    execute("DELETE FROM nk_settlement_bills WHERE settlement_id=? AND owner_id=?",
-            (settlement_id, owner))
-    for b in bill_ids:
-        execute("INSERT INTO nk_settlement_bills (settlement_id, expense_id, owner_id) "
-                "VALUES (?,?,?)", (settlement_id, b, owner))
+    """Replace the bills an Abrechnung covers (already checked). One statement:
+    the old links never disappear without the new ones arriving, and a
+    settlement covering six bills costs one round trip, not seven."""
+    if not bill_ids:
+        execute("DELETE FROM nk_settlement_bills WHERE settlement_id=? AND owner_id=?",
+                (settlement_id, owner))
+        return
+    execute("""
+        WITH cleared AS (
+            DELETE FROM nk_settlement_bills WHERE settlement_id=? AND owner_id=?
+        )
+        INSERT INTO nk_settlement_bills (settlement_id, expense_id, owner_id)
+        SELECT ?, e, ? FROM unnest(?::int[]) AS e
+    """, (settlement_id, owner, settlement_id, owner, bill_ids))
 
 
 def _one(settlement_id: int, owner: int) -> NKSettlementOut:
@@ -270,58 +264,73 @@ def _linkable_deduction(deduction_id: int, contract_id: int, owner: int, room: f
 
 @router.get("/", response_model=list[NKSettlementOut])
 def list_settlements(contract_id: int | None = None, owner: int = Depends(require_auth)):
-    if contract_id:
-        rows = fetch(f"{_SELECT} WHERE s.contract_id=? AND s.owner_id=? "
-                     "ORDER BY s.period_end DESC, s.id DESC", (contract_id, owner))
-    else:
-        rows = fetch(f"{_SELECT} WHERE s.owner_id=? ORDER BY s.period_end DESC, s.id DESC",
-                     (owner,))
-    return _rows(rows, owner)
+    return _rows(fetch_bundle([_q_settlements(owner, contract_id)])["settlements"], owner)
 
 
-@router.get("/pending", response_model=list[PendingAbrechnungOut])
-def pending(owner: int = Depends(require_auth)):
-    """Tenancies whose Abrechnung for a finished year is not recorded yet,
-    with the §556 deadline. See nk_settlement_logic.pending_abrechnungen."""
-    contracts = fetch("""
-        SELECT c.id, c.tenant_id, c.apartment_id, c.start_date, c.end_date,
-               c.nebenkosten_vorauszahlung, c.nk_mode, t.name, a.name, p.name
-        FROM contracts c
-        JOIN tenants    t ON t.id = c.tenant_id
-        JOIN apartments a ON a.id = c.apartment_id
-        JOIN properties p ON p.id = a.property_id
-        WHERE c.owner_id = ?
-    """, (owner,))
-    settlements = fetch("SELECT contract_id, period_start, period_end FROM nk_settlements "
-                        "WHERE owner_id=?", (owner,))
+def _q_settlements(owner, contract_id=None):
+    where = "WHERE s.contract_id=? AND s.owner_id=?" if contract_id else "WHERE s.owner_id=?"
+    params = (contract_id, owner) if contract_id else (owner,)
+    return _part("settlements", _SETTLEMENT_COLS,
+                 f"{_SETTLEMENT_FROM} {where} ORDER BY s.period_end DESC, s.id DESC", params)
+
+
+def _q_pending_contracts(owner):
+    return _part("pending_contracts",
+                 """c.id, c.tenant_id, c.apartment_id, c.start_date, c.end_date,
+                    c.nebenkosten_vorauszahlung, c.nk_mode, t.name, a.name, p.name""",
+                 """FROM contracts c
+                    JOIN tenants    t ON t.id = c.tenant_id
+                    JOIN apartments a ON a.id = c.apartment_id
+                    JOIN properties p ON p.id = a.property_id
+                    WHERE c.owner_id = ?""", (owner,))
+
+
+def _q_pending_rows(owner):
+    """Recorded settlements and unlinked NK deductions, tagged apart."""
+    return ("pending_rows", f"""
+        SELECT json_build_array(0, contract_id, period_start, period_end, NULL, NULL, id)
+        FROM nk_settlements WHERE owner_id = ?
+        UNION ALL
+        SELECT json_build_array(1, d.contract_id, NULL, NULL, d.date, d.amount, d.id)
+        FROM kaution_deductions d WHERE d.owner_id = ? AND {_UNLINKED_NK_DEDUCTION}
+    """, (owner, owner, NK_CATEGORY))
+
+
+def _pending_from(contracts, rows, today) -> list[PendingAbrechnungOut]:
+    settlements = [(r[1], r[2], r[3]) for r in rows if r[0] == 0]
+    deductions = [(r[1], r[4], r[5], r[6]) for r in rows if r[0] == 1]
     names = {r[0]: (r[7], r[8], r[9]) for r in contracts}
     tenancy = {r[0]: (r[1], r[2]) for r in contracts}
-    due = logic.pending_abrechnungen([r[:7] for r in contracts], settlements, date.today())
+    due = logic.pending_abrechnungen([r[:7] for r in contracts], settlements, today)
 
-    # Unlinked NK deductions per tenancy (a follow-on contract is the same one).
     by_tenancy: dict[tuple, list[dict]] = {}
-    if due:
-        for did, cid, d_date, amount in fetch(f"""
-            SELECT d.id, d.contract_id, d.date, d.amount FROM kaution_deductions d
-            WHERE d.owner_id = ? AND {_UNLINKED_NK_DEDUCTION}
-            ORDER BY d.date, d.id
-        """, (owner, NK_CATEGORY)):
-            if cid in tenancy:
-                by_tenancy.setdefault(tenancy[cid], []).append(
-                    {"id": did, "date": _clean(d_date), "amount": float(amount)})
+    for cid, d_date, amount, did in deductions:
+        if cid in tenancy:
+            by_tenancy.setdefault(tenancy[cid], []).append(
+                {"id": did, "date": _clean(d_date), "amount": float(amount)})
 
     out = []
     for d in due:
         # A deduction can only settle a year that had begun by the time the
         # deposit was kept.
-        candidates = [x for x in by_tenancy.get(tenancy[d["contract_id"]], [])
-                      if x["date"] and x["date"] >= d["period_start"]]
+        candidates = sorted(
+            (x for x in by_tenancy.get(tenancy[d["contract_id"]], [])
+             if x["date"] and x["date"] >= d["period_start"]),
+            key=lambda x: (x["date"], x["id"]))
         out.append(PendingAbrechnungOut(
             **d, tenant_name=names[d["contract_id"]][0],
             apartment_name=names[d["contract_id"]][1],
             property_name=names[d["contract_id"]][2],
             deposit_deductions=candidates))
     return out
+
+
+@router.get("/pending", response_model=list[PendingAbrechnungOut])
+def pending(owner: int = Depends(require_auth)):
+    """Tenancies whose Abrechnung for a finished year is not recorded yet,
+    with the §556 deadline. See nk_settlement_logic.pending_abrechnungen."""
+    loaded = fetch_bundle([_q_pending_contracts(owner), _q_pending_rows(owner)])
+    return _pending_from(loaded["pending_contracts"], loaded["pending_rows"], date.today())
 
 
 # A Kaution deduction for Nebenkosten that no settlement points at yet: in the
@@ -354,27 +363,40 @@ def unlinked_kaution(owner: int = Depends(require_auth)):
     """Nebenkosten already settled from a deposit, before this page knew
     about deposits: deductions in the NK category, or whose reason says
     Nebenkosten, that no settlement points at yet."""
-    rows = fetch(f"""
-        SELECT d.id, d.contract_id, t.name, a.name, p.name, d.date, d.amount,
-               d.category, d.reason, c.tenant_id, c.apartment_id
-        FROM kaution_deductions d
-        JOIN contracts  c ON c.id = d.contract_id
-        JOIN tenants    t ON t.id = c.tenant_id
-        JOIN apartments a ON a.id = c.apartment_id
-        JOIN properties p ON p.id = a.property_id
-        WHERE d.owner_id = ? AND {_UNLINKED_NK_DEDUCTION}
-        ORDER BY d.date DESC, d.id DESC
-    """, (owner, NK_CATEGORY))
+    loaded = fetch_bundle([_q_unlinked(owner), _q_open_settlements(owner)])
+    return _unlinked_from(loaded["unlinked"], loaded["open_settlements"])
+
+
+def _q_unlinked(owner):
+    return _part("unlinked",
+                 """d.id, d.contract_id, t.name, a.name, p.name, d.date, d.amount,
+                    d.category, d.reason, c.tenant_id, c.apartment_id""",
+                 f"""FROM kaution_deductions d
+                     JOIN contracts  c ON c.id = d.contract_id
+                     JOIN tenants    t ON t.id = c.tenant_id
+                     JOIN apartments a ON a.id = c.apartment_id
+                     JOIN properties p ON p.id = a.property_id
+                     WHERE d.owner_id = ? AND {_UNLINKED_NK_DEDUCTION}
+                     ORDER BY d.date DESC, d.id DESC""", (owner, NK_CATEGORY))
+
+
+def _q_open_settlements(owner):
+    """Nachzahlungen with something still open, to match a deduction against."""
+    return _part("open_settlements", f"""
+                    c.tenant_id, c.apartment_id, s.id, s.amount,
+                    COALESCE((SELECT SUM(pm.amount) FROM payments pm
+                              WHERE pm.settlement_id = s.id), 0)
+                  + COALESCE((SELECT SUM(d.amount) FROM kaution_deductions d
+                              WHERE d.reference_type = '{REF_TYPE}'
+                                AND d.reference_id = s.id), 0)""",
+                 """FROM nk_settlements s JOIN contracts c ON c.id = s.contract_id
+                    WHERE s.owner_id = ? AND s.amount > 0
+                    ORDER BY s.period_end DESC""", (owner,))
+
+
+def _unlinked_from(rows, open_rows) -> list[UnlinkedKautionOut]:
     open_by_tenancy: dict[tuple, list[int]] = {}
-    for r in fetch(f"""
-        SELECT c.tenant_id, c.apartment_id, s.id, s.amount,
-               COALESCE((SELECT SUM(pm.amount) FROM payments pm WHERE pm.settlement_id = s.id), 0)
-             + COALESCE((SELECT SUM(d.amount) FROM kaution_deductions d
-                         WHERE d.reference_type = '{REF_TYPE}' AND d.reference_id = s.id), 0)
-        FROM nk_settlements s JOIN contracts c ON c.id = s.contract_id
-        WHERE s.owner_id = ? AND s.amount > 0
-        ORDER BY s.period_end DESC
-    """, (owner,)):
+    for r in open_rows:
         if float(r[3]) - float(r[4]) > 0.005:
             open_by_tenancy.setdefault((r[0], r[1]), []).append(r[2])
     return [UnlinkedKautionOut(
@@ -406,6 +428,49 @@ class BillSettledIn(BaseModel):
     tenant_settled: bool
 
 
+class BillCandidateOut(BaseModel):
+    """An expense that is not a bill yet but reads like one."""
+    id: int
+    property_id: int
+    property_name: Optional[str] = None
+    expense_date: str
+    amount: float
+    category: str
+    vendor: Optional[str] = None
+    apartment_id: Optional[int] = None
+    deductible: int = 1
+    distribute_years: int = 1
+    source_file: Optional[str] = None
+    note: Optional[str] = None
+
+
+@router.get("/bill-candidates", response_model=list[BillCandidateOut])
+def bill_candidates(owner: int = Depends(require_auth)):
+    """Expenses that could be turned into provider bills — the ones recorded
+    before bills existed. Slim on purpose: the page only needs to list them
+    in a dropdown, and the full expense list is 35 KB of notes."""
+    return _candidates_from(fetch_bundle([_q_candidates(owner)])["candidates"])
+
+
+def _q_candidates(owner):
+    return _part("candidates",
+                 """e.id, e.property_id, p.name, e.expense_date, e.amount, e.category,
+                    e.vendor, e.apartment_id, e.deductible, e.distribute_years,
+                    e.source_file, e.note""",
+                 """FROM expenses e JOIN properties p ON p.id = e.property_id
+                    WHERE e.owner_id = ? AND e.utility IS NULL
+                      AND e.category IN ('Hausgeld', 'Versorgerabrechnung', 'Sonstige')
+                    ORDER BY e.expense_date DESC, e.id DESC""", (owner,))
+
+
+def _candidates_from(rows) -> list[BillCandidateOut]:
+    return [BillCandidateOut(
+        id=r[0], property_id=r[1], property_name=r[2], expense_date=r[3], amount=float(r[4]),
+        category=r[5], vendor=_clean(r[6]), apartment_id=r[7], deductible=int(r[8] or 1),
+        distribute_years=int(r[9] or 1), source_file=_clean(r[10]), note=_clean(r[11]))
+        for r in rows]
+
+
 @router.get("/bills", response_model=list[BillOut])
 def list_bills(property_id: Optional[int] = None, contract_id: Optional[int] = None,
                owner: int = Depends(require_auth)):
@@ -420,34 +485,40 @@ def list_bills(property_id: Optional[int] = None, contract_id: Optional[int] = N
         where += (" AND e.property_id = (SELECT a.property_id FROM contracts c "
                   "JOIN apartments a ON a.id = c.apartment_id WHERE c.id = ? AND c.owner_id = ?)")
         params += [contract_id, owner]
-    rows = fetch(f"""
-        SELECT e.id, e.property_id, p.name, e.utility, e.vendor, e.period_start,
-               e.period_end, e.bill_total, e.amount, e.expense_date, e.category, e.note,
-               e.pdf IS NOT NULL, COALESCE(e.tenant_settled, 0)
-        FROM expenses e JOIN properties p ON p.id = e.property_id
-        WHERE {where}
-        ORDER BY COALESCE(e.period_end, e.expense_date) DESC, e.id DESC
-    """, tuple(params))
-    covered: dict[int, list[dict]] = {}
-    if rows:
-        marks = ",".join("?" * len(rows))
-        for eid, sid, tname, ps, pe in fetch(f"""
-            SELECT l.expense_id, s.id, t.name, s.period_start, s.period_end
-            FROM nk_settlement_bills l
-            JOIN nk_settlements s ON s.id = l.settlement_id
-            JOIN contracts c ON c.id = s.contract_id
-            JOIN tenants t ON t.id = c.tenant_id
-            WHERE l.owner_id = ? AND l.expense_id IN ({marks})
-            ORDER BY t.name
-        """, (owner, *[r[0] for r in rows])):
-            covered.setdefault(eid, []).append(
-                {"id": sid, "tenant_name": tname, "period_start": ps, "period_end": pe})
+    return _bills_from(fetch_bundle([_q_bills(where, tuple(params))])["bills"])
+
+
+_BILL_COLS = """
+    e.id, e.property_id, p.name, e.utility, e.vendor, e.period_start,
+    e.period_end, e.bill_total, e.amount, e.expense_date, e.category, e.note,
+    e.pdf IS NOT NULL, COALESCE(e.tenant_settled, 0),
+    COALESCE((SELECT json_agg(json_build_object(
+                  'id', s.id, 'tenant_name', t.name,
+                  'period_start', s.period_start, 'period_end', s.period_end)
+                  ORDER BY t.name)
+              FROM nk_settlement_bills l
+              JOIN nk_settlements s ON s.id = l.settlement_id
+              JOIN contracts c ON c.id = s.contract_id
+              JOIN tenants t ON t.id = c.tenant_id
+              WHERE l.expense_id = e.id), '[]')
+"""
+
+
+def _q_bills(where: str, params: tuple):
+    return _part("bills", _BILL_COLS,
+                 f"""FROM expenses e JOIN properties p ON p.id = e.property_id
+                     WHERE {where}
+                     ORDER BY COALESCE(e.period_end, e.expense_date) DESC, e.id DESC""",
+                 params)
+
+
+def _bills_from(rows) -> list[BillOut]:
     return [BillOut(
         id=r[0], property_id=r[1], property_name=r[2], utility=r[3], vendor=_clean(r[4]),
         period_start=_clean(r[5]), period_end=_clean(r[6]),
         bill_total=float(r[7]) if r[7] is not None else None, amount=float(r[8]),
         expense_date=r[9], category=r[10], note=_clean(r[11]), has_pdf=bool(r[12]),
-        tenant_settled=bool(r[13]), settlements=covered.get(r[0], []))
+        tenant_settled=bool(r[13]), settlements=r[14])
         for r in rows]
 
 
@@ -460,6 +531,52 @@ def set_bill_settled(expense_id: int, body: BillSettledIn, owner: int = Depends(
     execute("UPDATE expenses SET tenant_settled=? WHERE id=? AND owner_id=?",
             (int(body.tenant_settled), expense_id, owner))
     return {"id": expense_id, "tenant_settled": body.tenant_settled}
+
+
+class OverviewOut(BaseModel):
+    settlements: list[NKSettlementOut] = []
+    pending: list[PendingAbrechnungOut] = []
+    unlinked_kaution: list[UnlinkedKautionOut] = []
+    bills: list[BillOut] = []
+    bill_candidates: list[BillCandidateOut] = []
+
+
+@router.get("/overview", response_model=OverviewOut)
+def overview(owner: int = Depends(require_auth)):
+    """Everything the NK Settlements page shows, in one request. Five
+    serialised requests over a 40 ms link cost more than the queries do."""
+    loaded = fetch_bundle([
+        _q_settlements(owner), _q_pending_contracts(owner), _q_pending_rows(owner),
+        _q_unlinked(owner), _q_open_settlements(owner),
+        _q_bills("e.owner_id = ? AND e.utility IS NOT NULL", (owner,)), _q_candidates(owner),
+    ])
+    return OverviewOut(
+        settlements=_rows(loaded["settlements"], owner),
+        pending=_pending_from(loaded["pending_contracts"], loaded["pending_rows"], date.today()),
+        unlinked_kaution=_unlinked_from(loaded["unlinked"], loaded["open_settlements"]),
+        bills=_bills_from(loaded["bills"]),
+        bill_candidates=_candidates_from(loaded["candidates"]),
+    )
+
+
+class DashboardNKOut(BaseModel):
+    pending: list[PendingAbrechnungOut] = []
+    open_settlements: list[NKSettlementOut] = []
+
+
+@router.get("/dashboard", response_model=DashboardNKOut)
+def dashboard(days: int = 120, owner: int = Depends(require_auth)):
+    """What the dashboard card shows, in one request instead of two: the
+    Abrechnungen due soon or just missed, and the settlements still open."""
+    loaded = fetch_bundle([
+        _q_settlements(owner), _q_pending_contracts(owner), _q_pending_rows(owner),
+    ])
+    due = _pending_from(loaded["pending_contracts"], loaded["pending_rows"], date.today())
+    return DashboardNKOut(
+        pending=[p for p in due if p.days_remaining <= days],
+        open_settlements=[s for s in _rows(loaded["settlements"], owner)
+                          if s.status != "settled"],
+    )
 
 
 @router.post("/", response_model=NKSettlementOut, status_code=201)

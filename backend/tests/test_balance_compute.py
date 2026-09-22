@@ -1,6 +1,8 @@
 """expected_rent / month_costs are pure: rows in, Decimal out."""
 from decimal import Decimal
 
+import pytest
+
 import balance_compute
 from balance_compute import expected_rent, month_costs
 
@@ -150,34 +152,32 @@ def test_a_blank_zinsbindung_changes_nothing(monkeypatch):
 # non-deductible cost still counts.
 
 def _books(monkeypatch, costs=(), expenses=(), payments=()):
-    """Route balance_compute's loads to canned rows.
+    """Route balance_compute's one bundled load to canned rows.
 
     `costs` rows are (property_id, amount, frequency, valid_from, valid_to),
     `expenses` rows (property_id, 'YYYY-MM', amount) and `payments` rows
-    (property_id, 'YYYY-MM', amount, kind) — the shapes the loaders select,
-    plus the kind the payments loader filters on.
+    (property_id, 'YYYY-MM', amount, kind) — the shapes the loads select,
+    plus the kind that decides which bucket a payment lands in.
     """
-    def fake_fetch(sql, params=()):
-        q = " ".join(sql.split())
-        if "FROM properties" in q:
-            return [(1, "Haus A")]
-        if "FROM contracts" in q:
-            return []
-        if "FROM flat_costs" in q:
-            return list(costs)
-        if "p.kind = 'nk_settlement'" in q:          # the settlements loader
-            return [r[:3] for r in payments if r[3] == "nk_settlement"]
-        if "p.kind = 'rent'" in q:                   # rent, incl. from the deposit
-            return [r[:3] for r in payments if r[3] in ("rent", "deposit_rent")]
-        if "FROM payments" in q:
-            kind = params[-1]
-            return [r[:3] for r in payments if r[3] == kind]
-        if "FROM expenses" in q:
-            return list(expenses)
-        if "FROM mortgages" in q:
-            return []
-        raise AssertionError(f"unexpected query: {q}")
-    monkeypatch.setattr(balance_compute, "fetch", fake_fetch)
+    def money(kinds):
+        return [[r[0], r[1], r[2]] for r in payments if r[3] in kinds]
+
+    def fake_bundle(parts):
+        got = {name for name, _, _ in parts}
+        assert got == {"properties", "contracts", "costs", "mortgages",
+                       "rent", "one_off", "settlements"}, got
+        return {
+            "properties": [[1, "Haus A"]],
+            "contracts": [],
+            "costs": [[c[0], c[1], c[2], c[3], c[4]] for c in costs],
+            "mortgages": [],
+            "rent": money({"rent", "deposit_rent"}),
+            "one_off": [[e[0], e[1], e[2]] for e in expenses],
+            "settlements": money({"nk_settlement"}),
+        }
+    monkeypatch.setattr(balance_compute, "fetch_bundle", fake_bundle)
+    monkeypatch.setattr(balance_compute, "fetch",
+                        lambda sql, params=(): pytest.fail(f"unbundled query: {sql}"))
 
 
 def _year():

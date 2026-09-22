@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 from typing import Literal, Optional
 
-from db import fetch, execute, execute_returning, insert
+from db import fetch, fetch_bundle, execute, execute_returning, insert
 from auth import require_auth
 from api.schemas.common import IsoDate, OptIsoDate
 import tax_logic
@@ -688,16 +688,66 @@ def _afa_items(afa: dict, ov) -> list[dict]:
 def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
     """Returns (per-property blocks for tax-relevant properties,
     names of excluded properties) for the given owner."""
-    all_props = fetch("SELECT id, name, COALESCE(tax_relevant,1) FROM properties "
-                      "WHERE owner_id=? ORDER BY name", (owner,))
+    # Seven independent loads, one round trip. Each selects a single
+    # json_build_array so the rows stay positional (see db.fetch_bundle).
+    loaded = fetch_bundle([
+        ("props", "SELECT json_build_array(id, name, COALESCE(tax_relevant,1)) "
+                  "FROM properties WHERE owner_id=? ORDER BY name", (owner,)),
+        ("profiles", "SELECT json_build_array(property_id, purchase_date, purchase_price,"
+                     " building_share_pct, afa_rate_pct) "
+                     "FROM property_tax_profiles WHERE owner_id=?", (owner,)),
+        ("mortgages", f"SELECT json_build_array({_MORTGAGE_COLS}) FROM mortgages "
+                      "WHERE owner_id=? ORDER BY id", (owner,)),
+        ("money", """
+            SELECT json_build_array(property_id, kind, total, cnt) FROM (
+                SELECT a.property_id, pm.kind AS kind, COALESCE(SUM(pm.amount),0) AS total,
+                       COUNT(pm.id) AS cnt
+                FROM payments pm
+                JOIN contracts c ON c.id = pm.contract_id
+                JOIN apartments a ON a.id = c.apartment_id
+                WHERE substr(pm.payment_date,1,4) = ? AND pm.owner_id = ?
+                GROUP BY a.property_id, pm.kind
+                UNION ALL
+                SELECT a.property_id, 'nk_settlement', COALESCE(SUM(d.amount),0), COUNT(d.id)
+                FROM kaution_deductions d
+                JOIN contracts c ON c.id = d.contract_id
+                JOIN apartments a ON a.id = c.apartment_id
+                WHERE substr(d.date,1,4) = ? AND d.owner_id = ?
+                  AND (d.category = ? OR d.reference_type = ?)
+                GROUP BY a.property_id
+                UNION ALL
+                SELECT a.property_id, 'deposit_rent', COALESCE(SUM(d.amount),0), COUNT(d.id)
+                FROM kaution_deductions d
+                JOIN contracts c ON c.id = d.contract_id
+                JOIN apartments a ON a.id = c.apartment_id
+                WHERE substr(d.date,1,4) = ? AND d.owner_id = ?
+                  AND d.category IN (?, ?)
+                  AND COALESCE(d.reference_type, '') <> ?
+                GROUP BY a.property_id
+            ) m""", (str(year), owner, str(year), owner, NK_CATEGORY, NK_REF_TYPE,
+                     str(year), owner, *RENT_CATEGORIES, NK_REF_TYPE)),
+        ("contracts", """
+            SELECT json_build_array(a.property_id, t.name, c.rent, c.start_date, c.end_date,
+                                    c.nebenkosten_vorauszahlung)
+            FROM contracts c
+            JOIN apartments a ON a.id = c.apartment_id
+            JOIN tenants t ON t.id = c.tenant_id
+            WHERE c.owner_id = ?""", (owner,)),
+        ("flat", """
+            SELECT json_build_array(a.property_id, fc.cost_type, fc.amount, fc.valid_from,
+                                    fc.valid_to, COALESCE(fc.frequency, 'monthly'))
+            FROM flat_costs fc JOIN apartments a ON a.id = fc.apartment_id
+            WHERE fc.owner_id = ?""", (owner,)),
+        ("overrides", "SELECT json_build_array(property_id, field, value, note) "
+                      "FROM tax_year_overrides WHERE tax_year=? AND owner_id=?", (year, owner)),
+    ])
+
+    all_props = loaded["props"]
     props = [(pid, name) for pid, name, rel in all_props if rel]
     excluded = [name for _, name, rel in all_props if not rel]
-    profiles = {r[0]: r for r in fetch(
-        "SELECT property_id, purchase_date, purchase_price, building_share_pct,"
-        "       afa_rate_pct FROM property_tax_profiles WHERE owner_id=?", (owner,))}
+    profiles = {r[0]: r for r in loaded["profiles"]}
     mortgages: dict[int, list] = {}
-    for r in fetch(f"SELECT {_MORTGAGE_COLS} FROM mortgages "
-                   "WHERE owner_id=? ORDER BY id", (owner,)):
+    for r in loaded["mortgages"]:
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
 
     # Rent and NK settlements apart. Whether income comes from payments or
@@ -715,32 +765,7 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
     pay: dict[int, tuple] = {}
     settle: dict[int, float] = {}
     rent_deposit: dict[int, float] = {}
-    for pid_, kind, total, cnt in fetch("""
-        SELECT a.property_id, pm.kind, COALESCE(SUM(pm.amount),0), COUNT(pm.id)
-        FROM payments pm
-        JOIN contracts c ON c.id = pm.contract_id
-        JOIN apartments a ON a.id = c.apartment_id
-        WHERE substr(pm.payment_date,1,4) = ? AND pm.owner_id = ?
-        GROUP BY a.property_id, pm.kind
-        UNION ALL
-        SELECT a.property_id, 'nk_settlement', COALESCE(SUM(d.amount),0), COUNT(d.id)
-        FROM kaution_deductions d
-        JOIN contracts c ON c.id = d.contract_id
-        JOIN apartments a ON a.id = c.apartment_id
-        WHERE substr(d.date,1,4) = ? AND d.owner_id = ?
-          AND (d.category = ? OR d.reference_type = ?)
-        GROUP BY a.property_id
-        UNION ALL
-        SELECT a.property_id, 'deposit_rent', COALESCE(SUM(d.amount),0), COUNT(d.id)
-        FROM kaution_deductions d
-        JOIN contracts c ON c.id = d.contract_id
-        JOIN apartments a ON a.id = c.apartment_id
-        WHERE substr(d.date,1,4) = ? AND d.owner_id = ?
-          AND d.category IN (?, ?)
-          AND COALESCE(d.reference_type, '') <> ?
-        GROUP BY a.property_id
-    """, (str(year), owner, str(year), owner, NK_CATEGORY, NK_REF_TYPE,
-          str(year), owner, *RENT_CATEGORIES, NK_REF_TYPE)):
+    for pid_, kind, total, cnt in loaded["money"]:
         if kind == "nk_settlement":
             settle[pid_] = settle.get(pid_, 0.0) + float(total)
         elif kind == "deposit_rent":
@@ -749,23 +774,11 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
             pay[pid_] = (float(total), int(cnt))
 
     contracts: dict[int, list] = {}
-    for r in fetch("""
-        SELECT a.property_id, t.name, c.rent, c.start_date, c.end_date,
-               c.nebenkosten_vorauszahlung
-        FROM contracts c
-        JOIN apartments a ON a.id = c.apartment_id
-        JOIN tenants t ON t.id = c.tenant_id
-        WHERE c.owner_id = ?
-    """, (owner,)):
+    for r in loaded["contracts"]:
         contracts.setdefault(r[0], []).append(r)
 
     flat: dict[int, list] = {}
-    for r in fetch("""
-        SELECT a.property_id, fc.cost_type, fc.amount, fc.valid_from, fc.valid_to,
-               COALESCE(fc.frequency, 'monthly')
-        FROM flat_costs fc JOIN apartments a ON a.id = fc.apartment_id
-        WHERE fc.owner_id = ?
-    """, (owner,)):
+    for r in loaded["flat"]:
         flat.setdefault(r[0], []).append(r)
 
     expenses: dict[int, list] = {}
@@ -774,8 +787,7 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
             expenses.setdefault(e["property_id"], []).append(e)
 
     overrides: dict[tuple, tuple] = {}
-    for r in fetch("SELECT property_id, field, value, note FROM tax_year_overrides"
-                   " WHERE tax_year=? AND owner_id=?", (year, owner)):
+    for r in loaded["overrides"]:
         overrides[(r[0], r[1])] = (float(r[2]), _clean(r[3]))
 
     report = []

@@ -148,19 +148,26 @@ def test_unknown_kind_is_refused():
 
 def _tax_books(monkeypatch, payments, nk=100.0):
     """One property, one contract running all of 2025 at 1000 warm incl.
-    `nk` NK prepayment. `payments` rows are (kind, total, count)."""
+    `nk` NK prepayment. `payments` rows are (kind, total, count) — the shape
+    the bundled money load returns, where a Kaution deduction for rent comes
+    back as kind 'deposit_rent' and one for Nebenkosten as 'nk_settlement'."""
     from api.routers import tax
 
-    def fake_fetch(sql, params=()):
-        q = " ".join(sql.split())
-        if "FROM properties" in q:
-            return [(1, "Haus A", 1)]
-        if "FROM payments" in q:
-            return [(1, kind, total, cnt) for kind, total, cnt in payments]
-        if "FROM contracts" in q:
-            return [(1, "Mieter", 1000.0, "2025-01-01", None, nk)]
-        return []
-    monkeypatch.setattr(tax, "fetch", fake_fetch)
+    def fake_bundle(parts):
+        got = {name for name, _, _ in parts}
+        assert got == {"props", "profiles", "mortgages", "money", "contracts",
+                       "flat", "overrides"}, got
+        return {
+            "props": [[1, "Haus A", 1]],
+            "profiles": [],
+            "mortgages": [],
+            "money": [[1, kind, total, cnt] for kind, total, cnt in payments],
+            "contracts": [[1, "Mieter", 1000.0, "2025-01-01", None, nk]],
+            "flat": [],
+            "overrides": [],
+        }
+    monkeypatch.setattr(tax, "fetch_bundle", fake_bundle)
+    monkeypatch.setattr(tax, "fetch", lambda sql, params=(): pytest.fail(f"unbundled query: {sql}"))
     monkeypatch.setattr(tax, "list_expenses", lambda year, owner: [])
     blocks, _ = tax.build_report(2025, 1)
     return blocks[0]["income"]
@@ -268,3 +275,11 @@ def test_a_plain_expense_edit_does_not_touch_bill_fields():
     from api.routers.tax import _BILL_FIELDS
     plain = _exp()
     assert not set(_BILL_FIELDS) & plain.model_fields_set
+
+
+def test_more_paid_than_owed_is_not_partly_paid():
+    # A settlement with more booked against it than it asked for is not
+    # "partly paid": nothing is outstanding, something has to go back.
+    assert logic.settlement_state(180, 250) == (-70.0, "overpaid")
+    assert logic.settlement_state(-95, -120) == (25.0, "overpaid")
+    assert logic.settlement_state(180, 100)[1] == "partial"

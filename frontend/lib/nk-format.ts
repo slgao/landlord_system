@@ -22,7 +22,8 @@ export function fmtDate(iso?: string | null) {
 // Every query a settlement change can move. Payments feed the arrears, the
 // tax report and the balance sheet, so those go stale too.
 export function invalidateSettlementViews(qc: ReturnType<typeof useQueryClient>) {
-  for (const key of ["nk-settlements", "nk-pending", "nk-unlinked-kaution", "payments",
+  for (const key of ["nk-overview", "nk-dashboard", "nk-settlements", "nk-pending",
+                     "nk-unlinked-kaution", "payments",
                      "tenant-payments", "payment-reminders", "tax-report", "balance-sheet",
                      "balance-sheet-dash", "kaution-deductions", "kaution-overview",
                      "provider-bills"]) {

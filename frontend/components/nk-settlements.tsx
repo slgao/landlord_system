@@ -21,34 +21,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { BillPicker } from "@/components/provider-bills";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export const eur = (n: number) =>
-  `${n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
-
-/** "Nachzahlung 180,00 €" / "Guthaben 95,00 €" — the sign spelled out, since
- *  a bare −95 reads differently depending on whose side you are on. */
-export function resultLabel(amount: number) {
-  if (Math.abs(amount) < 0.005) return "Ausgeglichen";
-  return amount > 0 ? `Nachzahlung ${eur(amount)}` : `Guthaben ${eur(-amount)}`;
-}
-
-export function fmtDate(iso?: string | null) {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-");
-  return `${d}.${m}.${y}`;
-}
-
-// Every query a settlement change can move. Payments feed the arrears, the
-// tax report and the balance sheet, so those go stale too.
-export function invalidateSettlementViews(qc: ReturnType<typeof useQueryClient>) {
-  for (const key of ["nk-settlements", "nk-pending", "nk-unlinked-kaution", "payments",
-                     "tenant-payments", "payment-reminders", "tax-report", "balance-sheet",
-                     "balance-sheet-dash", "kaution-deductions", "kaution-overview"]) {
-    qc.invalidateQueries({ queryKey: [key] });
-  }
-}
+export { eur, resultLabel, fmtDate, invalidateSettlementViews } from "@/lib/nk-format";
+import { eur, resultLabel, fmtDate, invalidateSettlementViews } from "@/lib/nk-format";
 
 /** Fetch the stored PDF with the session token and hand it to the browser.
  *  A plain link would need the token in the URL, where it ends up in logs. */
@@ -82,6 +60,7 @@ export interface SettlementDraft {
   kaution_deduction?: { id: number; date?: string | null; amount: number } | null;
   // The PDF offset the Nachzahlung against the deposit: offer to book it.
   offsetKaution?: boolean;
+  bill_ids?: number[];      // provider bills this Abrechnung covers
 }
 
 type Direction = "nach" | "guthaben";
@@ -108,6 +87,8 @@ export function SettlementDialog({
   const [note, setNote] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [offset, setOffset] = useState(false);
+  const [billIds, setBillIds] = useState<number[]>([]);
+  const [markBillsSettled, setMarkBillsSettled] = useState(false);
   const fromDeduction = !editing && draft?.kaution_deduction ? draft.kaution_deduction : null;
 
   useEffect(() => {
@@ -126,6 +107,8 @@ export function SettlementDialog({
     setNote(src.note || "");
     setFile(null);
     setOffset(!editing && !!draft?.offsetKaution);
+    setBillIds(editing ? editing.bills.map((b) => b.id) : (draft?.bill_ids ?? []));
+    setMarkBillsSettled(false);
   }, [open, draft, editing]);
 
   const pdf: Blob | null = file ?? draft?.pdf ?? null;
@@ -140,6 +123,7 @@ export function SettlementDialog({
         amount: direction === "guthaben" ? -Math.abs(value) : Math.abs(value),
         issued_date: issued || null, note: note || null,
         ...(fromDeduction ? { kaution_deduction_id: fromDeduction.id } : {}),
+        bill_ids: billIds,
       };
       let saved: NKSettlement = editing
         ? (await api.put(`/api/nk-settlements/${editing.id}`, body)).data
@@ -157,6 +141,11 @@ export function SettlementDialog({
         const form = new FormData();
         form.append("file", pdf, "Nebenkostenabrechnung.pdf");
         await api.put(`/api/nk-settlements/${saved.id}/pdf`, form);
+      }
+      if (markBillsSettled) {
+        for (const id of billIds) {
+          await api.put(`/api/nk-settlements/bills/${id}/settled`, { tenant_settled: true });
+        }
       }
       return saved;
     },
@@ -226,6 +215,20 @@ export function SettlementDialog({
                 onChange={(e) => setAmount(e.target.value)} />
             </div>
           </div>
+          <BillPicker contractId={contractId} periodStart={start} periodEnd={end}
+            selected={billIds} onChange={setBillIds} />
+          {billIds.length > 0 && (
+            <label className="flex items-start gap-2 text-sm cursor-pointer -mt-2">
+              <input type="checkbox" checked={markBillsSettled} onChange={(e) => setMarkBillsSettled(e.target.checked)}
+                className="mt-0.5 size-4 accent-primary" />
+              <span>
+                Mark {billIds.length === 1 ? "this bill" : "these bills"} as fully settled with the tenants
+                <span className="block text-xs text-muted-foreground">
+                  Leave it off while other tenants of the flat still have to be settled for the same bill.
+                </span>
+              </span>
+            </label>
+          )}
           {fromDeduction && (
             <p className="text-xs rounded-md bg-muted/60 px-3 py-2">
               Settled by the Kaution deduction of <b>{eur(fromDeduction.amount)}</b>

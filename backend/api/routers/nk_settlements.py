@@ -41,6 +41,10 @@ class NKSettlementIn(BaseModel):
     note: Optional[str] = None
     # Create only: a Kaution deduction that already settled this Abrechnung.
     kaution_deduction_id: Optional[int] = None
+    # The provider bills (expenses with a utility) this Abrechnung passes on.
+    # One or several — a combined Abrechnung covers them all. On update,
+    # None leaves the links as they are; a list replaces them.
+    bill_ids: Optional[list[int]] = None
 
     @model_validator(mode="after")
     def _period(self):
@@ -68,6 +72,7 @@ class NKSettlementOut(BaseModel):
     # held in EUR.
     kaution_available: Optional[float] = None
     kaution_deductions: list[dict] = []
+    bills: list[dict] = []
     open: float = 0.0
     status: str                       # 'open' | 'partial' | 'settled'
     deadline: Optional[str] = None    # §556 Abs. 3 BGB
@@ -128,7 +133,7 @@ def _clean(v):
     return None if v is None or str(v) == "None" else str(v)
 
 
-def _row(r, deductions=None) -> NKSettlementOut:
+def _row(r, deductions=None, bills=None) -> NKSettlementOut:
     paid = float(r[11]) + float(r[12])
     open_, status = logic.settlement_state(r[7], paid)
     period_end = logic._parse(r[6])
@@ -142,6 +147,7 @@ def _row(r, deductions=None) -> NKSettlementOut:
         paid_from_kaution=round(float(r[12]), 2),
         kaution_available=round(float(r[13]), 2) if r[13] is not None else None,
         kaution_deductions=deductions or [],
+        bills=bills or [],
         status=status, deadline=str(deadline) if deadline else None,
         issued_on_time=(issued <= deadline) if (issued and deadline) else None,
     )
@@ -172,9 +178,63 @@ def _linked_deductions(settlement_ids, owner) -> dict[int, list[dict]]:
     return out
 
 
+def _linked_bills(settlement_ids, owner) -> dict[int, list[dict]]:
+    if not settlement_ids:
+        return {}
+    marks = ",".join("?" * len(settlement_ids))
+    out: dict[int, list[dict]] = {}
+    for sid, *b in fetch(
+            f"SELECT l.settlement_id, e.id, e.utility, e.vendor, e.period_start, e.period_end, "
+            f"e.bill_total, e.amount, COALESCE(e.tenant_settled, 0) "
+            f"FROM nk_settlement_bills l JOIN expenses e ON e.id = l.expense_id "
+            f"WHERE l.owner_id = ? AND l.settlement_id IN ({marks}) ORDER BY e.period_start, e.id",
+            (owner, *settlement_ids)):
+        out.setdefault(sid, []).append(_bill_brief(b))
+    return out
+
+
+def _bill_brief(b) -> dict:
+    eid, utility, vendor, ps, pe, total, amount, settled = b
+    return {"id": eid, "utility": utility, "vendor": _clean(vendor),
+            "period_start": _clean(ps), "period_end": _clean(pe),
+            "bill_total": float(total) if total is not None else None,
+            "amount": float(amount), "tenant_settled": bool(settled)}
+
+
 def _rows(rows, owner) -> list[NKSettlementOut]:
-    linked = _linked_deductions([r[0] for r in rows], owner)
-    return [_row(r, linked.get(r[0])) for r in rows]
+    ids = [r[0] for r in rows]
+    linked = _linked_deductions(ids, owner)
+    bills = _linked_bills(ids, owner)
+    return [_row(r, linked.get(r[0]), bills.get(r[0])) for r in rows]
+
+
+def _check_bills(contract_id: int, bill_ids: list[int], owner: int) -> list[int]:
+    """The bills, checked: each yours, a provider bill, and for the flat the
+    tenant rents — a bill of another property cannot be passed on to them.
+    Run before writing anything, so a refused bill leaves nothing behind."""
+    bill_ids = sorted(set(bill_ids))
+    if bill_ids:
+        marks = ",".join("?" * len(bill_ids))
+        ok = {r[0] for r in fetch(f"""
+            SELECT e.id FROM expenses e
+            JOIN apartments a ON a.property_id = e.property_id
+            JOIN contracts c ON c.apartment_id = a.id
+            WHERE c.id = ? AND e.owner_id = ? AND e.utility IS NOT NULL AND e.id IN ({marks})
+        """, (contract_id, owner, *bill_ids))}
+        bad = [b for b in bill_ids if b not in ok]
+        if bad:
+            raise HTTPException(409, "These bills are not provider bills of this tenant's "
+                                     f"property: {', '.join(map(str, bad))}")
+    return bill_ids
+
+
+def _set_bills(settlement_id: int, bill_ids: list[int], owner: int) -> None:
+    """Replace the bills an Abrechnung covers (already checked)."""
+    execute("DELETE FROM nk_settlement_bills WHERE settlement_id=? AND owner_id=?",
+            (settlement_id, owner))
+    for b in bill_ids:
+        execute("INSERT INTO nk_settlement_bills (settlement_id, expense_id, owner_id) "
+                "VALUES (?,?,?)", (settlement_id, b, owner))
 
 
 def _one(settlement_id: int, owner: int) -> NKSettlementOut:
@@ -324,9 +384,88 @@ def unlinked_kaution(owner: int = Depends(require_auth)):
         for r in rows]
 
 
+class BillOut(BaseModel):
+    id: int
+    property_id: int
+    property_name: Optional[str] = None
+    utility: str
+    vendor: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    bill_total: Optional[float] = None
+    amount: float                      # paid beyond the Abschläge (− Guthaben)
+    expense_date: str
+    category: str
+    note: Optional[str] = None
+    has_pdf: bool = False
+    tenant_settled: bool = False       # your decision, see the migration
+    settlements: list[dict] = []       # tenant Abrechnungen that cover it
+
+
+class BillSettledIn(BaseModel):
+    tenant_settled: bool
+
+
+@router.get("/bills", response_model=list[BillOut])
+def list_bills(property_id: Optional[int] = None, contract_id: Optional[int] = None,
+               owner: int = Depends(require_auth)):
+    """Provider bills — expenses with a utility — and the tenant Abrechnungen
+    each one has been passed on in. `contract_id` narrows to the property that
+    tenant rents in: the bills an Abrechnung for them can cover."""
+    where, params = "e.owner_id = ? AND e.utility IS NOT NULL", [owner]
+    if property_id:
+        where += " AND e.property_id = ?"
+        params.append(property_id)
+    if contract_id:
+        where += (" AND e.property_id = (SELECT a.property_id FROM contracts c "
+                  "JOIN apartments a ON a.id = c.apartment_id WHERE c.id = ? AND c.owner_id = ?)")
+        params += [contract_id, owner]
+    rows = fetch(f"""
+        SELECT e.id, e.property_id, p.name, e.utility, e.vendor, e.period_start,
+               e.period_end, e.bill_total, e.amount, e.expense_date, e.category, e.note,
+               e.pdf IS NOT NULL, COALESCE(e.tenant_settled, 0)
+        FROM expenses e JOIN properties p ON p.id = e.property_id
+        WHERE {where}
+        ORDER BY COALESCE(e.period_end, e.expense_date) DESC, e.id DESC
+    """, tuple(params))
+    covered: dict[int, list[dict]] = {}
+    if rows:
+        marks = ",".join("?" * len(rows))
+        for eid, sid, tname, ps, pe in fetch(f"""
+            SELECT l.expense_id, s.id, t.name, s.period_start, s.period_end
+            FROM nk_settlement_bills l
+            JOIN nk_settlements s ON s.id = l.settlement_id
+            JOIN contracts c ON c.id = s.contract_id
+            JOIN tenants t ON t.id = c.tenant_id
+            WHERE l.owner_id = ? AND l.expense_id IN ({marks})
+            ORDER BY t.name
+        """, (owner, *[r[0] for r in rows])):
+            covered.setdefault(eid, []).append(
+                {"id": sid, "tenant_name": tname, "period_start": ps, "period_end": pe})
+    return [BillOut(
+        id=r[0], property_id=r[1], property_name=r[2], utility=r[3], vendor=_clean(r[4]),
+        period_start=_clean(r[5]), period_end=_clean(r[6]),
+        bill_total=float(r[7]) if r[7] is not None else None, amount=float(r[8]),
+        expense_date=r[9], category=r[10], note=_clean(r[11]), has_pdf=bool(r[12]),
+        tenant_settled=bool(r[13]), settlements=covered.get(r[0], []))
+        for r in rows]
+
+
+@router.put("/bills/{expense_id}/settled", response_model=dict)
+def set_bill_settled(expense_id: int, body: BillSettledIn, owner: int = Depends(require_auth)):
+    """Mark a bill as fully passed on to the tenants, or open again."""
+    if not fetch("SELECT id FROM expenses WHERE id=? AND owner_id=? AND utility IS NOT NULL",
+                 (expense_id, owner)):
+        raise HTTPException(404, "Provider bill not found")
+    execute("UPDATE expenses SET tenant_settled=? WHERE id=? AND owner_id=?",
+            (int(body.tenant_settled), expense_id, owner))
+    return {"id": expense_id, "tenant_settled": body.tenant_settled}
+
+
 @router.post("/", response_model=NKSettlementOut, status_code=201)
 def create_settlement(body: NKSettlementIn, owner: int = Depends(require_auth)):
     _own_contract(body.contract_id, owner)
+    bill_ids = _check_bills(body.contract_id, body.bill_ids or [], owner)
     params = (body.contract_id, body.period_start, body.period_end, body.amount,
               body.issued_date, body.note or None, owner)
     insert = """
@@ -349,6 +488,8 @@ def create_settlement(body: NKSettlementIn, owner: int = Depends(require_auth)):
             WHERE id = ? AND owner_id = ?
             RETURNING reference_id
         """, (*params, body.kaution_deduction_id, owner))[0][0]
+    if bill_ids:
+        _set_bills(new_id, bill_ids, owner)
     return _one(new_id, owner)
 
 
@@ -421,6 +562,8 @@ def update_settlement(settlement_id: int, body: NKSettlementIn,
              (settlement_id, body.contract_id)):
         raise HTTPException(409, "Payments for another contract are linked to this "
                                  "settlement — remove them before moving it.")
+    bill_ids = (_check_bills(body.contract_id, body.bill_ids, owner)
+                if body.bill_ids is not None else None)
     linked = fetch(f"SELECT contract_id FROM kaution_deductions "
                    f"WHERE reference_type='{REF_TYPE}' AND reference_id=? AND owner_id=?",
                    (settlement_id, owner))
@@ -437,6 +580,15 @@ def update_settlement(settlement_id: int, body: NKSettlementIn,
         WHERE id=? AND owner_id=?
     """, (body.contract_id, body.period_start, body.period_end, body.amount,
           body.issued_date, body.note or None, settlement_id, owner))
+    if bill_ids is not None:
+        _set_bills(settlement_id, bill_ids, owner)
+    elif fetch("SELECT 1 FROM nk_settlements s JOIN contracts c ON c.id = s.contract_id "
+               "JOIN apartments a ON a.id = c.apartment_id "
+               "JOIN nk_settlement_bills l ON l.settlement_id = s.id "
+               "JOIN expenses e ON e.id = l.expense_id "
+               "WHERE s.id = ? AND e.property_id <> a.property_id LIMIT 1", (settlement_id,)):
+        # Moved to a tenant of another property: its bills no longer apply.
+        _set_bills(settlement_id, [], owner)
     return _one(settlement_id, owner)
 
 

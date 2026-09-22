@@ -17,6 +17,7 @@ import {
   downloadSettlementPdf, eur, fmtDate, invalidateSettlementViews, resultLabel,
 } from "@/components/nk-settlements";
 import { toast } from "sonner";
+import { BillsSection, UTILITY_LABEL } from "@/components/provider-bills";
 import { FileDown, Pencil, Trash2, Banknote, CalendarClock, Vault, Link2, X } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -258,6 +259,11 @@ export default function NKSettlementsPage() {
                   </TableCell>
                   <TableCell className="text-muted-foreground whitespace-nowrap">
                     {fmtDate(s.period_start)}–{fmtDate(s.period_end)}
+                    {s.bills.map((b) => (
+                      <span key={b.id} className="block text-[11px]" title={b.tenant_settled ? "Bill fully settled" : "Bill still open"}>
+                        {UTILITY_LABEL[b.utility]}{b.vendor ? ` · ${b.vendor}` : ""}{b.tenant_settled ? " ✓" : ""}
+                      </span>
+                    ))}
                   </TableCell>
                   <TableCell className={`whitespace-nowrap ${s.amount > 0 ? "text-destructive" : "text-primary"}`}>
                     {resultLabel(s.amount)}
@@ -323,6 +329,8 @@ export default function NKSettlementsPage() {
           </Table>
         </div>
       </Card>
+
+      <BillsSection />
 
       <SettlementDialog
         open={!!dialog}

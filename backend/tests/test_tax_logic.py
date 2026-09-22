@@ -275,10 +275,15 @@ def test_list_expenses_reports_what_each_row_contributes_to_the_year(monkeypatch
     from api.routers import tax as tax_router
     rows = [
         # id, property_id, property_name, apartment_id, date, amount, category,
-        # vendor, note, deductible, distribute_years, source_file
-        (1, 1, "Haus A", None, "2024-05-10", 3000, "Erhaltungsaufwand", None, None, 1, 3, None),
-        (2, 1, "Haus A", None, "2024-06-01", 500, "Hausgeld", None, None, 1, 1, None),
-        (3, 1, "Haus A", None, "2024-07-01", -450, "Hausgeld", None, None, 1, 1, None),
+        # vendor, note, deductible, distribute_years, source_file, then the
+        # provider-bill columns: utility, period_start, period_end, bill_total,
+        # tenant_settled, has_pdf
+        (1, 1, "Haus A", None, "2024-05-10", 3000, "Erhaltungsaufwand", None, None, 1, 3, None,
+         None, None, None, None, 0, False),
+        (2, 1, "Haus A", None, "2024-06-01", 500, "Hausgeld", None, None, 1, 1, None,
+         None, None, None, None, 0, False),
+        (3, 1, "Haus A", None, "2024-07-01", -450, "Hausgeld", None, None, 1, 1, None,
+         None, None, None, None, 0, False),
     ]
     monkeypatch.setattr(tax_router, "fetch", lambda sql, params=(): rows)
 

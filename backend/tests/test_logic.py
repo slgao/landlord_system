@@ -198,3 +198,24 @@ def test_betriebskosten_months_are_checked_against_the_period():
     with pytest.raises(HTTPException):
         _check_billings(NKCalcRequest(bk=[{"bk_start": "2025-01-01", "bk_end": "2025-06-30",
                                            "months": 12}]))
+
+
+# ── Estimated billing periods ────────────────────────────────────────────────
+# A stretch the provider has not billed yet is billed as its own period with
+# an estimated cost. It has to be marked: an Abrechnung is owed on actual
+# costs, so an estimate stands under the final bill.
+
+def test_only_an_estimated_billing_carries_the_note():
+    from pdfgen import _estimate_note, _styles
+    s = _styles()
+    assert _estimate_note({"bill_period": "x"}, s) == []
+    assert len(_estimate_note({"is_estimate": True}, s)) == 2
+
+
+def test_the_note_says_the_final_bill_governs():
+    # The note is an info box: a one-cell table holding the paragraph.
+    from pdfgen import _estimate_note, _styles
+    box, _spacer = _estimate_note({"is_estimate": True}, _styles())
+    text = box._cellvalues[0][0].getPlainText()
+    assert "Geschätzter Zeitraum" in text
+    assert "vorbehaltlich der endgültigen Abrechnung" in text

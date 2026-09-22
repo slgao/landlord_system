@@ -320,6 +320,22 @@ def _subtotal_line(label, value, s):
     return t
 
 
+def _estimate_note(d, s):
+    """A billing period the provider has not billed yet: the tenant lived past
+    the last Abrechnung and this stretch is estimated. It has to say so — an
+    Abrechnung is owed on actual costs, so an estimated block stands under
+    the final bill for that period."""
+    if not d.get("is_estimate"):
+        return []
+    return [
+        _info_box("<b>Geschätzter Zeitraum</b> — für diesen Zeitraum liegt noch keine "
+                  "Abrechnung des Versorgers vor. Die Kosten sind auf Basis des "
+                  "vorangegangenen Abrechnungszeitraums geschätzt; die Abrechnung "
+                  "erfolgt <b>vorbehaltlich der endgültigen Abrechnung</b>.", s),
+        Spacer(1, 8),
+    ]
+
+
 def _sum_billing_flowables(d, s):
     """Render one SUM-mode billing: the provider's bill already states the
     total cost for the flat, so we prorate that directly with no meter rows."""
@@ -444,6 +460,7 @@ def invoice_pdf(
                 _hdr = d.get("tariff_label") or f"Abrechnung {_bi}"
                 story.append(Paragraph(f"<b>{_hdr}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
+            story.extend(_estimate_note(d, s))
             if d.get("mode") == "sum":
                 story.extend(_sum_billing_flowables(d, s))
             else:
@@ -515,6 +532,7 @@ def invoice_pdf(
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
+            story.extend(_estimate_note(d, s))
             if d.get("mode") == "sum":
                 story.extend(_sum_billing_flowables(d, s))
             else:
@@ -573,6 +591,7 @@ def invoice_pdf(
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
+            story.extend(_estimate_note(d, s))
             if d.get("mode") == "sum":
                 story.extend(_sum_billing_flowables(d, s))
             else:
@@ -635,6 +654,7 @@ def invoice_pdf(
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
+            story.extend(_estimate_note(d, s))
             if d.get("mode") == "sum":
                 story.extend(_sum_billing_flowables(d, s))
             else:
@@ -708,6 +728,7 @@ def invoice_pdf(
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
+            story.extend(_estimate_note(d, s))
             story.append(_info_box(
                 f"Abrechnungszeitraum: {d['bill_period']}  ·  {d['num_months']} Monate  |  "
                 f"Ihr Zeitraum: {d['period']}  ·  {d['months']} Monate  ·  "
@@ -743,6 +764,7 @@ def invoice_pdf(
             if _multi:
                 story.append(Paragraph(f"<b>Abrechnung {_bi}</b> — {d['bill_period']}", s["body"]))
                 story.append(Spacer(1, 4))
+            story.extend(_estimate_note(d, s))
             if d.get("mode") == "sum":
                 story.extend(_sum_billing_flowables(d, s))
             else:
@@ -1007,6 +1029,14 @@ def invoice_pdf(
             f"Es ergibt sich ein Guthaben von <b>{abs(total):.2f} €</b>, "
             "das wir Ihnen in Kürze erstatten werden."
         )
+    # An estimated stretch changes what the letter is: a Nachzahlung on
+    # estimated costs is provisional, and the tenant has to be told.
+    if any(b.get("is_estimate")
+           for sec in (strom, gas, water, warmwater, heizung, bk)
+           for b in _as_billing_list(sec)):
+        closing += ("<br/><br/>Für einen Teil des Abrechnungszeitraums liegt noch keine "
+                    "Abrechnung des Versorgers vor. Dieser Teil ist geschätzt und wird "
+                    "nach Erhalt der endgültigen Abrechnung berichtigt.")
     story.append(Paragraph(closing, s["body"]))
     story.append(Spacer(1, 30))
     story.extend(_signature_block(landlord_name, signature_path, s))

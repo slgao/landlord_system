@@ -11,6 +11,7 @@
 #
 # ================================================================
 
+import re as _re
 import os
 import contextvars
 import psycopg2
@@ -310,6 +311,27 @@ def _run_once(query, params, commit, returning=False):
     else:
         put_conn(conn)
         return result
+
+
+_SELECT_HEAD = _re.compile(r"^\s*SELECT\s+(.*?)\sFROM\s(.*)$", _re.S | _re.I)
+
+
+def json_part(name, sql, params=()):
+    """Turn a plain `SELECT cols FROM ...` into a bundle part for
+    fetch_bundle(), so a query written for fetch() can be bundled unchanged.
+
+    Only for queries whose column list holds no FROM of its own: the split
+    takes the first one. A subquery in the columns would split in the wrong
+    place, so that is rejected rather than quietly mis-parsed — write such a
+    part by hand.
+    """
+    m = _SELECT_HEAD.match(sql)
+    if not m:
+        raise ValueError("not a plain SELECT ... FROM ...")
+    cols, rest = m.groups()
+    if cols.count("(") != cols.count(")"):
+        raise ValueError("column list contains its own FROM; build this part by hand")
+    return (name, f"SELECT json_build_array({cols}) FROM {rest}", params)
 
 
 def fetch_bundle(parts):

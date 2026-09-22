@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from db import fetch, fetch_bundle, execute, execute_returning
+from db import fetch, fetch_bundle, json_part, execute, execute_returning
 from auth import require_auth
 from api.schemas.apartment import ApartmentOut
 from api.schemas.common import IsoDate
@@ -446,28 +446,36 @@ def list_readings(meter_type: str | None = None, meter_id: int | None = None,
     if meter_id:
         conditions.append("meter_id=?"); params.append(meter_id)
     where = "WHERE " + " AND ".join(conditions)
-    rows = fetch(f"""
-        SELECT id, meter_type, meter_id, reading_date, reading, note
-        FROM meter_readings {where}
-        ORDER BY reading_date DESC, id DESC
-    """, tuple(params))
+    rows = fetch(f"{_READINGS_SQL} {where} ORDER BY reading_date DESC, id DESC", tuple(params))
     if not rows:
         return []
 
     # One query for the whole page rather than one per reading.
-    links = fetch("""
-        SELECT mrp.reading_id, p.kind, t.name
-        FROM meter_reading_protocols mrp
-        JOIN handover_protocols p ON p.id = mrp.protocol_id
-        LEFT JOIN contracts c ON c.id = p.contract_id
-        LEFT JOIN tenants   t ON t.id = c.tenant_id
-        WHERE mrp.owner_id=? ORDER BY p.date, p.id
-    """, (owner,))
+    return _readings_from(rows, fetch(_TAKEN_AT_SQL, (owner,)))
+
+
+# Which handover each reading was taken at. Owner-wide and independent of the
+# readings query, so the overview can ask for both in one round trip.
+_TAKEN_AT_SQL = """
+    SELECT mrp.reading_id, p.kind, t.name
+    FROM meter_reading_protocols mrp
+    JOIN handover_protocols p ON p.id = mrp.protocol_id
+    LEFT JOIN contracts c ON c.id = p.contract_id
+    LEFT JOIN tenants   t ON t.id = c.tenant_id
+    WHERE mrp.owner_id=? ORDER BY p.date, p.id
+"""
+
+_READINGS_SQL = """
+    SELECT id, meter_type, meter_id, reading_date, reading, note
+    FROM meter_readings
+"""
+
+
+def _readings_from(rows, links) -> list[MeterReadingOut]:
     from api.routers.handover import protocol_label
     taken: dict[int, list[str]] = {}
     for reading_id, kind, tenant in links:
         taken.setdefault(reading_id, []).append(protocol_label(kind, tenant))
-
     return [MeterReadingOut(id=r[0], meter_type=r[1], meter_id=r[2],
                             reading_date=r[3], reading=float(r[4]), note=r[5],
                             taken_at=taken.get(r[0], [])) for r in rows]
@@ -504,16 +512,28 @@ class MetersOverviewOut(BaseModel):
 
 @router.get("/overview", response_model=MetersOverviewOut)
 def meters_overview(owner: int = Depends(require_auth)):
-    """The page's whole dataset. Delegates to the individual handlers rather
-    than re-selecting, so a change to any row shape reaches here too."""
-    from api.routers.apartments import list_apartments
+    """The page's whole dataset in one round trip. The queries and the row
+    mappers are the ones the individual handlers use, so a change to any row
+    shape still reaches here; only the trip to the database is shared."""
+    from api.routers import apartments as apts
+    loaded = fetch_bundle([
+        json_part("apartments", f"{apts._SELECT} WHERE a.owner_id=?"
+                                " ORDER BY p.name, a.flat, a.name", (owner,)),
+        json_part("readings", f"{_READINGS_SQL} WHERE owner_id=?"
+                              " ORDER BY reading_date DESC, id DESC", (owner,)),
+        json_part("taken_at", _TAKEN_AT_SQL, (owner,)),
+        json_part("strom", f"{_STROM_SEL} WHERE sm.owner_id=? ORDER BY a.name", (owner,)),
+        json_part("gas", f"{_GAS_SEL} WHERE gm.owner_id=? ORDER BY a.name", (owner,)),
+        json_part("wasser", f"{_WASSER_SEL} WHERE wm.owner_id=? ORDER BY a.name", (owner,)),
+        json_part("heizung", f"{_HEIZUNG_SEL} WHERE hm.owner_id=? ORDER BY a.name", (owner,)),
+    ])
     return MetersOverviewOut(
-        apartments=list_apartments(owner=owner),
-        readings=list_readings(owner=owner),
-        strom=list_strom_meters(owner=owner),
-        gas=list_gas_meters(owner=owner),
-        wasser=list_wasser_meters(owner=owner),
-        heizung=list_heizung_meters(owner=owner),
+        apartments=[apts._row(r) for r in loaded["apartments"]],
+        readings=_readings_from(loaded["readings"], loaded["taken_at"]),
+        strom=[_strom(r) for r in loaded["strom"]],
+        gas=[_gas(r) for r in loaded["gas"]],
+        wasser=[_wasser(r) for r in loaded["wasser"]],
+        heizung=[_heizung(r) for r in loaded["heizung"]],
     )
 
 

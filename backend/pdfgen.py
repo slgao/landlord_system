@@ -1582,6 +1582,11 @@ def generate_tax_report(year, blocks):
                          _cell(SOURCE_LABEL.get(inc["source"], "") +
                                " · NK-Anteil je Vertrag nicht gepflegt", size=8),
                          _eur(inc["final"], bold=True)])
+        # Rent kept from the deposit is inside the figures above, split or not.
+        if inc.get("rent_from_deposit"):
+            rows.append([_cell("  davon Miete aus der Kaution verrechnet"),
+                         _cell("Mietrückstand / Abwohnen, im Jahr der Verrechnung", size=8),
+                         _eur(inc["rent_from_deposit"])])
         afa_src = wk["afa"].get("source") or ("computed" if wk["afa"].get("complete") else "incomplete")
         afa_items = wk["afa"].get("items") or []
         afa_hint = "" if afa_src == "computed" else SOURCE_LABEL.get(afa_src, "")

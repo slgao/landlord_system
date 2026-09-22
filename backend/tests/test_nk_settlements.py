@@ -198,3 +198,40 @@ def test_a_nachzahlung_kept_from_the_deposit_is_umlagen_too(monkeypatch):
     assert inc["nk_settlements"] == 250.0
     assert inc["umlagen"] == 1450.0
     assert inc["kaltmiete"] == 10800.0
+
+
+
+def test_rent_kept_from_the_deposit_is_income_when_rent_is_recorded(monkeypatch):
+    inc = _tax_books(monkeypatch, [("rent", 11000.0, 11), ("deposit_rent", 1000.0, 1)])
+    assert inc["final"] == 12000.0
+    assert inc["rent_from_deposit"] == 1000.0
+    assert inc["kaltmiete"] == 10800.0            # it is rent, so it lands in the Kaltmiete
+
+
+def test_rent_kept_from_the_deposit_is_not_added_to_the_estimate(monkeypatch):
+    # No rent recorded: the estimate already counts every contract month.
+    inc = _tax_books(monkeypatch, [("deposit_rent", 1000.0, 1)])
+    assert inc["source"] == "estimate"
+    assert inc["final"] == 12000.0
+    assert inc["rent_from_deposit"] == 0.0
+
+
+# ── Pauschale / Warmmiete: nothing to settle ──────────────────────────────────
+
+def test_a_flat_rate_contract_owes_no_abrechnung():
+    flat = (1, 1, 1, "2024-06-01", None, 150, "flat")
+    assert logic.pending_abrechnungen([flat], [], TODAY) == []
+
+
+def test_prepayment_is_the_default_when_the_mode_is_absent():
+    # Rows without the mode column keep the old behaviour.
+    assert [r["year"] for r in logic.pending_abrechnungen([_c(1, "2024-06-01")], [], TODAY)] == [2025]
+
+
+def test_switching_to_a_pauschale_ends_the_obligation():
+    # Prepayment until March 2025, then a follow-on contract on a Pauschale:
+    # 2025 still needs an Abrechnung for Jan–Mar, pointed at the prepayment one.
+    contracts = [(1, 1, 1, "2024-01-01", "2025-03-31", 150, "prepayment"),
+                 (2, 1, 1, "2025-04-01", None, 150, "flat")]
+    [row] = logic.pending_abrechnungen(contracts, [], TODAY)
+    assert (row["year"], row["contract_id"]) == (2025, 1)

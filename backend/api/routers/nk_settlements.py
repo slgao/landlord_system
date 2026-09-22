@@ -23,12 +23,10 @@ router = APIRouter(prefix="/nk-settlements", tags=["NK settlements"])
 # An Abrechnung PDF is tens of kilobytes; this only stops an accident.
 _MAX_PDF_BYTES = 5 * 1024 * 1024
 
-# How a Kaution deduction points at the settlement it pays. The columns were
-# on kaution_deductions from the start, for exactly this.
-REF_TYPE = "nk_settlement"
-# The Kaution category for a Nachzahlung offset against the deposit. A
-# deduction in it counts as Umlagen income whether or not it is linked.
-NK_CATEGORY = "NK Nachzahlung"
+# How a Kaution deduction points at the settlement it pays (the columns were
+# on kaution_deductions from the start), and the category a Nachzahlung kept
+# from the deposit is booked under. See kaution_rules.
+from kaution_rules import NK_CATEGORY, NK_REF_TYPE as REF_TYPE
 
 
 
@@ -223,7 +221,7 @@ def pending(owner: int = Depends(require_auth)):
     with the §556 deadline. See nk_settlement_logic.pending_abrechnungen."""
     contracts = fetch("""
         SELECT c.id, c.tenant_id, c.apartment_id, c.start_date, c.end_date,
-               c.nebenkosten_vorauszahlung, t.name, a.name, p.name
+               c.nebenkosten_vorauszahlung, c.nk_mode, t.name, a.name, p.name
         FROM contracts c
         JOIN tenants    t ON t.id = c.tenant_id
         JOIN apartments a ON a.id = c.apartment_id
@@ -232,8 +230,8 @@ def pending(owner: int = Depends(require_auth)):
     """, (owner,))
     settlements = fetch("SELECT contract_id, period_start, period_end FROM nk_settlements "
                         "WHERE owner_id=?", (owner,))
-    names = {r[0]: (r[6], r[7], r[8]) for r in contracts}
-    due = logic.pending_abrechnungen([r[:6] for r in contracts], settlements, date.today())
+    names = {r[0]: (r[7], r[8], r[9]) for r in contracts}
+    due = logic.pending_abrechnungen([r[:7] for r in contracts], settlements, date.today())
     return [PendingAbrechnungOut(**d, tenant_name=names[d["contract_id"]][0],
                                  apartment_name=names[d["contract_id"]][1],
                                  property_name=names[d["contract_id"]][2])

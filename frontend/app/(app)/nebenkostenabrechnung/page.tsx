@@ -1225,6 +1225,12 @@ export default function NebenkostenabrechnungPage() {
             </div>
             <Num label="Number of tenants" value={numTenants} onChange={setNumTenants} step="1" min="1" />
           </div>
+          {selected?.nk_mode === "flat" && (
+            <p className="text-xs rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 px-3 py-2">
+              This contract has an NK-Pauschale / Warmmiete, so no yearly Abrechnung is owed. Use this
+              only for a period it ran on Vorauszahlungen, or if you agreed an Abrechnung with the tenant.
+            </p>
+          )}
           {selected && (
             <div className="text-xs text-muted-foreground bg-muted/30 rounded p-2 space-y-0.5">
               <p><b>{selected.tenant_name}</b> · {selected.apartment_name} · {selected.property_name}</p>

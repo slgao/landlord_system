@@ -60,12 +60,15 @@ def pending_abrechnungen(contracts, settlements, today: date,
                          grace_days: int = MISSED_GRACE_DAYS) -> list[dict]:
     """Calendar years that still need an Abrechnung for a tenancy.
 
-    contracts:   (id, tenant_id, apartment_id, start_date, end_date, nk_prepayment)
+    contracts:   (id, tenant_id, apartment_id, start_date, end_date, nk_prepayment[, nk_mode])
     settlements: (contract_id, period_start, period_end)
 
     A tenancy is a tenant in a flat, not a contract: a rent change is recorded
     as a follow-on contract, and one Abrechnung covers both. Only contracts
-    with an NK prepayment count; a flat without one has nothing to settle.
+    with an NK prepayment count; a flat without one has nothing to settle,
+    and neither has a Pauschale / Warmmiete (nk_mode 'flat'): nothing is
+    settled there, so no Abrechnung is owed. A tenancy that switched between
+    the two owes one only for the years its prepayment contract ran.
 
     Billing periods are assumed to be calendar years, which is the common
     case and what the Hausgeldabrechnung uses. A settlement for any period
@@ -74,11 +77,13 @@ def pending_abrechnungen(contracts, settlements, today: date,
     """
     group_of: dict[int, tuple] = {}
     groups: dict[tuple, list] = {}
-    for cid, tenant_id, apt_id, start, end, nk in contracts:
+    for cid, tenant_id, apt_id, start, end, nk, *rest in contracts:
         key = (tenant_id, apt_id)
         group_of[cid] = key
         s, e = _parse(start), _parse(end)
         if s is None or not nk or float(nk) <= 0:
+            continue
+        if rest and rest[0] == "flat":
             continue
         groups.setdefault(key, []).append((cid, s, e))
 

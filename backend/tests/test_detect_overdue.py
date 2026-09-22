@@ -10,6 +10,8 @@ and `rent_settled_until` moves the window start.
 from datetime import date
 import calendar
 
+from decimal import Decimal
+
 import logic
 
 
@@ -32,11 +34,15 @@ def _month_end(first):
     return first.replace(day=calendar.monthrange(first.year, first.month)[1])
 
 
-def _install_fetch(monkeypatch, contracts, payments):
+def _install_fetch(monkeypatch, contracts, payments, deposit=()):
+    """`payments` and `deposit` rows are (contract_id, 'YYYY-MM', amount): rent
+    paid, and rent kept from the Kaution. The loader returns both in one
+    UNION, tagged 0 / 1."""
     def fake_fetch(query, params=()):
         q = " ".join(query.split())
         if "FROM payments" in q and "GROUP BY" in q:
-            return payments
+            return ([(c, ym, 0, amt) for c, ym, amt in payments]
+                    + [(c, ym, 1, amt) for c, ym, amt in deposit])
         if "FROM contracts" in q and "JOIN tenants" in q:
             return contracts
         raise AssertionError(f"unexpected query: {q}")
@@ -133,3 +139,27 @@ def test_unparsable_contract_dates_skip_only_that_contract(monkeypatch):
     _install_fetch(monkeypatch, [_contract(), broken], [])
     res = logic.detect_overdue(default_months_back=3)
     assert [r["tenant"] for r in res] == ["Alice"]
+
+
+# ── Rent kept from the deposit ────────────────────────────────────────────────
+# Whether the tenant did not pay (Mietrückstand) or you agreed they could
+# abwohnen, a Kaution deduction for rent is rent received on its date.
+
+def test_rent_kept_from_deposit_clears_the_arrears(monkeypatch):
+    cur = _cur_first()
+    last = _add_months(cur, -1)
+    _install_fetch(monkeypatch, [_contract()],
+                   [(1, _ym(_add_months(cur, -3)), Decimal("700")),
+                    (1, _ym(_add_months(cur, -2)), Decimal("700"))],
+                   deposit=[(1, _ym(last), Decimal("700"))])
+    assert logic.detect_overdue(default_months_back=3) == []
+
+
+def test_partial_deposit_offset_is_shown_apart(monkeypatch):
+    cur = _cur_first()
+    _install_fetch(monkeypatch, [_contract()], [],
+                   deposit=[(1, _ym(_add_months(cur, -1)), Decimal("500"))])
+    [r] = logic.detect_overdue(default_months_back=3)
+    assert r["paid_total"] == 500.0
+    assert r["paid_from_deposit"] == 500.0
+    assert r["amount_due"] == 1600.0

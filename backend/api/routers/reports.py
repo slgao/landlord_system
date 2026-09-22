@@ -341,6 +341,7 @@ def payment_reminders(owner: int = Depends(require_auth)):
         "balance":            item["balance"],
         "expected_total":     item["expected_total"],
         "paid_total":         item["paid_total"],
+        "paid_from_deposit":  item.get("paid_from_deposit", 0.0),
         "current_month_paid": item["current_month_paid"],
         "first_month":        item.get("first_month"),
         "last_month":         item.get("last_month"),

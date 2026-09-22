@@ -11,14 +11,14 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Literal, Optional
 
 from db import fetch, execute, execute_returning, insert
 from auth import require_auth
 from api.schemas.common import IsoDate, OptIsoDate
 import tax_logic
 
-from api.routers.nk_settlements import NK_CATEGORY, REF_TYPE as NK_REF_TYPE
+from kaution_rules import NK_CATEGORY, NK_REF_TYPE, RENT_CATEGORIES
 
 router = APIRouter(prefix="/tax", tags=["Tax"])
 
@@ -79,6 +79,8 @@ class ExpenseIn(BaseModel):
 
 class NkSplitIn(BaseModel):
     nebenkosten_vorauszahlung: Optional[float] = None  # None clears
+    # Omitted: left as it is. See api/schemas/contract.NkMode.
+    nk_mode: Optional[Literal["prepayment", "flat"]] = None
 
 
 class OverrideIn(BaseModel):
@@ -533,7 +535,7 @@ def list_nk_splits(owner: int = Depends(require_auth)):
     tax years, so all contracts are returned."""
     rows = fetch("""
         SELECT c.id, t.name, a.name, a.property_id, p.name, c.rent,
-               c.nebenkosten_vorauszahlung, c.start_date, c.end_date
+               c.nebenkosten_vorauszahlung, c.start_date, c.end_date, c.nk_mode
         FROM contracts c
         JOIN tenants t ON t.id = c.tenant_id
         JOIN apartments a ON a.id = c.apartment_id
@@ -548,6 +550,7 @@ def list_nk_splits(owner: int = Depends(require_auth)):
         "nebenkosten_vorauszahlung": float(r[6]) if r[6] is not None else None,
         "kaltmiete": round(float(r[5] or 0) - float(r[6]), 2) if r[6] is not None else None,
         "start_date": r[7], "end_date": _clean(r[8]),
+        "nk_mode": r[9] or "prepayment",
     } for r in rows]
 
 
@@ -555,10 +558,12 @@ def list_nk_splits(owner: int = Depends(require_auth)):
 def set_nk_split(contract_id: int, body: NkSplitIn, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM contracts WHERE id=? AND owner_id=?", (contract_id, owner)):
         raise HTTPException(status_code=404, detail="Contract not found")
-    execute("UPDATE contracts SET nebenkosten_vorauszahlung=? WHERE id=? AND owner_id=?",
-            (body.nebenkosten_vorauszahlung, contract_id, owner))
+    execute("UPDATE contracts SET nebenkosten_vorauszahlung=?, "
+            "nk_mode=COALESCE(?, nk_mode) WHERE id=? AND owner_id=?",
+            (body.nebenkosten_vorauszahlung, body.nk_mode, contract_id, owner))
     return {"contract_id": contract_id,
-            "nebenkosten_vorauszahlung": body.nebenkosten_vorauszahlung}
+            "nebenkosten_vorauszahlung": body.nebenkosten_vorauszahlung,
+            "nk_mode": body.nk_mode}
 
 
 # ── Overrides ────────────────────────────────────────────────────────────────
@@ -629,8 +634,14 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
     # Settlements are cash in the year they move (§11 EStG) and are Umlagen.
     # That includes a Nachzahlung kept back from the deposit: the offset is
     # when it is received, so those Kaution deductions count here too.
+    #
+    # Rent kept from the deposit (a Mietrückstand, or an agreed Abwohnen) is
+    # rent received on the deduction date. It comes back as kind 'deposit_rent'
+    # and is added only when income comes from payments: the contract
+    # estimate already assumes every month's rent arrived.
     pay: dict[int, tuple] = {}
     settle: dict[int, float] = {}
+    rent_deposit: dict[int, float] = {}
     for pid_, kind, total, cnt in fetch("""
         SELECT a.property_id, pm.kind, COALESCE(SUM(pm.amount),0), COUNT(pm.id)
         FROM payments pm
@@ -646,9 +657,21 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
         WHERE substr(d.date,1,4) = ? AND d.owner_id = ?
           AND (d.category = ? OR d.reference_type = ?)
         GROUP BY a.property_id
-    """, (str(year), owner, str(year), owner, NK_CATEGORY, NK_REF_TYPE)):
+        UNION ALL
+        SELECT a.property_id, 'deposit_rent', COALESCE(SUM(d.amount),0), COUNT(d.id)
+        FROM kaution_deductions d
+        JOIN contracts c ON c.id = d.contract_id
+        JOIN apartments a ON a.id = c.apartment_id
+        WHERE substr(d.date,1,4) = ? AND d.owner_id = ?
+          AND d.category IN (?, ?)
+          AND COALESCE(d.reference_type, '') <> ?
+        GROUP BY a.property_id
+    """, (str(year), owner, str(year), owner, NK_CATEGORY, NK_REF_TYPE,
+          str(year), owner, *RENT_CATEGORIES, NK_REF_TYPE)):
         if kind == "nk_settlement":
             settle[pid_] = settle.get(pid_, 0.0) + float(total)
+        elif kind == "deposit_rent":
+            rent_deposit[pid_] = float(total)
         else:
             pay[pid_] = (float(total), int(cnt))
 
@@ -707,11 +730,13 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
         umlagen_total = round(umlagen_total, 2)
         estimate_total = round(sum(r["total"] for r in est_rows), 2)
         settlements = round(settle.get(pid, 0.0), 2)
+        from_deposit = round(rent_deposit.get(pid, 0.0), 2) if pay_count > 0 else 0.0
         ov = overrides.get((pid, "income_total"))
         if ov is not None:
             income_final, income_source = ov[0], "override"
         elif pay_count > 0:
-            income_final, income_source = round(auto_total + settlements, 2), "payments"
+            income_final, income_source = (round(auto_total + from_deposit + settlements, 2),
+                                           "payments")
         else:
             income_final, income_source = round(estimate_total + settlements, 2), "estimate"
         # Both a Nachzahlung and a refund belong on the Umlagen line; the
@@ -817,6 +842,8 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
                 "nk_known": nk_known,
                 "umlagen": umlagen_total if nk_known else None,
                 "nk_settlements": settlements,
+                # Rent kept from the deposit, already inside `final` (and the Kaltmiete).
+                "rent_from_deposit": from_deposit,
                 "kaltmiete": kaltmiete,
                 "split_source": split_source,
             },

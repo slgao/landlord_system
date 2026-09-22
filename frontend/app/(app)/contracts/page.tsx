@@ -7,7 +7,8 @@ import { matchesQuery } from "@/lib/search";
 import { coldRent } from "@/lib/rent";
 import { todayISO } from "@/lib/utils";
 import { contractStatus, contractStatusLabel, contractStatusColor, startsInLabel } from "@/lib/contract-status";
-import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow } from "@/lib/types";
+import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow, NkMode } from "@/lib/types";
+import { KAUTION_CATS, KAUTION_CAT_HINT, isRentFromDeposit } from "@/lib/kaution";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,7 +31,6 @@ import { HandoverCard } from "@/components/handover";
 import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X } from "lucide-react";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
-const KAUTION_CATS = ["NK Nachzahlung", "Schaden", "Reinigung", "Mietrückstand", "Sonstiges"];
 
 const CONTRACT_EMPTY = {
   tenant_id: 0, apartment_id: 0, rent: 0, currency: "EUR",
@@ -41,6 +41,7 @@ const CONTRACT_EMPTY = {
   // there is one source of truth and the tax module keeps reading the column
   // it always read. Blank = the split is not known.
   kaltmiete: "" as string,
+  nk_mode: "prepayment" as NkMode,
 };
 
 export default function ContractsPage() {
@@ -230,13 +231,13 @@ export default function ContractsPage() {
 
   const addDeduction = useMutation({
     mutationFn: () => api.post("/api/kaution-deductions/", { ...kdForm, contract_id: selectedContract!.id }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); toast.success("Deduction added"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["payment-reminders"] }); qc.invalidateQueries({ queryKey: ["tax-report"] }); qc.invalidateQueries({ queryKey: ["tenant-deductions"] }); qc.invalidateQueries({ queryKey: ["balance-sheet"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); toast.success("Deduction added"); },
     onError: (e) => toast.error(errorMessage(e, "Could not add the deduction")),
   });
 
   const removeDeduction = useMutation({
     mutationFn: (id: number) => api.delete(`/api/kaution-deductions/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["payment-reminders"] }); qc.invalidateQueries({ queryKey: ["tax-report"] }); qc.invalidateQueries({ queryKey: ["tenant-deductions"] }); qc.invalidateQueries({ queryKey: ["balance-sheet"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); },
     onError: (e) => toast.error(errorMessage(e, "Could not delete the deduction")),
   });
 
@@ -246,7 +247,7 @@ export default function ContractsPage() {
         contract_id: selectedContract!.id, date: d.date, amount: d.amount,
         category: d.category, reason: d.reason || null,
       }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); setEditDed(null); toast.success("Deduction updated"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["payment-reminders"] }); qc.invalidateQueries({ queryKey: ["tax-report"] }); qc.invalidateQueries({ queryKey: ["tenant-deductions"] }); qc.invalidateQueries({ queryKey: ["balance-sheet"] }); setEditDed(null); toast.success("Deduction updated"); },
     onError: (e) => toast.error(errorMessage(e, "Could not update the deduction")),
   });
 
@@ -287,7 +288,8 @@ export default function ContractsPage() {
       start_date: c.start_date, end_date: c.end_date || "", terminated: c.terminated,
       kaution_amount: c.kaution_amount || 0, kaution_currency: c.kaution_currency,
       kaution_paid_date: c.kaution_paid_date || "",
-      kaltmiete: coldRent(c) != null ? String(coldRent(c)) : "" });
+      kaltmiete: coldRent(c) != null ? String(coldRent(c)) : "",
+      nk_mode: c.nk_mode ?? "prepayment" });
     setOpen(true);
   }
 
@@ -374,6 +376,11 @@ export default function ContractsPage() {
                         {coldRent(c) != null && (
                           <span className="block text-xs text-muted-foreground">
                             kalt {coldRent(c)!.toFixed(2)}
+                          </span>
+                        )}
+                        {c.nk_mode === "flat" && (
+                          <span className="block text-xs text-muted-foreground" title="Pauschale / Warmmiete — no yearly Nebenkostenabrechnung">
+                            NK-Pauschale
                           </span>
                         )}
                       </TableCell>
@@ -558,6 +565,11 @@ export default function ContractsPage() {
                                 settles an NK Abrechnung
                               </span>
                             )}
+                            {isRentFromDeposit(d.category) && (
+                              <span className="block text-[11px] text-primary" title="Counts as rent received on this date">
+                                counts as rent received
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="text-muted-foreground text-xs">{d.reason || "—"}</TableCell>
                           <TableCell className="text-right font-mono">{d.amount.toFixed(2)}</TableCell>
@@ -655,6 +667,9 @@ export default function ContractsPage() {
                     </Select>
                     <Input className="h-8 text-sm" placeholder="Reason" value={kdForm.reason} onChange={(e) => setKdForm((f) => ({ ...f, reason: e.target.value }))} />
                   </div>
+                  {KAUTION_CAT_HINT[kdForm.category] && (
+                    <p className="text-xs text-muted-foreground">{KAUTION_CAT_HINT[kdForm.category]}</p>
+                  )}
                   <Button size="sm" onClick={() => addDeduction.mutate()} disabled={!kdForm.amount || addDeduction.isPending}>
                     <Plus className="size-4 mr-1" /> Add
                   </Button>
@@ -881,7 +896,21 @@ export default function ContractsPage() {
                   )}
                 </p>
               </div>
-              <div />
+              <div className="space-y-1.5">
+                <Label>Nebenkosten</Label>
+                <Select value={form.nk_mode} onValueChange={(v) => setForm((f) => ({ ...f, nk_mode: v as NkMode }))}>
+                  <SelectTrigger aria-label="Nebenkosten"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="prepayment">Vorauszahlung — settled yearly</SelectItem>
+                    <SelectItem value="flat">Pauschale / Warmmiete — no Abrechnung</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {form.nk_mode === "flat"
+                    ? "Nothing is settled, so no yearly Nebenkostenabrechnung is owed and no deadline is tracked."
+                    : "A Nebenkostenabrechnung is due within 12 months after each billing year (§556 Abs. 3 BGB)."}
+                </p>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5"><Label>Start Date</Label><Input type="date" value={form.start_date} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} /></div>

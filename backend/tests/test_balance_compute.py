@@ -165,8 +165,10 @@ def _books(monkeypatch, costs=(), expenses=(), payments=()):
             return []
         if "FROM flat_costs" in q:
             return list(costs)
-        if "FROM kaution_deductions" in q:          # the settlements loader
-            return [r[:3] for r in payments if r[3] != "rent"]
+        if "p.kind = 'nk_settlement'" in q:          # the settlements loader
+            return [r[:3] for r in payments if r[3] == "nk_settlement"]
+        if "p.kind = 'rent'" in q:                   # rent, incl. from the deposit
+            return [r[:3] for r in payments if r[3] in ("rent", "deposit_rent")]
         if "FROM payments" in q:
             kind = params[-1]
             return [r[:3] for r in payments if r[3] == kind]
@@ -280,3 +282,16 @@ def test_running_costs_view_leaves_settlements_out_with_the_hga(monkeypatch):
     assert float(props[0]["tot_costs"]) == 0.0
     assert float(props[0]["tot_settlements"]) == 0.0
     assert float(props[0]["tot_actual"]) == 0.0
+
+
+def test_rent_kept_from_the_deposit_is_rent_received(monkeypatch):
+    # A Mietrückstand taken from the Kaution arrives in the month of the
+    # deduction, in "Actual received", not among the one-offs.
+    from decimal import Decimal
+    y = _year()
+    _books(monkeypatch, payments=[(1, f"{y}-01", Decimal("800"), "rent"),
+                                  (1, f"{y}-02", Decimal("800"), "deposit_rent")])
+    _, props = balance_compute._compute_snapshot(y, 1, include_one_off=True)
+    assert float(props[0]["tot_actual"]) == 1600.0
+    assert float(props[0]["monthly_rows"][1]["Actual received (€)"]) == 800.0
+    assert float(props[0]["tot_one_off"]) == 0.0

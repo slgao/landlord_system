@@ -151,3 +151,50 @@ def test_betriebskosten_calc_zero_tenants_does_not_divide_by_zero():
     from datetime import date
     ct, pc, lp, nach = logic.betriebskosten_calc(1200, 0, 12, date(2025, 1, 1), date(2025, 12, 31))
     assert ct == 1200 and pc == 1200 and lp == 206 * 12
+
+
+# ── "Ihr Zeitraum" has to lie inside the Abrechnungszeitraum ─────────────────
+# Every utility prorates as cost × eff_days / bill_days. More days than the
+# bill covers would charge the tenant more than the flat's whole cost for the
+# period — the days outside it are not in this bill.
+
+def test_living_period_longer_than_the_bill_is_refused():
+    from fastapi import HTTPException
+    from api.routers.reports import _check_period
+    with pytest.raises(HTTPException) as exc:
+        _check_period("Strom", 400, 365, "days")
+    assert exc.value.status_code == 422
+    assert "Ihr Zeitraum" in exc.value.detail
+
+
+def test_a_period_inside_the_bill_passes():
+    from api.routers.reports import _check_period
+    _check_period("Strom", 120, 365, "days")
+    _check_period("Strom", 365, 365, "days")        # the whole period is fine
+    _check_period("Betriebskosten", 4, 12, "months")
+
+
+def test_a_missing_or_unusable_figure_is_left_alone():
+    # The check guards proration; it does not invent validation for blanks.
+    from api.routers.reports import _check_period
+    _check_period("Strom", None, 365, "days")
+    _check_period("Strom", 400, 0, "days")
+    _check_period("Strom", "x", 365, "days")
+
+
+def test_the_calculate_endpoint_refuses_it():
+    from fastapi import HTTPException
+    from api.routers.reports import _check_billings, NKCalcRequest
+    body = NKCalcRequest(strom=[{"bill_days": 365, "eff_days": 400}])
+    with pytest.raises(HTTPException):
+        _check_billings(body)
+
+
+def test_betriebskosten_months_are_checked_against_the_period():
+    from fastapi import HTTPException
+    from api.routers.reports import _check_billings, NKCalcRequest
+    ok_body = NKCalcRequest(bk=[{"bk_start": "2025-01-01", "bk_end": "2025-12-31", "months": 12}])
+    _check_billings(ok_body)
+    with pytest.raises(HTTPException):
+        _check_billings(NKCalcRequest(bk=[{"bk_start": "2025-01-01", "bk_end": "2025-06-30",
+                                           "months": 12}]))

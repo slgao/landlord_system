@@ -246,6 +246,39 @@ function baseBilling() {
   };
 }
 
+// "Ihr Zeitraum" is the slice of the billing period the tenant lived there:
+// every utility prorates the flat's cost as cost × eff_days / bill_days, so a
+// living period reaching outside the bill would charge them for days this bill
+// does not cover — more than 100 % of the flat's cost for the period.
+function effOutside(b: any, sField: string, eField: string) {
+  const bs = b?.[sField], be = b?.[eField];
+  if (!b?.eff_start || !b?.eff_end || !bs || !be) return null;
+  const before = b.eff_start < bs, after = b.eff_end > be;
+  if (!before && !after) return null;
+  return { clipped: { eff_start: before ? bs : b.eff_start, eff_end: after ? be : b.eff_end } };
+}
+
+// The red line under a living period that reaches outside its billing period,
+// with the one edit that fixes it.
+function PeriodWarning({ b, sField, eField, onClip }: {
+  b: any; sField: string; eField: string; onClip: (v: any) => void;
+}) {
+  const bad = effOutside(b, sField, eField);
+  if (!bad) return null;
+  return (
+    <p className="text-xs text-destructive flex flex-wrap items-center gap-2">
+      <span>
+        „Ihr Zeitraum“ reaches outside the Abrechnungszeitraum ({b[sField]} – {b[eField]}).
+        Those days are not in this bill, so the share would exceed the flat&apos;s whole cost.
+      </span>
+      <button type="button" className="underline hover:no-underline"
+        onClick={() => onClip(bad.clipped)}>
+        Clip to the billing period
+      </button>
+    </p>
+  );
+}
+
 // Fill each billing's living period (eff_start/eff_end) from the contract ∩ bill
 // period, but only where the user hasn't set it yet — editable afterwards.
 // `sField`/`eField` name the billing-period fields (bill_* for metered, bk_* for BK).
@@ -329,10 +362,11 @@ function Num({ label, value, onChange, step = "0.01", min = "0" }: {
 }
 
 function DateF({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const id = useId();
   return (
     <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      <Input type="date" className="h-8 text-sm" value={value} onChange={(e) => onChange(e.target.value)} />
+      <Label htmlFor={id} className="text-xs">{label}</Label>
+      <Input id={id} type="date" className="h-8 text-sm" value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }
@@ -561,6 +595,7 @@ function BillingShell({ idx, count, b, set, onRemove, costLabel, preview, childr
         <p className="text-xs text-muted-foreground">
           = {b.eff_start && b.eff_end ? billDays(b.eff_start, b.eff_end) : "–"} Tage (used for proration)
         </p>
+        <PeriodWarning b={b} sField="bill_start" eField="bill_end" onClip={set} />
       </div>
       <ModeToggle mode={b.mode} onChange={(m) => set({ mode: m })} />
       {b.mode === "sum"
@@ -893,6 +928,27 @@ export default function NebenkostenabrechnungPage() {
       heizung: foldRows(expHeiz(), calc.heizung), bk: foldRows(expBk(), calc.bk),
     };
   }
+
+  // Every enabled billing whose living period reaches outside its bill. The
+  // backend refuses these too; blocking here says which section is wrong.
+  const periodProblems = (() => {
+    const out: string[] = [];
+    const check = (on: boolean, label: string, arr: any[], sField: string, eField: string) => {
+      if (!on) return;
+      arr.forEach((b, i) => {
+        if (effOutside(b, sField, eField)) {
+          out.push(`${label}${arr.length > 1 ? ` (Billing ${i + 1})` : ""}`);
+        }
+      });
+    };
+    check(useStrom, "Strom", stromB, "bill_start", "bill_end");
+    check(useGas, "Gas", gasB, "bill_start", "bill_end");
+    check(useWater, "Kaltwasser", waterB, "bill_start", "bill_end");
+    check(useWarmwater, "Warmwasser", warmB, "bill_start", "bill_end");
+    check(useHeizung, "Heizung", heizB, "bill_start", "bill_end");
+    check(useBK, "Betriebskosten", bkB, "bk_start", "bk_end");
+    return out;
+  })();
 
   // ── payload builders ──
   function buildCalcPayload() {
@@ -1483,6 +1539,8 @@ export default function NebenkostenabrechnungPage() {
                 <p className="text-xs text-muted-foreground">
                   = {monthsBetween(b.eff_start || b.bk_start, b.eff_end || b.bk_end)} Monate (used for proration)
                 </p>
+                <PeriodWarning b={b} sField="bk_start" eField="bk_end"
+                  onClip={(v) => updateAt(setBkB, i, v)} />
               </div>
               {r && (
                 <div className="rounded-md bg-primary/10 border border-primary/20 p-3 text-sm space-y-1">
@@ -1549,13 +1607,20 @@ export default function NebenkostenabrechnungPage() {
       ) : null}
 
       {/* ── Actions ── */}
+      {periodProblems.length > 0 && (
+        <p className="text-sm text-destructive">
+          „Ihr Zeitraum“ lies outside the Abrechnungszeitraum in: {periodProblems.join(", ")}.
+          Fix it in the section above — the tenant&apos;s period has to sit inside the billing period.
+        </p>
+      )}
       <div className="flex gap-3 flex-wrap">
-        <Button onClick={calculate} disabled={!selected || calculating} variant="outline">
+        <Button onClick={calculate} disabled={!selected || calculating || periodProblems.length > 0} variant="outline">
           <Calculator className="size-4 mr-1" />
           {calculating ? "Calculating…" : "Calculate Preview"}
         </Button>
         <Button onClick={generatePdf}
-          disabled={!selected || generating || (!useStrom && !useGas && !useWater && !useWarmwater && !useHeizung && !useBK && !useExtra)}>
+          disabled={!selected || generating || periodProblems.length > 0
+            || (!useStrom && !useGas && !useWater && !useWarmwater && !useHeizung && !useBK && !useExtra)}>
           <FileDown className="size-4 mr-1" />
           {generating ? "Generating PDF…" : "Generate PDF"}
         </Button>

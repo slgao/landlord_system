@@ -11,7 +11,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Literal, Optional
 
 from db import fetch, execute, execute_returning, insert
 from auth import require_auth
@@ -79,6 +79,8 @@ class ExpenseIn(BaseModel):
 
 class NkSplitIn(BaseModel):
     nebenkosten_vorauszahlung: Optional[float] = None  # None clears
+    # Omitted: left as it is. See api/schemas/contract.NkMode.
+    nk_mode: Optional[Literal["prepayment", "flat"]] = None
 
 
 class OverrideIn(BaseModel):
@@ -533,7 +535,7 @@ def list_nk_splits(owner: int = Depends(require_auth)):
     tax years, so all contracts are returned."""
     rows = fetch("""
         SELECT c.id, t.name, a.name, a.property_id, p.name, c.rent,
-               c.nebenkosten_vorauszahlung, c.start_date, c.end_date
+               c.nebenkosten_vorauszahlung, c.start_date, c.end_date, c.nk_mode
         FROM contracts c
         JOIN tenants t ON t.id = c.tenant_id
         JOIN apartments a ON a.id = c.apartment_id
@@ -548,6 +550,7 @@ def list_nk_splits(owner: int = Depends(require_auth)):
         "nebenkosten_vorauszahlung": float(r[6]) if r[6] is not None else None,
         "kaltmiete": round(float(r[5] or 0) - float(r[6]), 2) if r[6] is not None else None,
         "start_date": r[7], "end_date": _clean(r[8]),
+        "nk_mode": r[9] or "prepayment",
     } for r in rows]
 
 
@@ -555,10 +558,12 @@ def list_nk_splits(owner: int = Depends(require_auth)):
 def set_nk_split(contract_id: int, body: NkSplitIn, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM contracts WHERE id=? AND owner_id=?", (contract_id, owner)):
         raise HTTPException(status_code=404, detail="Contract not found")
-    execute("UPDATE contracts SET nebenkosten_vorauszahlung=? WHERE id=? AND owner_id=?",
-            (body.nebenkosten_vorauszahlung, contract_id, owner))
+    execute("UPDATE contracts SET nebenkosten_vorauszahlung=?, "
+            "nk_mode=COALESCE(?, nk_mode) WHERE id=? AND owner_id=?",
+            (body.nebenkosten_vorauszahlung, body.nk_mode, contract_id, owner))
     return {"contract_id": contract_id,
-            "nebenkosten_vorauszahlung": body.nebenkosten_vorauszahlung}
+            "nebenkosten_vorauszahlung": body.nebenkosten_vorauszahlung,
+            "nk_mode": body.nk_mode}
 
 
 # ── Overrides ────────────────────────────────────────────────────────────────

@@ -192,6 +192,12 @@ export function SettlementDialog({
               </SelectContent>
             </Select>
           </div>
+          {contracts.find((c) => String(c.id) === contractId)?.nk_mode === "flat" && (
+            <p className="text-xs rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 px-3 py-2">
+              This contract has an NK-Pauschale / Warmmiete — nothing is settled, so no Abrechnung is
+              owed. Record one only if it covers an earlier period with Vorauszahlungen, or you agreed it.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="nk-start">Abrechnungszeitraum from</Label>

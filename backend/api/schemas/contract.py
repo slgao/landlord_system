@@ -1,7 +1,12 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional
+from typing import Literal, Optional
 
 from api.schemas.common import IsoDate, OptIsoDate
+
+
+# 'prepayment': Vorauszahlungen, settled once a year (Nebenkostenabrechnung
+# due, §556 Abs. 3 BGB). 'flat': a Pauschale / Warmmiete — nothing to settle.
+NkMode = Literal["prepayment", "flat"]
 
 
 class ContractIn(BaseModel):
@@ -23,6 +28,7 @@ class ContractIn(BaseModel):
     # and any Mietspiegel comparison have to use — comparing a warm rent
     # against a cold one reads as a flat earning more than it does.
     nebenkosten_vorauszahlung: Optional[float] = Field(default=None, ge=0)
+    nk_mode: NkMode = "prepayment"
 
     @model_validator(mode="after")
     def _consistent(self):
@@ -56,3 +62,4 @@ class ContractOut(BaseModel):
     kaution_returned_amount: Optional[float] = None
     terminated: bool = False
     nebenkosten_vorauszahlung: Optional[float] = None
+    nk_mode: NkMode = "prepayment"

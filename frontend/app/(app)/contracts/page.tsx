@@ -7,7 +7,7 @@ import { matchesQuery } from "@/lib/search";
 import { coldRent } from "@/lib/rent";
 import { todayISO } from "@/lib/utils";
 import { contractStatus, contractStatusLabel, contractStatusColor, startsInLabel } from "@/lib/contract-status";
-import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow } from "@/lib/types";
+import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow, NkMode } from "@/lib/types";
 import { KAUTION_CATS, KAUTION_CAT_HINT, isRentFromDeposit } from "@/lib/kaution";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,6 +41,7 @@ const CONTRACT_EMPTY = {
   // there is one source of truth and the tax module keeps reading the column
   // it always read. Blank = the split is not known.
   kaltmiete: "" as string,
+  nk_mode: "prepayment" as NkMode,
 };
 
 export default function ContractsPage() {
@@ -287,7 +288,8 @@ export default function ContractsPage() {
       start_date: c.start_date, end_date: c.end_date || "", terminated: c.terminated,
       kaution_amount: c.kaution_amount || 0, kaution_currency: c.kaution_currency,
       kaution_paid_date: c.kaution_paid_date || "",
-      kaltmiete: coldRent(c) != null ? String(coldRent(c)) : "" });
+      kaltmiete: coldRent(c) != null ? String(coldRent(c)) : "",
+      nk_mode: c.nk_mode ?? "prepayment" });
     setOpen(true);
   }
 
@@ -374,6 +376,11 @@ export default function ContractsPage() {
                         {coldRent(c) != null && (
                           <span className="block text-xs text-muted-foreground">
                             kalt {coldRent(c)!.toFixed(2)}
+                          </span>
+                        )}
+                        {c.nk_mode === "flat" && (
+                          <span className="block text-xs text-muted-foreground" title="Pauschale / Warmmiete — no yearly Nebenkostenabrechnung">
+                            NK-Pauschale
                           </span>
                         )}
                       </TableCell>
@@ -889,7 +896,21 @@ export default function ContractsPage() {
                   )}
                 </p>
               </div>
-              <div />
+              <div className="space-y-1.5">
+                <Label>Nebenkosten</Label>
+                <Select value={form.nk_mode} onValueChange={(v) => setForm((f) => ({ ...f, nk_mode: v as NkMode }))}>
+                  <SelectTrigger aria-label="Nebenkosten"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="prepayment">Vorauszahlung — settled yearly</SelectItem>
+                    <SelectItem value="flat">Pauschale / Warmmiete — no Abrechnung</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {form.nk_mode === "flat"
+                    ? "Nothing is settled, so no yearly Nebenkostenabrechnung is owed and no deadline is tracked."
+                    : "A Nebenkostenabrechnung is due within 12 months after each billing year (§556 Abs. 3 BGB)."}
+                </p>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5"><Label>Start Date</Label><Input type="date" value={form.start_date} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} /></div>

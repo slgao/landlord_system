@@ -221,7 +221,7 @@ def pending(owner: int = Depends(require_auth)):
     with the §556 deadline. See nk_settlement_logic.pending_abrechnungen."""
     contracts = fetch("""
         SELECT c.id, c.tenant_id, c.apartment_id, c.start_date, c.end_date,
-               c.nebenkosten_vorauszahlung, t.name, a.name, p.name
+               c.nebenkosten_vorauszahlung, c.nk_mode, t.name, a.name, p.name
         FROM contracts c
         JOIN tenants    t ON t.id = c.tenant_id
         JOIN apartments a ON a.id = c.apartment_id
@@ -230,8 +230,8 @@ def pending(owner: int = Depends(require_auth)):
     """, (owner,))
     settlements = fetch("SELECT contract_id, period_start, period_end FROM nk_settlements "
                         "WHERE owner_id=?", (owner,))
-    names = {r[0]: (r[6], r[7], r[8]) for r in contracts}
-    due = logic.pending_abrechnungen([r[:6] for r in contracts], settlements, date.today())
+    names = {r[0]: (r[7], r[8], r[9]) for r in contracts}
+    due = logic.pending_abrechnungen([r[:7] for r in contracts], settlements, date.today())
     return [PendingAbrechnungOut(**d, tenant_name=names[d["contract_id"]][0],
                                  apartment_name=names[d["contract_id"]][1],
                                  property_name=names[d["contract_id"]][2])

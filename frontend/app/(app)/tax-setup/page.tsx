@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
-import { TaxProfile, TaxExpense, NkSplit, Mortgage } from "@/lib/types";
+import { TaxProfile, TaxExpense, NkSplit, Mortgage, NkMode } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -344,13 +344,19 @@ function NkRow({ c }: { c: NkSplit }) {
   const qc = useQueryClient();
   const [nk, setNk] = useState(
     c.nebenkosten_vorauszahlung != null ? String(c.nebenkosten_vorauszahlung) : "");
+  const [mode, setMode] = useState<NkMode>(c.nk_mode ?? "prepayment");
 
   const save = useMutation({
     mutationFn: () => api.put(`/api/tax/nk-splits/${c.contract_id}`, {
       nebenkosten_vorauszahlung: nk === "" ? null : parseFloat(nk),
+      nk_mode: mode,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tax-nk-splits"] });
+      // The mode decides which tenancies owe an Abrechnung.
+      qc.invalidateQueries({ queryKey: ["nk-pending"] });
+      qc.invalidateQueries({ queryKey: ["contracts-all"] });
+      qc.invalidateQueries({ queryKey: ["contracts"] });
       qc.invalidateQueries({ queryKey: ["tax-report"] });
       toast.success(`${c.tenant_name} saved`);
     },
@@ -370,6 +376,17 @@ function NkRow({ c }: { c: NkSplit }) {
       </TableCell>
       <TableCell className="text-right font-mono text-muted-foreground">
         {kalt != null && !isNaN(kalt) ? eur(kalt) : "—"}
+      </TableCell>
+      <TableCell>
+        <Select value={mode} onValueChange={(v) => setMode(v as NkMode)}>
+          <SelectTrigger className="h-8 w-36 text-xs" aria-label={`Nebenkosten mode for ${c.tenant_name}`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="prepayment">Vorauszahlung</SelectItem>
+            <SelectItem value="flat">Pauschale</SelectItem>
+          </SelectContent>
+        </Select>
       </TableCell>
       <TableCell>
         <Button size="sm" variant="outline" disabled={save.isPending} onClick={() => save.mutate()}>
@@ -393,7 +410,9 @@ function NkSection() {
         <p className="font-medium">Kaltmiete / Umlagen split (per contract)</p>
         <p className="text-xs text-muted-foreground">
           Anlage V reports Kaltmiete and Umlagen (NK-Vorauszahlungen) on separate lines.
-          Enter the monthly NK portion of each contract&apos;s rent — Kaltmiete is derived.
+          Enter the monthly NK portion of each contract&apos;s rent — Kaltmiete is derived. Mark a
+          Pauschale / Warmmiete as such: it is still reported as Umlagen, but no yearly
+          Nebenkostenabrechnung is owed, so no deadline is tracked for it.
           {missing > 0 && <span className="text-amber-500"> {missing} active contract{missing !== 1 ? "s" : ""} still missing the NK portion.</span>}
         </p>
         <Table>
@@ -402,7 +421,9 @@ function NkSection() {
             <TableHead>Apartment</TableHead>
             <TableHead className="text-right">Rent (warm)</TableHead>
             <TableHead>NK / month</TableHead>
-            <TableHead className="text-right">Kaltmiete</TableHead><TableHead />
+            <TableHead className="text-right">Kaltmiete</TableHead>
+            <TableHead title="Vorauszahlung: settled yearly with a Nebenkostenabrechnung. Pauschale / Warmmiete: nothing to settle.">Nebenkosten</TableHead>
+            <TableHead />
           </TableRow></TableHeader>
           <TableBody>
             {splits.map((c) => <NkRow key={c.contract_id} c={c} />)}

@@ -61,6 +61,9 @@ export interface Contract {
   // The utilities portion of `rent`. Kaltmiete = rent − this; null means the
   // split was never recorded, so the rent has to be treated as warm.
   nebenkosten_vorauszahlung?: number | null;
+  // 'prepayment': Vorauszahlungen, settled yearly (Abrechnung owed).
+  // 'flat': Pauschale / Warmmiete — nothing to settle, no Abrechnung.
+  nk_mode?: NkMode;
 }
 
 export interface CoTenant {
@@ -139,6 +142,8 @@ export interface Payment {
 }
 
 export type PaymentKind = "rent" | "nk_settlement";
+
+export type NkMode = "prepayment" | "flat";
 
 /** A Nebenkostenabrechnung sent to a tenant. `amount` is signed from your
  *  side: + Nachzahlung the tenant owes, − Guthaben you owe them. Paid/open
@@ -485,6 +490,7 @@ export interface NkSplit {
   rent: number;
   nebenkosten_vorauszahlung: number | null;
   kaltmiete: number | null;
+  nk_mode: NkMode;
   start_date: string;
   end_date: string | null;
 }

@@ -23,12 +23,10 @@ router = APIRouter(prefix="/nk-settlements", tags=["NK settlements"])
 # An Abrechnung PDF is tens of kilobytes; this only stops an accident.
 _MAX_PDF_BYTES = 5 * 1024 * 1024
 
-# How a Kaution deduction points at the settlement it pays. The columns were
-# on kaution_deductions from the start, for exactly this.
-REF_TYPE = "nk_settlement"
-# The Kaution category for a Nachzahlung offset against the deposit. A
-# deduction in it counts as Umlagen income whether or not it is linked.
-NK_CATEGORY = "NK Nachzahlung"
+# How a Kaution deduction points at the settlement it pays (the columns were
+# on kaution_deductions from the start), and the category a Nachzahlung kept
+# from the deposit is booked under. See kaution_rules.
+from kaution_rules import NK_CATEGORY, NK_REF_TYPE as REF_TYPE
 
 
 

@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Tenant, Contract, Payment } from "@/lib/types";
+import { Tenant, Contract, Payment, KautionDeduction } from "@/lib/types";
+import { NK_CATEGORY, isRentFromDeposit, rentFromDepositTag } from "@/lib/kaution";
 import { contractStatusColor, contractStatusLabel } from "@/lib/contract-status";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +33,26 @@ export default function TenantLedgerPage() {
     queryFn: () => api.get(`/api/payments/?tenant_id=${tenantId}`).then((r) => r.data),
     enabled: !!tenantId,
   });
+
+  // Deposit kept back for rent or Nebenkosten is money received too; it
+  // belongs in the history next to what was transferred.
+  const { data: deductions = [] } = useQuery<KautionDeduction[]>({
+    queryKey: ["tenant-deductions", tenantId],
+    queryFn: () => api.get(`/api/kaution-deductions/?tenant_id=${tenantId}`).then((r) => r.data),
+    enabled: !!tenantId,
+  });
+  const aptOf = new Map(contracts.map((c) => [c.id, c.apartment_name]));
+  const fromDeposit = deductions
+    .filter((d) => isRentFromDeposit(d.category) || d.category === NK_CATEGORY || d.reference_type === "nk_settlement")
+    .map((d) => ({
+      key: `k${d.id}`, date: d.date, apartment: aptOf.get(d.contract_id) ?? "", amount: d.amount,
+      tag: rentFromDepositTag(d.category) ?? "NK Nachzahlung · from Kaution",
+    }));
+  const history = [
+    ...payments.map((p) => ({ key: `p${p.id}`, date: p.payment_date, apartment: p.apartment_name ?? "", amount: p.amount, payment: p, tag: null as string | null })),
+    ...fromDeposit.map((d) => ({ ...d, payment: null as Payment | null })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+  const depositTotal = fromDeposit.reduce((sum, d) => sum + d.amount, 0);
 
   const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "$", GBP: "£" };
   const perCurrency = payments.reduce((acc, p) => {
@@ -75,6 +96,14 @@ export default function TenantLedgerPage() {
                 <p className="text-2xl font-semibold mt-1">{payments.length}</p>
               </CardContent>
             </Card>
+            {depositTotal !== 0 && (
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Kept from Kaution</p>
+                  <p className="text-2xl font-semibold mt-1">€ {depositTotal.toFixed(2)}</p>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Contracts */}
@@ -125,23 +154,26 @@ export default function TenantLedgerPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {payments.length === 0 ? (
+                  {history.length === 0 ? (
                     <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-6">No payments on record.</TableCell></TableRow>
                   ) : (
-                    payments.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell className="text-muted-foreground">{p.payment_date}</TableCell>
-                        <TableCell>{p.apartment_name}</TableCell>
+                    history.map((h) => (
+                      <TableRow key={h.key}>
+                        <TableCell className="text-muted-foreground">{h.date}</TableCell>
+                        <TableCell>{h.apartment}</TableCell>
                         <TableCell className="font-mono">
-                          {p.amount.toFixed(2)} EUR
-                          {p.kind === "nk_settlement" && (
+                          {h.amount.toFixed(2)} EUR
+                          {h.tag && (
+                            <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{h.tag}</Badge>
+                          )}
+                          {h.payment?.kind === "nk_settlement" && (
                             <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                              NK {p.amount < 0 ? "refund" : "Nachzahlung"}
+                              NK {h.amount < 0 ? "refund" : "Nachzahlung"}
                             </Badge>
                           )}
-                          {p.orig_currency && p.orig_amount != null && (
+                          {h.payment?.orig_currency && h.payment.orig_amount != null && (
                             <span className="block text-xs text-muted-foreground">
-                              (paid {CURRENCY_SYMBOLS[p.orig_currency] || p.orig_currency}{p.orig_amount.toFixed(2)})
+                              (paid {CURRENCY_SYMBOLS[h.payment.orig_currency] || h.payment.orig_currency}{h.payment.orig_amount.toFixed(2)})
                             </span>
                           )}
                         </TableCell>

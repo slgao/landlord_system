@@ -356,7 +356,12 @@ export default function TaxReportPage() {
                         )}
                         {b.income.source === "payments" ? (
                           <div className="text-xs text-muted-foreground flex items-center justify-between">
-                            <span>{b.income.payments_count} recorded payments · {eur(b.income.payments_total)} — total editable:</span>
+                            <span>
+                              {b.income.payments_count} recorded payments · {eur(b.income.payments_total)}
+                              {b.income.rent_from_deposit !== 0 &&
+                                ` + ${eur(b.income.rent_from_deposit)} rent kept from the Kaution (Mietrückstand / Abwohnen)`}
+                              {" "}— total editable:
+                            </span>
                             <OverrideField propertyId={b.property_id} year={year} field="income_total"
                               value={b.income.final} overridden={false} />
                           </div>

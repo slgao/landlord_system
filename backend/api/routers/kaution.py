@@ -40,11 +40,23 @@ def _own_contract(contract_id, owner):
 
 
 @router.get("/", response_model=list[KautionDeductionOut])
-def list_deductions(contract_id: int, owner: int = Depends(require_auth)):
-    rows = fetch("""
-        SELECT id,contract_id,date,amount,category,reason,reference_type,reference_id
-        FROM kaution_deductions WHERE contract_id=? AND owner_id=? ORDER BY date
-    """, (contract_id, owner))
+def list_deductions(contract_id: Optional[int] = None, tenant_id: Optional[int] = None,
+                    owner: int = Depends(require_auth)):
+    """By contract, or across all of a tenant's contracts (the ledger)."""
+    if contract_id is not None:
+        rows = fetch("""
+            SELECT id,contract_id,date,amount,category,reason,reference_type,reference_id
+            FROM kaution_deductions WHERE contract_id=? AND owner_id=? ORDER BY date
+        """, (contract_id, owner))
+    elif tenant_id is not None:
+        rows = fetch("""
+            SELECT d.id,d.contract_id,d.date,d.amount,d.category,d.reason,
+                   d.reference_type,d.reference_id
+            FROM kaution_deductions d JOIN contracts c ON c.id = d.contract_id
+            WHERE c.tenant_id=? AND d.owner_id=? ORDER BY d.date
+        """, (tenant_id, owner))
+    else:
+        raise HTTPException(422, "contract_id or tenant_id is required")
     return [_row(r) for r in rows]
 
 

@@ -352,8 +352,13 @@ def detect_overdue(default_months_back=12, owner=None):
     # would invent one. payment_date is ISO text, so
     # substr(...,1,7) is 'YYYY-MM'.
     min_start = min(starts.values())
+    #
+    # Rent kept from the deposit counts too, in the month of the deduction —
+    # whether the tenant did not pay (Mietrückstand) or you agreed they could
+    # abwohnen. Tagged apart so the reminder can say how much came that way.
+    from kaution_rules import NK_REF_TYPE, RENT_CATEGORIES
     paid_rows = fetch("""
-        SELECT p.contract_id, substr(p.payment_date, 1, 7), COALESCE(SUM(p.amount), 0)
+        SELECT p.contract_id, substr(p.payment_date, 1, 7), 0, COALESCE(SUM(p.amount), 0)
         FROM payments p
         JOIN contracts c ON p.contract_id = c.id
         WHERE COALESCE(c.terminated, 0) = 0
@@ -361,8 +366,23 @@ def detect_overdue(default_months_back=12, owner=None):
           AND p.kind = 'rent'
           AND p.payment_date >= ? AND p.payment_date <= ?
         GROUP BY p.contract_id, substr(p.payment_date, 1, 7)
-    """, (owner, str(min_start), str(today)))
-    paid_by = {(cid, ym): total for cid, ym, total in paid_rows}
+        UNION ALL
+        SELECT d.contract_id, substr(d.date, 1, 7), 1, COALESCE(SUM(d.amount), 0)
+        FROM kaution_deductions d
+        JOIN contracts c ON d.contract_id = c.id
+        WHERE COALESCE(c.terminated, 0) = 0
+          AND c.owner_id = ?
+          AND d.category IN (?, ?) AND COALESCE(d.reference_type, '') <> ?
+          AND d.date >= ? AND d.date <= ?
+        GROUP BY d.contract_id, substr(d.date, 1, 7)
+    """, (owner, str(min_start), str(today),
+          owner, *RENT_CATEGORIES, NK_REF_TYPE, str(min_start), str(today)))
+    paid_by: dict = {}
+    deposit_by: dict = {}
+    for cid, ym, from_deposit, total in paid_rows:
+        paid_by[(cid, ym)] = paid_by.get((cid, ym), _ZERO) + total
+        if from_deposit:
+            deposit_by[(cid, ym)] = deposit_by.get((cid, ym), _ZERO) + total
 
     results = []
     for row in contracts:
@@ -396,6 +416,8 @@ def detect_overdue(default_months_back=12, owner=None):
         for (pc, ym), val in paid_by.items():
             if pc == cid and start_ym <= ym <= cur_ym:
                 paid_total += val
+        from_deposit = sum((v for (pc, ym), v in deposit_by.items()
+                            if pc == cid and start_ym <= ym <= cur_ym), _ZERO)
 
         balance = paid_total - expected_total
         amount_due = -balance
@@ -430,6 +452,7 @@ def detect_overdue(default_months_back=12, owner=None):
             "last_month":        months[-1].strftime("%B %Y"),
             "expected_total":    float(round(expected_total, 2)),
             "paid_total":        float(round(paid_total, 2)),
+            "paid_from_deposit": float(round(from_deposit, 2)),
             "balance":           float(round(balance, 2)),
             "amount_due":        float(round(amount_due, 2)),
             "current_month_paid": float(paid_by.get((cid, cur_ym), _ZERO)),

@@ -8,6 +8,7 @@ import { coldRent } from "@/lib/rent";
 import { todayISO } from "@/lib/utils";
 import { contractStatus, contractStatusLabel, contractStatusColor, startsInLabel } from "@/lib/contract-status";
 import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow } from "@/lib/types";
+import { KAUTION_CATS, KAUTION_CAT_HINT, isRentFromDeposit } from "@/lib/kaution";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,7 +31,6 @@ import { HandoverCard } from "@/components/handover";
 import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X } from "lucide-react";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
-const KAUTION_CATS = ["NK Nachzahlung", "Schaden", "Reinigung", "Mietrückstand", "Sonstiges"];
 
 const CONTRACT_EMPTY = {
   tenant_id: 0, apartment_id: 0, rent: 0, currency: "EUR",
@@ -230,13 +230,13 @@ export default function ContractsPage() {
 
   const addDeduction = useMutation({
     mutationFn: () => api.post("/api/kaution-deductions/", { ...kdForm, contract_id: selectedContract!.id }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); toast.success("Deduction added"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["payment-reminders"] }); qc.invalidateQueries({ queryKey: ["tax-report"] }); qc.invalidateQueries({ queryKey: ["tenant-deductions"] }); qc.invalidateQueries({ queryKey: ["balance-sheet"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); toast.success("Deduction added"); },
     onError: (e) => toast.error(errorMessage(e, "Could not add the deduction")),
   });
 
   const removeDeduction = useMutation({
     mutationFn: (id: number) => api.delete(`/api/kaution-deductions/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["payment-reminders"] }); qc.invalidateQueries({ queryKey: ["tax-report"] }); qc.invalidateQueries({ queryKey: ["tenant-deductions"] }); qc.invalidateQueries({ queryKey: ["balance-sheet"] }); qc.invalidateQueries({ queryKey: ["kaution-overview"] }); },
     onError: (e) => toast.error(errorMessage(e, "Could not delete the deduction")),
   });
 
@@ -246,7 +246,7 @@ export default function ContractsPage() {
         contract_id: selectedContract!.id, date: d.date, amount: d.amount,
         category: d.category, reason: d.reason || null,
       }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); setEditDed(null); toast.success("Deduction updated"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kaution-deductions"] }); qc.invalidateQueries({ queryKey: ["nk-settlements"] }); qc.invalidateQueries({ queryKey: ["nk-unlinked-kaution"] }); qc.invalidateQueries({ queryKey: ["payment-reminders"] }); qc.invalidateQueries({ queryKey: ["tax-report"] }); qc.invalidateQueries({ queryKey: ["tenant-deductions"] }); qc.invalidateQueries({ queryKey: ["balance-sheet"] }); setEditDed(null); toast.success("Deduction updated"); },
     onError: (e) => toast.error(errorMessage(e, "Could not update the deduction")),
   });
 
@@ -558,6 +558,11 @@ export default function ContractsPage() {
                                 settles an NK Abrechnung
                               </span>
                             )}
+                            {isRentFromDeposit(d.category) && (
+                              <span className="block text-[11px] text-primary" title="Counts as rent received on this date">
+                                counts as rent received
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="text-muted-foreground text-xs">{d.reason || "—"}</TableCell>
                           <TableCell className="text-right font-mono">{d.amount.toFixed(2)}</TableCell>
@@ -655,6 +660,9 @@ export default function ContractsPage() {
                     </Select>
                     <Input className="h-8 text-sm" placeholder="Reason" value={kdForm.reason} onChange={(e) => setKdForm((f) => ({ ...f, reason: e.target.value }))} />
                   </div>
+                  {KAUTION_CAT_HINT[kdForm.category] && (
+                    <p className="text-xs text-muted-foreground">{KAUTION_CAT_HINT[kdForm.category]}</p>
+                  )}
                   <Button size="sm" onClick={() => addDeduction.mutate()} disabled={!kdForm.amount || addDeduction.isPending}>
                     <Plus className="size-4 mr-1" /> Add
                   </Button>

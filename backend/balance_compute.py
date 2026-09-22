@@ -187,6 +187,31 @@ def _load_one_off(owner, year: int) -> dict:
     return {(pid, ym): total for pid, ym, total in rows}
 
 
+def _load_rent(owner, year: int) -> dict:
+    """{(property_id, 'YYYY-MM'): Decimal} — rent received in `year`: rent
+    payments, and rent kept from the deposit (a Mietrückstand or an agreed
+    Abwohnen), in the month of the deduction."""
+    from kaution_rules import NK_REF_TYPE, RENT_CATEGORIES
+    rows = fetch("""
+        SELECT property_id, ym, COALESCE(SUM(amount), 0) FROM (
+            SELECT a.property_id, substr(p.payment_date, 1, 7) AS ym, p.amount
+            FROM payments p
+            JOIN contracts c ON p.contract_id = c.id
+            JOIN apartments a ON c.apartment_id = a.id
+            WHERE p.owner_id = ? AND substr(p.payment_date, 1, 4) = ? AND p.kind = 'rent'
+            UNION ALL
+            SELECT a.property_id, substr(d.date, 1, 7), d.amount
+            FROM kaution_deductions d
+            JOIN contracts c ON d.contract_id = c.id
+            JOIN apartments a ON c.apartment_id = a.id
+            WHERE d.owner_id = ? AND substr(d.date, 1, 4) = ?
+              AND d.category IN (?, ?) AND COALESCE(d.reference_type, '') <> ?
+        ) x
+        GROUP BY property_id, ym
+    """, (owner, str(year), owner, str(year), *RENT_CATEGORIES, NK_REF_TYPE))
+    return {(pid, ym): total for pid, ym, total in rows}
+
+
 def _load_payments(owner, year: int, kind: str = "rent") -> dict:
     """{(property_id, 'YYYY-MM'): Decimal} — payments of `kind` in `year`.
     payments.amount is always the EUR value that counts (see the currency
@@ -210,7 +235,7 @@ def _load_settlements(owner, year: int) -> dict:
     """{(property_id, 'YYYY-MM'): Decimal} — money that settled tenants' NK
     Abrechnungen in `year`: settlement payments, and Nachzahlungen kept back
     from the deposit (which never pass through payments)."""
-    from api.routers.nk_settlements import NK_CATEGORY, REF_TYPE
+    from kaution_rules import NK_CATEGORY, NK_REF_TYPE as REF_TYPE
     rows = fetch("""
         SELECT property_id, ym, COALESCE(SUM(amount), 0) FROM (
             SELECT a.property_id, substr(p.payment_date, 1, 7) AS ym, p.amount
@@ -250,7 +275,7 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
 
     contracts = _load_contracts(owner)
     costs = _load_costs(owner)
-    paid = _load_payments(owner, y)
+    paid = _load_rent(owner, y)
     one_off = _load_one_off(owner, y) if include_one_off else {}
     # A tenant's NK settlement is the other half of the Hausgeldabrechnung:
     # you pay the Hausverwaltung's Nachzahlung and recover your tenant's share

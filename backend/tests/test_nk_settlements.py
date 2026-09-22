@@ -198,3 +198,19 @@ def test_a_nachzahlung_kept_from_the_deposit_is_umlagen_too(monkeypatch):
     assert inc["nk_settlements"] == 250.0
     assert inc["umlagen"] == 1450.0
     assert inc["kaltmiete"] == 10800.0
+
+
+
+def test_rent_kept_from_the_deposit_is_income_when_rent_is_recorded(monkeypatch):
+    inc = _tax_books(monkeypatch, [("rent", 11000.0, 11), ("deposit_rent", 1000.0, 1)])
+    assert inc["final"] == 12000.0
+    assert inc["rent_from_deposit"] == 1000.0
+    assert inc["kaltmiete"] == 10800.0            # it is rent, so it lands in the Kaltmiete
+
+
+def test_rent_kept_from_the_deposit_is_not_added_to_the_estimate(monkeypatch):
+    # No rent recorded: the estimate already counts every contract month.
+    inc = _tax_books(monkeypatch, [("deposit_rent", 1000.0, 1)])
+    assert inc["source"] == "estimate"
+    assert inc["final"] == 12000.0
+    assert inc["rent_from_deposit"] == 0.0

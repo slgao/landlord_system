@@ -375,6 +375,7 @@ export interface PaymentReminder {
   balance: number;
   expected_total: number;
   paid_total: number;
+  paid_from_deposit: number;     // rent kept from the Kaution, inside paid_total
   current_month_paid: number;
   first_month: string | null;
   last_month: string | null;
@@ -502,6 +503,7 @@ export interface TaxReportProperty {
     nk_known: boolean;
     umlagen: number | null;
     nk_settlements: number;        // Nachzahlungen − refunds, already inside umlagen
+    rent_from_deposit: number;     // rent kept from the Kaution, inside final
     kaltmiete: number | null;
     split_source: "contracts" | "override" | null;
   };

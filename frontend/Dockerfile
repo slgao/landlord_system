@@ -4,7 +4,13 @@ WORKDIR /app
 
 COPY package.json ./
 COPY package-lock.json* ./
-RUN npm install --legacy-peer-deps
+# The verification is part of the same layer on purpose. npm can fail to
+# reach the registry — a broken docker0 bridge leaves builds with no network —
+# and still exit 0, leaving package folders empty. Docker then caches that as a
+# good layer and the failure surfaces three steps later as "next: not found".
+# Checking here makes the install itself fail, and nothing broken is cached.
+RUN npm install --legacy-peer-deps \
+    && node_modules/.bin/next --version
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL

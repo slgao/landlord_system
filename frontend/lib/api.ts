@@ -54,6 +54,20 @@ function isQueued(config: { responseType?: string }) {
 /** The message to show for a failed request: the API's own `detail` when it
  *  sent one (a 409 "still has contracts", a 422 field error), otherwise the
  *  caller's fallback. Without this every failure read "Failed to save". */
+/** Why a sign-in failed, in the user's terms. Every failure used to read
+ *  "Invalid credentials.", so an API that was down, unreachable or erroring
+ *  looked exactly like a wrong password. */
+export function loginErrorMessage(err: unknown): string {
+  const e = err as { response?: { status?: number }; code?: string };
+  const status = e?.response?.status;
+  if (status === 401) return "Invalid email or password.";
+  if (status === undefined) {
+    return `Cannot reach the server at ${BASE}. Is the API running?`;
+  }
+  if (status >= 500) return `The server failed to answer (HTTP ${status}). Check the API log.`;
+  return errorMessage(err, `Sign-in failed (HTTP ${status}).`);
+}
+
 export function errorMessage(err: unknown, fallback: string): string {
   const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
   if (typeof detail === "string" && detail) return detail;

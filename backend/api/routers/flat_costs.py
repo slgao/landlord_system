@@ -1,9 +1,11 @@
+from datetime import date, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional
-from db import fetch, execute, insert
+from db import fetch, execute, execute_returning, insert
 from auth import require_auth
-from api.schemas.common import OptIsoDate
+from api.schemas.common import IsoDate, OptIsoDate
 
 router = APIRouter(prefix="/flat-costs", tags=["Flat Costs"])
 
@@ -33,6 +35,48 @@ class FlatCostOut(BaseModel):
     frequency: str
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
+
+
+# A missing bound means "since forever" / "until further notice". Comparing
+# the ISO text against these makes an open window overlap everything, which is
+# exactly what it does in the reports.
+_FOREVER_AGO, _FOREVER = "0001-01-01", "9999-12-31"
+
+
+def _conflicts(apartment_id: int, cost_type: str, valid_from, valid_to,
+               owner: int, exclude_id: int | None = None):
+    """Rows for the same cost in the same flat whose period overlaps the one
+    given. Two of those are counted together by the balance sheet and the tax
+    report, which is how a price change entered as a second row silently
+    doubles a cost."""
+    rows = fetch(f"""
+        SELECT id, amount, valid_from, valid_to FROM flat_costs
+        WHERE apartment_id = ? AND cost_type = ? AND owner_id = ?
+          AND (? IS NULL OR id <> ?)
+          AND COALESCE(NULLIF(valid_from, 'None'), '{_FOREVER_AGO}') <= ?
+          AND COALESCE(NULLIF(valid_to, 'None'), '{_FOREVER}') >= ?
+        ORDER BY valid_from
+    """, (apartment_id, cost_type, owner, exclude_id, exclude_id,
+          valid_to or _FOREVER, valid_from or _FOREVER_AGO))
+    return rows
+
+
+def _refuse_overlap(apartment_id: int, cost_type: str, valid_from, valid_to,
+                    owner: int, exclude_id: int | None = None) -> None:
+    clash = _conflicts(apartment_id, cost_type, valid_from, valid_to, owner, exclude_id)
+    if not clash:
+        return
+    c = clash[0]
+    span = f"{_clean(c[2]) or 'open'} → {_clean(c[3]) or 'open'}"
+    raise HTTPException(409,
+        f"“{cost_type}” already runs in this flat for {span} at {float(c[1]):.2f} €. "
+        "Two rows for the same cost over the same period are added together. "
+        "To record a price change, use the new amount action on that row — it "
+        "ends the old one the day before. To keep both, give them different names.")
+
+
+def _clean(v):
+    return None if v is None or str(v) == "None" else str(v)
 
 
 def _row(r) -> FlatCostOut:
@@ -78,6 +122,7 @@ def get_flat_cost(cost_id: int, owner: int = Depends(require_auth)):
 def create_flat_cost(body: FlatCostIn, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM apartments WHERE id=? AND owner_id=?", (body.apartment_id, owner)):
         raise HTTPException(status_code=404, detail="Apartment not found")
+    _refuse_overlap(body.apartment_id, body.cost_type, body.valid_from, body.valid_to, owner)
     new_id = insert("flat_costs", (body.apartment_id, body.cost_type, body.amount,
                                    body.frequency, body.valid_from, body.valid_to))
     rows = fetch(f"{_SELECT} WHERE fc.id=?", (new_id,))
@@ -90,6 +135,8 @@ def update_flat_cost(cost_id: int, body: FlatCostIn, owner: int = Depends(requir
         raise HTTPException(status_code=404, detail="Flat cost not found")
     if not fetch("SELECT id FROM apartments WHERE id=? AND owner_id=?", (body.apartment_id, owner)):
         raise HTTPException(status_code=404, detail="Apartment not found")
+    _refuse_overlap(body.apartment_id, body.cost_type, body.valid_from, body.valid_to,
+                    owner, exclude_id=cost_id)
     execute("""
         UPDATE flat_costs SET apartment_id=?, cost_type=?, amount=?,
                frequency=?, valid_from=?, valid_to=?
@@ -98,6 +145,55 @@ def update_flat_cost(cost_id: int, body: FlatCostIn, owner: int = Depends(requir
           body.frequency, body.valid_from, body.valid_to, cost_id, owner))
     rows = fetch(f"{_SELECT} WHERE fc.id=?", (cost_id,))
     return _row(rows[0])
+
+
+class NewAmountIn(BaseModel):
+    """A price change: what it costs now, and the day the new price starts."""
+    amount: float
+    from_date: IsoDate
+    frequency: Optional[str] = None     # None: unchanged
+
+
+class NewAmountOut(BaseModel):
+    previous: FlatCostOut
+    current: FlatCostOut
+
+
+@router.post("/{cost_id}/new-amount", response_model=NewAmountOut, status_code=201)
+def new_amount(cost_id: int, body: NewAmountIn, owner: int = Depends(require_auth)):
+    """Record that this cost changed price: the old row is closed the day
+    before, and a new one takes over from `from_date`.
+
+    One cost, two periods — rather than editing the amount in place, which
+    would rewrite what the flat cost last year, or adding a second row, which
+    the reports would add to the first."""
+    rows = fetch("SELECT apartment_id, cost_type, amount, frequency, valid_from, valid_to "
+                 "FROM flat_costs WHERE id=? AND owner_id=?", (cost_id, owner))
+    if not rows:
+        raise HTTPException(404, "Flat cost not found")
+    apartment_id, cost_type, _amount, frequency, valid_from, valid_to = rows[0]
+    valid_from, valid_to = _clean(valid_from), _clean(valid_to)
+
+    if valid_from and body.from_date <= valid_from:
+        raise HTTPException(422, f"The new price has to start after this one did ({valid_from}).")
+    ends = str(date.fromisoformat(body.from_date) - timedelta(days=1))
+    # Anything already recorded after the change date would be doubled.
+    _refuse_overlap(apartment_id, cost_type, body.from_date, None, owner, exclude_id=cost_id)
+
+    new_id = execute_returning("""
+        WITH closed AS (
+            UPDATE flat_costs SET valid_to = ? WHERE id = ? AND owner_id = ?
+        )
+        INSERT INTO flat_costs (apartment_id, cost_type, amount, frequency,
+                                valid_from, valid_to, owner_id)
+        VALUES (?,?,?,?,?,NULL,?) RETURNING id
+    """, (ends, cost_id, owner,
+          apartment_id, cost_type, body.amount, body.frequency or frequency or "monthly",
+          body.from_date, owner))[0][0]
+    return NewAmountOut(
+        previous=_row(fetch(f"{_SELECT} WHERE fc.id=?", (cost_id,))[0]),
+        current=_row(fetch(f"{_SELECT} WHERE fc.id=?", (new_id,))[0]),
+    )
 
 
 @router.delete("/{cost_id}", status_code=204)

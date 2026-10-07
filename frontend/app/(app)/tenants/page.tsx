@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
 import { SearchInput } from "@/components/search-input";
 import { Pencil, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 const EMPTY = { name: "", email: "", phone: "", gender: "diverse" };
 
@@ -149,7 +150,15 @@ export default function TenantsPage() {
             ) : (
               visible.map((t) => (
                 <TableRow key={t.id}>
-                  <TableCell className="font-medium">{t.name}</TableCell>
+                  <TableCell className="font-medium">
+                    {t.name}
+                    {(t.active_contracts ?? 0) > 0 && (
+                      <Badge className="ml-2 bg-primary/15 text-primary border-primary/20"
+                        title="Has a contract running today">
+                        Renting{(t.active_contracts ?? 0) > 1 ? ` ×${t.active_contracts}` : ""}
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell className="text-muted-foreground">{t.email || "—"}</TableCell>
                   <TableCell className="text-muted-foreground">
                     {t.phone ? <a href={`tel:${t.phone}`} className="hover:underline">{t.phone}</a> : "—"}

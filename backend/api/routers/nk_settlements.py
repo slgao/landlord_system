@@ -71,6 +71,9 @@ class NKSettlementOut(BaseModel):
     # None once it has been returned, when there is none, or when it is not
     # held in EUR.
     kaution_available: Optional[float] = None
+    # The agreed deposit, and why it can or cannot be used (see _KAUTION_STATUS).
+    kaution_amount: Optional[float] = None
+    kaution_status: str = "none"
     kaution_deductions: list[dict] = []
     bills: list[dict] = []
     open: float = 0.0
@@ -112,6 +115,20 @@ _KAUTION_HELD = """
     END
 """
 
+# Why the deposit can or cannot carry a Nachzahlung. "held" is the only state
+# that can; the others each mean something different to the landlord, so the
+# page says which rather than leaving the column blank.
+_KAUTION_STATUS = """
+    CASE WHEN c.kaution_amount IS NULL OR c.kaution_amount = 0 THEN 'none'
+         WHEN COALESCE(c.kaution_currency, 'EUR') <> 'EUR' THEN 'other_currency'
+         WHEN COALESCE(c.kaution_returned_date, '') NOT IN ('', 'None') THEN 'returned'
+         WHEN COALESCE((SELECT SUM(kp.amount) FROM kaution_payments kp
+                        WHERE kp.contract_id = c.id), 0) = 0
+              AND COALESCE(c.kaution_paid_date, '') IN ('', 'None') THEN 'unpaid'
+         ELSE 'held'
+    END
+"""
+
 _SETTLEMENT_COLS = f"""
            s.id, s.contract_id, t.name, a.name, p.name,
            s.period_start, s.period_end, s.amount, s.issued_date, s.note,
@@ -135,7 +152,9 @@ _SETTLEMENT_COLS = f"""
                          'tenant_settled', COALESCE(e.tenant_settled, 0) = 1)
                          ORDER BY e.period_start, e.id)
                      FROM nk_settlement_bills l JOIN expenses e ON e.id = l.expense_id
-                     WHERE l.settlement_id = s.id), '[]')
+                     WHERE l.settlement_id = s.id), '[]'),
+           c.kaution_amount,
+           {_KAUTION_STATUS}
 """
 
 _SETTLEMENT_FROM = """
@@ -172,6 +191,8 @@ def _row(r) -> NKSettlementOut:
         has_pdf=bool(r[10]), paid=round(paid, 2), open=open_,
         paid_from_kaution=round(float(r[12]), 2),
         kaution_available=round(float(r[13]), 2) if r[13] is not None else None,
+        kaution_amount=round(float(r[16]), 2) if r[16] is not None else None,
+        kaution_status=r[17],
         kaution_deductions=r[14],
         bills=r[15],
         status=status, deadline=str(deadline) if deadline else None,

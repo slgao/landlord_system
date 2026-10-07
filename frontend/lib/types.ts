@@ -163,6 +163,9 @@ export interface NKSettlement {
   paid: number;                    // payments + deposit kept back
   paid_from_kaution: number;
   kaution_available: number | null; // still held, when it can be used
+  kaution_amount: number | null;    // the agreed deposit
+  // Why it can or cannot carry a Nachzahlung: 'held' is the only state that can.
+  kaution_status: "held" | "returned" | "unpaid" | "none" | "other_currency";
   kaution_deductions: { id: number; date: string; amount: number }[];
   bills: BillBrief[];              // provider bills this Abrechnung covers
   open: number;

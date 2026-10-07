@@ -29,6 +29,17 @@ const EMPTY_SETTLEMENTS: NKOverview["settlements"] = [];
 const EMPTY_PENDING: NKOverview["pending"] = [];
 const EMPTY_UNLINKED: NKOverview["unlinked_kaution"] = [];
 
+// What the Kaution column says when the deposit cannot carry a Nachzahlung.
+// Each state means something different to the landlord, so it is named rather
+// than left blank.
+const KAUTION_STATE: Record<NKSettlement["kaution_status"], string> = {
+  held: "",
+  returned: "already returned",
+  unpaid: "never received",
+  none: "no deposit",
+  other_currency: "not held in EUR",
+};
+
 const STATUS: Record<NKSettlement["status"], { label: string; cls: string }> = {
   open:     { label: "Open",    cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20" },
   partial:  { label: "Partly paid", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/20" },
@@ -243,6 +254,9 @@ export default function NKSettlementsPage() {
                 <TableHead>Result</TableHead>
                 <TableHead className="text-right">Paid</TableHead>
                 <TableHead className="text-right">Open</TableHead>
+                <TableHead className="text-right" title="The deposit still with you: what was agreed, less what has been deducted or paid back">
+                  Kaution
+                </TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Sent</TableHead>
                 <TableHead className="w-36" />
@@ -250,9 +264,9 @@ export default function NKSettlementsPage() {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-10">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-10">Loading…</TableCell></TableRow>
               ) : settlements.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-10">
                   No settlements yet. Generate one under Nebenkostenabrechnung and save it, or record one done elsewhere.
                 </TableCell></TableRow>
               ) : settlements.map((s) => (
@@ -292,6 +306,29 @@ export default function NKSettlementsPage() {
                       <span className="block text-[11px] text-destructive font-sans">too much booked</span>
                     )}
                   </TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    {s.kaution_status === "held" ? (
+                      <>
+                        <span className="font-mono">{eur(s.kaution_available ?? 0)}</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {/* the figure above is what is left; this is what was agreed */}
+                          {s.kaution_amount != null && `of ${eur(s.kaution_amount)} agreed`}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground"
+                        title={s.kaution_status === "unpaid"
+                          ? "Record the deposit payment under the contract's Kaution to offset against it"
+                          : undefined}>
+                        {KAUTION_STATE[s.kaution_status]}
+                      </span>
+                    )}
+                    {s.paid_from_kaution !== 0 && (
+                      <span className="block text-[11px] text-primary">
+                        {eur(Math.abs(s.paid_from_kaution))} taken for this Abrechnung
+                      </span>
+                    )}
+                  </TableCell>
                   <TableCell><Badge className={STATUS[s.status].cls}>{STATUS[s.status].label}</Badge></TableCell>
                   <TableCell className="text-xs whitespace-nowrap">
                     {s.issued_date ? fmtDate(s.issued_date) : <span className="text-muted-foreground">not recorded</span>}
@@ -301,8 +338,10 @@ export default function NKSettlementsPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-0.5">
+                      {/* Only where the app knows the money is there: a deposit
+                          recorded as never received has nothing to keep back. */}
                       {(s.status === "open" || s.status === "partial") && s.amount > 0
-                        && (s.kaution_available ?? 0) > 0.005 && (
+                        && s.kaution_status === "held" && (s.kaution_available ?? 0) > 0.005 && (
                         <Button variant="ghost" size="icon" title="Settle from Kaution" aria-label="Settle from Kaution"
                           onClick={() => setFromKaution(s)}>
                           <Vault className="size-4" />

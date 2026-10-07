@@ -72,11 +72,47 @@ export default function TenantsPage() {
 
   const visible = tenants.filter((t) => matchesQuery(query, [t.name, t.email, t.phone, genderLabel(t.gender)]));
 
+  // Everyone on file, past and present: a tenant row outlives the contract,
+  // so this is how many people have rented from you. Counted over all of
+  // them, not the search result.
+  const byGender = tenants.reduce((acc, t) => {
+    const key = t.gender === "male" || t.gender === "female" ? t.gender : "diverse";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {} as Record<"male" | "female" | "diverse", number>);
+  const share = (n: number) => (tenants.length ? Math.round((n / tenants.length) * 100) : 0);
+
   return (
     <div className="max-w-4xl">
       <PageHeader title="Tenants" action={{ label: "New Tenant", onClick: openCreate }}>
-        <SearchInput value={query} onChange={setQuery} placeholder="Search name, email, phone…" className="w-64" />
+        <SearchInput value={query} onChange={setQuery} placeholder="Search name, email, phone…" className="w-full sm:w-64" />
       </PageHeader>
+
+      <Card className="mb-4 p-4">
+        <div className="flex flex-wrap items-end gap-x-10 gap-y-3">
+          <div>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Tenants in total</p>
+            <p className="text-2xl font-semibold mt-0.5">{tenants.length}</p>
+            <p className="text-xs text-muted-foreground">past and present</p>
+          </div>
+          {([["male", "Herr"], ["female", "Frau"], ["diverse", "Divers"]] as const).map(([key, label]) => (
+            <div key={key}>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
+              <p className="text-xl font-medium mt-0.5">
+                {byGender[key] || 0}
+                <span className="text-xs text-muted-foreground font-normal ml-1.5">
+                  {share(byGender[key] || 0)}%
+                </span>
+              </p>
+            </div>
+          ))}
+          {query && (
+            <p className="text-xs text-muted-foreground ml-auto">
+              {visible.length} of {tenants.length} match &ldquo;{query}&rdquo;
+            </p>
+          )}
+        </div>
+      </Card>
 
       <Card>
         <Table>

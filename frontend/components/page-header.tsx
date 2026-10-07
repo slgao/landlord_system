@@ -11,7 +11,9 @@ interface Props {
 
 export function PageHeader({ title, description, action, children }: Props) {
   return (
-    <div className="flex items-start justify-between mb-6">
+    // Wraps rather than forcing the page wider than the screen: a title plus a
+    // search box and an action button do not fit on a phone in one row.
+    <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
       <div>
         <h1 className="font-display text-2xl font-extrabold tracking-tight">{title}</h1>
         {description && (

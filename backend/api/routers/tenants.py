@@ -7,15 +7,27 @@ router = APIRouter(prefix="/tenants", tags=["Tenants"])
 
 _COLS = "id, name, email, phone, gender"
 
+# Contracts running today: started, not ended, not terminated. The same rule
+# the contracts page calls "active", so the two agree.
+_ACTIVE_CONTRACTS = """
+    COALESCE((SELECT COUNT(*) FROM contracts c
+              WHERE c.tenant_id = t.id AND c.owner_id = t.owner_id
+                AND COALESCE(c.terminated, 0) = 0
+                AND c.start_date <= date('now')
+                AND (c.end_date IS NULL OR c.end_date = 'None'
+                     OR c.end_date >= date('now'))), 0)
+"""
+
 
 def _row(r) -> TenantOut:
-    return TenantOut(id=r[0], name=r[1], email=r[2], phone=r[3], gender=r[4])
+    return TenantOut(id=r[0], name=r[1], email=r[2], phone=r[3], gender=r[4],
+                     active_contracts=int(r[5]) if len(r) > 5 and r[5] is not None else 0)
 
 
 @router.get("/", response_model=list[TenantOut])
 def list_tenants(owner: int = Depends(require_auth)):
-    rows = fetch(f"SELECT {_COLS} FROM tenants WHERE owner_id=? ORDER BY name",
-                 (owner,))
+    rows = fetch(f"SELECT {_COLS}, {_ACTIVE_CONTRACTS} FROM tenants t "
+                 "WHERE owner_id=? ORDER BY name", (owner,))
     return [_row(r) for r in rows]
 
 

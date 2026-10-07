@@ -81,6 +81,7 @@ export default function TenantsPage() {
     return acc;
   }, {} as Record<"male" | "female" | "diverse", number>);
   const share = (n: number) => (tenants.length ? Math.round((n / tenants.length) * 100) : 0);
+  const renting = tenants.filter((t) => (t.active_contracts ?? 0) > 0).length;
 
   return (
     <div className="max-w-4xl">
@@ -94,6 +95,15 @@ export default function TenantsPage() {
             <p className="text-xs text-muted-foreground uppercase tracking-wide">Tenants in total</p>
             <p className="text-2xl font-semibold mt-0.5">{tenants.length}</p>
             <p className="text-xs text-muted-foreground">past and present</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Currently renting</p>
+            <p className="text-2xl font-semibold mt-0.5 text-primary">{renting}</p>
+            <p className="text-xs text-muted-foreground">
+              {/* "no longer" would be wrong for someone who never rented, and
+                  for a contract that starts next month. */}
+              {tenants.length - renting} not renting now
+            </p>
           </div>
           {([["male", "Herr"], ["female", "Frau"], ["diverse", "Divers"]] as const).map(([key, label]) => (
             <div key={key}>

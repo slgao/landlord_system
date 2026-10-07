@@ -39,6 +39,9 @@ export interface Tenant {
   email?: string;
   phone?: string;
   gender: string;
+  // Contracts running today — started, not ended, not terminated. A contract
+  // that starts next month does not count: nobody is renting on it yet.
+  active_contracts?: number;
 }
 
 export interface Contract {

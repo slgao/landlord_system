@@ -71,7 +71,11 @@ export default function TenantsPage() {
   const genderLabel = (g: string) =>
     g === "male" ? "Herr" : g === "female" ? "Frau" : "Divers";
 
-  const visible = tenants.filter((t) => matchesQuery(query, [t.name, t.email, t.phone, genderLabel(t.gender)]));
+  const visible = tenants.filter((t) => matchesQuery(query, [
+    t.name, t.email, t.phone, genderLabel(t.gender),
+    // Searching the flat finds who lives there.
+    ...(t.renting ?? []).flatMap((r) => [r.property_name, r.apartment_name]),
+  ]));
 
   // Everyone on file, past and present: a tenant row outlives the contract,
   // so this is how many people have rented from you. Counted over all of
@@ -158,6 +162,13 @@ export default function TenantsPage() {
                         Renting{(t.active_contracts ?? 0) > 1 ? ` ×${t.active_contracts}` : ""}
                       </Badge>
                     )}
+                    {/* Which flat, so the badge says who and where. */}
+                    {(t.renting ?? []).map((r) => (
+                      <span key={r.contract_id} className="block text-xs font-normal text-muted-foreground">
+                        {r.property_name} · {r.apartment_name}
+                        {r.end_date ? ` · until ${r.end_date}` : ""}
+                      </span>
+                    ))}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{t.email || "—"}</TableCell>
                   <TableCell className="text-muted-foreground">

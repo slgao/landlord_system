@@ -19,3 +19,5 @@ class TenantOut(BaseModel):
     phone: Optional[str] = None
     gender: str
     active_contracts: int = 0
+    # One entry per contract running today: which flat, in which property.
+    renting: list[dict] = []

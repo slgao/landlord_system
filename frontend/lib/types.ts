@@ -42,6 +42,14 @@ export interface Tenant {
   // Contracts running today — started, not ended, not terminated. A contract
   // that starts next month does not count: nobody is renting on it yet.
   active_contracts?: number;
+  // One entry per contract running today: which flat, in which property.
+  renting?: {
+    contract_id: number;
+    apartment_name: string;
+    property_name: string;
+    start_date: string;
+    end_date: string | null;
+  }[];
 }
 
 export interface Contract {

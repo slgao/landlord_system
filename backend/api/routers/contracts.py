@@ -120,12 +120,30 @@ def get_contract(contract_id: int, owner: int = Depends(require_auth)):
 RENT_CURRENCY = "EUR"
 
 
+def _refuse_duplicate(tenant_id: int, apartment_id: int, start_date: str, owner: int) -> None:
+    """One tenancy per tenant, flat and start date.
+
+    A contract saved twice — a retry, or the same term entered again — is not
+    visible as a mistake afterwards: both rows look right, and every month
+    they overlap is counted twice in the expected rent. A second term for the
+    same tenant in the same flat starts on a different day, so this refuses
+    only the duplicate."""
+    dup = fetch("SELECT id FROM contracts WHERE tenant_id=? AND apartment_id=? "
+                "AND start_date=? AND owner_id=?",
+                (tenant_id, apartment_id, start_date, owner))
+    if dup:
+        raise HTTPException(409,
+            f"This tenant already has a contract for this flat starting {start_date} "
+            f"(#{dup[0][0]}). Edit that one, or start a new term from a later date.")
+
+
 @router.post("/", response_model=ContractOut, status_code=201)
 def create_contract(body: ContractIn, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM tenants WHERE id=? AND owner_id=?", (body.tenant_id, owner)):
         raise HTTPException(status_code=404, detail="Tenant not found")
     if not fetch("SELECT id FROM apartments WHERE id=? AND owner_id=?", (body.apartment_id, owner)):
         raise HTTPException(status_code=404, detail="Apartment not found")
+    _refuse_duplicate(body.tenant_id, body.apartment_id, body.start_date, owner)
     new_id = execute_returning("""
         INSERT INTO contracts
           (tenant_id, apartment_id, rent, currency, start_date, end_date,

@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo, memo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
 import { todayISO } from "@/lib/utils";
-import { MeterReading, StromMeter, GasMeter, WasserMeter, HeizungMeter, Apartment, MetersOverview } from "@/lib/types";
+import { MeterReading, StromMeter, GasMeter, WasserMeter, HeizungMeter, Apartment, MetersOverview, MeterType } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { GroupCard } from "@/components/group-card";
 import { Button } from "@/components/ui/button";
@@ -22,12 +22,13 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
-import { Trash2, Pencil, Plus } from "lucide-react";
+import { Trash2, Pencil, Plus, Calculator } from "lucide-react";
+import { CostEstimateDialog } from "@/components/meter-cost-estimate";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 
-type MeterType = "strom" | "gas" | "wasser" | "heizung";
+
 
 // Frozen module-level constants, not `[]` inline: MeterBlock is memoized on
 // `readings` by reference, and a new array each render would defeat it.
@@ -68,7 +69,7 @@ function MeterChart({ readings }: { readings: MeterReading[] }) {
 // reference between renders), and the handlers are stabilized with useCallback,
 // so memo can skip re-rendering while the user types.
 const MeterBlock = memo(function MeterBlock({
-  type, m, readings, onAddReading, onEditMeter, onDeleteMeter, onDeleteReading,
+  type, m, readings, onAddReading, onEditMeter, onDeleteMeter, onDeleteReading, onEstimate,
 }: {
   type: MeterType;
   m: any;
@@ -77,6 +78,7 @@ const MeterBlock = memo(function MeterBlock({
   onEditMeter: (type: MeterType, m: any) => void;
   onDeleteMeter: (type: string, id: number) => void;
   onDeleteReading: (id: number) => void;
+  onEstimate: (type: MeterType, m: any, readings: MeterReading[]) => void;
 }) {
   const mrs = useMemo(
     () => readings.filter((r) => r.meter_type === type && r.meter_id === m.id)
@@ -108,6 +110,11 @@ const MeterBlock = memo(function MeterBlock({
         <div className="flex gap-1 shrink-0">
           <Button variant="outline" size="sm" onClick={() => onAddReading(type, m.id)}>
             <Plus className="size-3.5 mr-1" /> Reading
+          </Button>
+          <Button variant="ghost" size="icon" title="Estimate what this costs over a period"
+            aria-label={`Estimate cost for ${m.serial_number || "this meter"}`}
+            onClick={() => onEstimate(type, m, mrs)}>
+            <Calculator className="size-4" />
           </Button>
           <Button variant="ghost" size="icon" onClick={() => onEditMeter(type, m)}><Pencil className="size-4" /></Button>
           <ConfirmButton
@@ -187,6 +194,13 @@ export default function MeterReadingsPage() {
   const [editingMeter, setEditingMeter] = useState<any>(null);
   const [readForm, setReadForm] = useState({ meter_type: "strom", meter_id: 0, reading_date: todayISO(), reading: 0, note: "" });
   const [filterProp, setFilterProp] = useState("all");
+  // Which meter's cost is being worked out, with the readings it is based on.
+  const [estimating, setEstimating] = useState<
+    { type: MeterType; m: any; readings: MeterReading[] } | null>(null);
+  const openEstimate = useCallback(
+    (type: MeterType, m: any, readings: MeterReading[]) => setEstimating({ type, m, readings }),
+    [],
+  );
 
   const [stromForm, setStromForm] = useState({ apartment_id: 0, serial_number: "", description: "", scope: "shared" });
   const [gasForm, setGasForm] = useState({ apartment_id: 0, serial_number: "", description: "", z_zahl: 1.0, brennwert: 10.0, scope: "shared" });
@@ -325,6 +339,7 @@ export default function MeterReadingsPage() {
                     ) : (
                       meters.map(({ type, m }) => (
                         <MeterBlock
+                          onEstimate={openEstimate}
                           key={`${type}-${m.id}`}
                           type={type}
                           m={m}
@@ -448,6 +463,14 @@ export default function MeterReadingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CostEstimateDialog
+        open={!!estimating}
+        onOpenChange={(o) => { if (!o) setEstimating(null); }}
+        type={estimating?.type ?? "strom"}
+        meter={estimating?.m ?? null}
+        readings={estimating?.readings ?? EMPTY_READINGS}
+      />
     </div>
   );
 }

@@ -462,3 +462,88 @@ def detect_overdue(default_months_back=12, owner=None):
 
     return results
 
+
+
+# ── What a meter's consumption costs over a period ───────────────────────────
+
+def reading_on(readings, on_date: str):
+    """The meter's value on `on_date`, and where the number came from.
+
+    `readings` is [(date, value), ...] in any order. A date that was actually
+    read gives ("measured", value). Between two readings the value is
+    interpolated — a meter runs on while nobody reads it. Outside the
+    readings, it is extrapolated from the average daily rate of the whole
+    series, which is an estimate and says so.
+
+    Returns (value, source) or (None, "no_readings").
+    """
+    rs = sorted(((str(d), float(v)) for d, v in readings if d), key=lambda x: x[0])
+    if not rs:
+        return None, "no_readings"
+    if len(rs) == 1:
+        return rs[0][1], "measured" if rs[0][0] == on_date else "extrapolated"
+
+    for d, v in rs:
+        if d == on_date:
+            return v, "measured"
+
+    def days_between(a: str, b: str) -> int:
+        return (_date.fromisoformat(b) - _date.fromisoformat(a)).days
+
+    if rs[0][0] < on_date < rs[-1][0]:
+        before = max((r for r in rs if r[0] < on_date), key=lambda r: r[0])
+        after = min((r for r in rs if r[0] > on_date), key=lambda r: r[0])
+        span = days_between(before[0], after[0])
+        if span <= 0:
+            return before[1], "measured"
+        share = days_between(before[0], on_date) / span
+        return before[1] + (after[1] - before[1]) * share, "interpolated"
+
+    # Outside the measured window: carry the average rate forwards or back.
+    total_days = days_between(rs[0][0], rs[-1][0])
+    per_day = (rs[-1][1] - rs[0][1]) / total_days if total_days > 0 else 0.0
+    edge = rs[-1] if on_date > rs[-1][0] else rs[0]
+    return edge[1] + per_day * days_between(edge[0], on_date), "extrapolated"
+
+
+def estimate_utility_cost(readings, start_date: str, end_date: str,
+                          arbeitspreis: float, grundpreis_monthly: float = 0.0,
+                          conversion_factor: float = 1.0) -> dict:
+    """What a meter's consumption over [start_date, end_date] costs.
+
+    consumption × conversion_factor × Arbeitspreis, plus the Grundpreis for
+    the days in the period. The Grundpreis is prorated by day exactly as the
+    Nebenkostenabrechnung does it (monthly × 12 ÷ 365), so an estimate and a
+    later Abrechnung of the same period agree.
+
+    `conversion_factor` turns meter units into billed units — gas is metered
+    in m³ and billed in kWh (Zustandszahl × Brennwert).
+    """
+    if end_date < start_date:
+        raise ValueError("end_date must not be before start_date")
+    start_value, start_src = reading_on(readings, start_date)
+    end_value, end_src = reading_on(readings, end_date)
+    if start_value is None or end_value is None:
+        return {"readings": 0, "source": "no_readings"}
+
+    days = (_date.fromisoformat(end_date) - _date.fromisoformat(start_date)).days + 1
+    consumption = end_value - start_value
+    billed_units = consumption * (conversion_factor or 1.0)
+    arbeitskosten = billed_units * arbeitspreis
+    grundkosten = grundpreis_monthly * 12 / 365 * days
+    total = arbeitskosten + grundkosten
+    return {
+        "readings": len(readings),
+        "start_value": round(start_value, 3), "start_source": start_src,
+        "end_value": round(end_value, 3), "end_source": end_src,
+        "consumption": round(consumption, 3),
+        "billed_units": round(billed_units, 3),
+        "conversion_factor": conversion_factor or 1.0,
+        "days": days,
+        "arbeitskosten": round(arbeitskosten, 2),
+        "grundkosten": round(grundkosten, 2),
+        "total": round(total, 2),
+        "per_month": round(total / days * 365 / 12, 2) if days else 0.0,
+        # An estimate only where a bound had to be derived.
+        "estimated": start_src != "measured" or end_src != "measured",
+    }

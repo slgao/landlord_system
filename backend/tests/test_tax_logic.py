@@ -181,6 +181,14 @@ def test_expense_spread_remainder_lands_in_final_year():
     assert sum(shares) == 1_000.0
 
 
+@pytest.mark.parametrize("bad_date", [None, "", "None"])
+def test_an_undated_expense_claims_nothing_instead_of_crashing(bad_date):
+    """Date columns are TEXT and legacy rows hold the string 'None'. Such a row
+    cannot be placed in a tax year; reading .year off the unparsed date took the
+    whole tax report down with a 500."""
+    assert expense_share_for_year(bad_date, 6_000, 1, 2025) == 0.0
+
+
 # ── Contract months (gap-year estimate) ──────────────────────────────────────
 
 def test_contract_months():

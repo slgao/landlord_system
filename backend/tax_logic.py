@@ -269,6 +269,11 @@ def expense_share_for_year(
     The final year takes the rounding remainder so the shares sum exactly to
     the invoice amount (1000/3 → 333.33, 333.33, 333.34)."""
     d = _parse(expense_date)
+    # A row with no usable date cannot be placed in a tax year. Legacy rows
+    # hold the string 'None' and _parse returns None for them; reading .year
+    # off that took the whole tax report down with a 500.
+    if d is None:
+        return 0.0
     n = max(int(distribute_years or 1), 1)
     if not (d.year <= year <= d.year + n - 1):
         return 0.0

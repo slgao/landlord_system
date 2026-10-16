@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
-from db import get_config, set_config
+from db import get_configs, set_config
 from auth import require_auth
 
 router = APIRouter(prefix="/config", tags=["Config"])
@@ -47,12 +47,12 @@ class SmtpConfigIn(BaseModel):
     smtp_password: Optional[str] = None
 
 
-# get_config/set_config are owner-scoped via the request's owner context, which
+# get_configs/set_config are owner-scoped via the request's owner context, which
 # require_auth publishes; the owner dependency below guarantees it is set.
 
 @router.get("/", response_model=ConfigOut)
 def get_all_config(owner: int = Depends(require_auth)):
-    return ConfigOut(**{k: get_config(k) for k in _KEYS})
+    return ConfigOut(**get_configs(_KEYS))
 
 
 @router.put("/", response_model=ConfigOut)
@@ -61,13 +61,16 @@ def update_config(body: ConfigIn, owner: int = Depends(require_auth)):
         v = getattr(body, k)
         if v is not None:
             set_config(k, v)
-    return ConfigOut(**{k: get_config(k) for k in _KEYS})
+    return ConfigOut(**get_configs(_KEYS))
 
 
 def _smtp_out() -> SmtpConfigOut:
-    from db import get_secret_config
-    return SmtpConfigOut(**{k: get_config(k) for k in _SMTP_KEYS},
-                         smtp_password_set=bool(get_secret_config("smtp_password", "")))
+    from db import decrypt_secret
+    # One round trip for the lot, password included — it is decrypted here
+    # rather than re-read, and still never leaves the server.
+    vals = get_configs([*_SMTP_KEYS, "smtp_password"])
+    return SmtpConfigOut(**{k: vals[k] for k in _SMTP_KEYS},
+                         smtp_password_set=bool(decrypt_secret(vals["smtp_password"], "")))
 
 
 @router.get("/smtp", response_model=SmtpConfigOut)

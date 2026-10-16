@@ -93,16 +93,24 @@ def _loan(mid, pid, label, principal, ir, tr, start, fixed_until=None, follow=No
 
 
 def _install(monkeypatch, properties, loans, apartments=()):
-    def fake_fetch(sql, params=()):
-        q = " ".join(sql.split())
-        if "FROM mortgages" in q:
-            return list(loans)
-        if "FROM properties" in q:
-            return list(properties)
-        if "FROM apartments" in q:
-            return list(apartments)
-        raise AssertionError(f"unexpected query: {q}")
-    monkeypatch.setattr(tax_router, "fetch", fake_fetch)
+    """The endpoint asks for loans, properties and flats in ONE bundled round
+    trip, so the fake answers the bundle by part name. `fetch` is left failing
+    so an unbundled query added later shows up as a test failure, not a silent
+    extra round trip."""
+    canned = {"mortgages": list(loans), "props": list(properties),
+              "flats": list(apartments)}
+
+    def fake_bundle(parts):
+        names = [n for n, _, _ in parts]
+        unknown = set(names) - set(canned)
+        assert not unknown, f"unexpected bundle parts: {sorted(unknown)}"
+        return {n: canned[n] for n in names}
+
+    def fail_fetch(sql, params=()):
+        raise AssertionError(f"unbundled query: {' '.join(sql.split())}")
+
+    monkeypatch.setattr(tax_router, "fetch_bundle", fake_bundle)
+    monkeypatch.setattr(tax_router, "fetch", fail_fetch)
 
 
 def test_equity_is_value_less_debt(monkeypatch):

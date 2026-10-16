@@ -1,8 +1,9 @@
 """Tests for logic.detect_overdue — the payment-reminders core.
 
-detect_overdue issues exactly two DB queries (active contracts, then payments
-grouped per contract per month). We monkeypatch `logic.fetch` to route each
-query to canned rows, so these run without a database. The model is a running
+detect_overdue issues exactly ONE bundled DB round trip (active contracts and
+payments grouped per contract per month, asked together). We monkeypatch
+`logic.fetch_bundle` to route each part to canned rows, so these run without a
+database. The model is a running
 cumulative balance over a per-contract window, so the tests focus on that:
 early payments and double payments net out, current-month payments are credit,
 and `rent_settled_until` moves the window start.
@@ -37,16 +38,26 @@ def _month_end(first):
 def _install_fetch(monkeypatch, contracts, payments, deposit=()):
     """`payments` and `deposit` rows are (contract_id, 'YYYY-MM', amount): rent
     paid, and rent kept from the Kaution. The loader returns both in one
-    UNION, tagged 0 / 1."""
-    def fake_fetch(query, params=()):
-        q = " ".join(query.split())
-        if "FROM payments" in q and "GROUP BY" in q:
-            return ([(c, ym, 0, amt) for c, ym, amt in payments]
-                    + [(c, ym, 1, amt) for c, ym, amt in deposit])
-        if "FROM contracts" in q and "JOIN tenants" in q:
-            return contracts
-        raise AssertionError(f"unexpected query: {q}")
-    monkeypatch.setattr(logic, "fetch", fake_fetch)
+    UNION, tagged 0 / 1.
+
+    Money crosses the bundle as TEXT (json_build_array would hand back floats,
+    and rent arithmetic must stay Decimal), so the fake stringifies it exactly
+    as `::text` does. `fetch` is left failing so an unbundled query added later
+    shows up as a test failure rather than a silent extra round trip."""
+    def fake_bundle(parts):
+        names = [n for n, _, _ in parts]
+        assert names == ["contracts", "paid"], f"unexpected bundle: {names}"
+        return {
+            "contracts": [(*c[:4], str(c[4]), *c[5:]) for c in contracts],
+            "paid": ([(c, ym, 0, str(amt)) for c, ym, amt in payments]
+                     + [(c, ym, 1, str(amt)) for c, ym, amt in deposit]),
+        }
+
+    def fail_fetch(query, params=()):
+        raise AssertionError(f"unbundled query: {' '.join(query.split())}")
+
+    monkeypatch.setattr(logic, "fetch_bundle", fake_bundle)
+    monkeypatch.setattr(logic, "fetch", fail_fetch)
 
 
 # Active-contracts row shape:

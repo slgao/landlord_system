@@ -414,17 +414,22 @@ def _attribution(reading_id: int, owner: int, exclude: int | None = None) -> lis
             if exclude is None or pid != exclude]
 
 
-def _meter_meta(meter_type: str, meter_id: int):
+def _meter_meta(meter_type: str, meter_id: int, owner: int):
     table = _METER_TABLES.get(meter_type)
     if not table:
         return (None, None)
-    rows = fetch(f"SELECT serial_number, description FROM {table} WHERE id=?", (meter_id,))
+    rows = fetch(f"SELECT serial_number, description FROM {table} "
+                 "WHERE id=? AND owner_id=?", (meter_id, owner))
     return (rows[0][0], rows[0][1]) if rows else (None, None)
 
 
-def _meter_meta_bulk(pairs) -> dict:
+def _meter_meta_bulk(pairs, owner: int) -> dict:
     """{(meter_type, meter_id): (serial, description)} — one query per meter
-    *type* present rather than one per reading."""
+    *type* present rather than one per reading.
+
+    Owner-scoped like every other read here: the ids arrive from this owner's
+    own readings, so a foreign meter should never be among them, and a lookup
+    that cannot return one keeps it that way."""
     by_type: dict[str, set] = {}
     for mtype, mid in pairs:
         by_type.setdefault(mtype, set()).add(mid)
@@ -436,7 +441,7 @@ def _meter_meta_bulk(pairs) -> dict:
         placeholders = ",".join("?" for _ in ids)
         for mid, serial, desc in fetch(
                 f"SELECT id, serial_number, description FROM {table} "
-                f"WHERE id IN ({placeholders})", tuple(ids)):
+                f"WHERE id IN ({placeholders}) AND owner_id=?", (*ids, owner)):
             out[(mtype, mid)] = (serial, desc)
     return out
 
@@ -475,7 +480,7 @@ def list_protocol_readings(protocol_id: int, owner: int = Depends(require_auth))
     """, (protocol_id, owner))
     # Two bulk lookups instead of two queries per reading: a WG flat reads six
     # meters, which cost fourteen round trips on a database 38 ms away.
-    meta = _meter_meta_bulk({(r[1], r[2]) for r in rows})
+    meta = _meter_meta_bulk({(r[1], r[2]) for r in rows}, owner)
     also = _attribution_bulk([r[0] for r in rows], owner, exclude=protocol_id)
     out = []
     for r in rows:
@@ -535,7 +540,7 @@ def add_protocol_reading(protocol_id: int, body: ProtocolReadingIn,
                 "VALUES (?,?,?)", (rid, protocol_id, owner))
 
     row = fetch("SELECT reading, note FROM meter_readings WHERE id=?", (rid,))[0]
-    serial, desc = _meter_meta(body.meter_type, body.meter_id)
+    serial, desc = _meter_meta(body.meter_type, body.meter_id, owner)
     return ProtocolReadingOut(
         id=rid, meter_type=body.meter_type, meter_id=body.meter_id,
         reading_date=prot_date, reading=float(row[0]), note=row[1],

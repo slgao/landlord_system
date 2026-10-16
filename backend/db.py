@@ -184,6 +184,23 @@ def get_config(key, default=None):
     return rows[0][0] if rows else default
 
 
+def get_configs(keys, default=None):
+    """Several config values in ONE round trip: {key: value or default}.
+
+    A page that reads five settings used to cost five round trips — 125 ms of
+    waiting for 171 bytes on a database 25 ms away. Keys with no row come back
+    as `default`, so this is a drop-in for a dict comprehension over
+    get_config()."""
+    keys = list(keys)
+    if not keys:
+        return {}
+    placeholders = ",".join("?" for _ in keys)
+    rows = fetch(f"SELECT key, value FROM config WHERE owner_id=? AND key IN ({placeholders})",
+                 (current_owner(), *keys))
+    found = dict(rows)
+    return {k: found.get(k, default) for k in keys}
+
+
 def set_config(key, value):
     owner = require_owner()
     execute(
@@ -202,9 +219,9 @@ def _fernet():
     return Fernet(key.encode())
 
 
-def get_secret_config(key, default=None):
-    """Read a config value and decrypt it if FERNET_KEY is set."""
-    value = get_config(key, default)
+def decrypt_secret(value, default=None):
+    """Decrypt a stored config value, for a caller that already has it in hand
+    (e.g. from get_configs()). Mirrors get_secret_config() exactly."""
     if not value or value == default:
         return value
     f = _fernet()
@@ -214,6 +231,11 @@ def get_secret_config(key, default=None):
         return f.decrypt(value.encode()).decode()
     except Exception:
         return value  # legacy plaintext — return as-is
+
+
+def get_secret_config(key, default=None):
+    """Read a config value and decrypt it if FERNET_KEY is set."""
+    return decrypt_secret(get_config(key, default), default)
 
 
 def set_secret_config(key, value):

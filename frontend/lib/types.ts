@@ -304,6 +304,9 @@ export interface HeizungMeter {
   scope: string;
 }
 
+/** The four kinds of meter the app tracks. */
+export type MeterType = "strom" | "gas" | "wasser" | "heizung";
+
 export interface MeterReading {
   id: number;
   meter_type: string;

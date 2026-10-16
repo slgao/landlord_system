@@ -537,6 +537,44 @@ def meters_overview(owner: int = Depends(require_auth)):
     )
 
 
+class CostEstimateIn(BaseModel):
+    meter_type: str
+    meter_id: int
+    start_date: IsoDate
+    end_date: IsoDate
+    arbeitspreis: float = 0.0            # € per billed unit
+    grundpreis_monthly: float = 0.0      # € per month, prorated by day
+    # Meter units → billed units. Gas is metered in m³ and billed in kWh
+    # (Zustandszahl × Brennwert); everything else bills what it meters.
+    conversion_factor: float = 1.0
+
+
+@router.post("/cost-estimate")
+def cost_estimate(body: CostEstimateIn, owner: int = Depends(require_auth)):
+    """What this meter's consumption over a period costs at a given tariff.
+
+    The readings are the meter's own; a bound nobody read is interpolated
+    between the surrounding readings, or carried from the average daily rate
+    when it lies outside them — the answer says which, because that is the
+    difference between a calculation and an estimate.
+    """
+    table = _METER_TABLES.get(body.meter_type)
+    if not table:
+        raise HTTPException(422, "Unknown meter_type")
+    if not fetch(f"SELECT id FROM {table} WHERE id=? AND owner_id=?", (body.meter_id, owner)):
+        raise HTTPException(404, "Meter not found")
+    rows = fetch("SELECT reading_date, reading FROM meter_readings "
+                 "WHERE meter_type=? AND meter_id=? AND owner_id=? ORDER BY reading_date",
+                 (body.meter_type, body.meter_id, owner))
+    from logic import estimate_utility_cost
+    try:
+        return estimate_utility_cost(
+            [(r[0], float(r[1])) for r in rows], body.start_date, body.end_date,
+            body.arbeitspreis, body.grundpreis_monthly, body.conversion_factor)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 @router.delete("/readings/{reading_id}", status_code=204)
 def delete_reading(reading_id: int, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM meter_readings WHERE id=? AND owner_id=?", (reading_id, owner)):

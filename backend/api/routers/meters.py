@@ -446,12 +446,17 @@ def list_readings(meter_type: str | None = None, meter_id: int | None = None,
     if meter_id:
         conditions.append("meter_id=?"); params.append(meter_id)
     where = "WHERE " + " AND ".join(conditions)
-    rows = fetch(f"{_READINGS_SQL} {where} ORDER BY reading_date DESC, id DESC", tuple(params))
-    if not rows:
+    # The readings and the handovers they were taken at are independent reads,
+    # so they travel together — one round trip for the page, not two.
+    loaded = fetch_bundle([
+        json_part("readings",
+                  f"{_READINGS_SQL} {where} ORDER BY reading_date DESC, id DESC",
+                  tuple(params)),
+        json_part("taken_at", _TAKEN_AT_SQL, (owner,)),
+    ])
+    if not loaded["readings"]:
         return []
-
-    # One query for the whole page rather than one per reading.
-    return _readings_from(rows, fetch(_TAKEN_AT_SQL, (owner,)))
+    return _readings_from(loaded["readings"], loaded["taken_at"])
 
 
 # Which handover each reading was taken at. Owner-wide and independent of the
@@ -561,11 +566,20 @@ def cost_estimate(body: CostEstimateIn, owner: int = Depends(require_auth)):
     table = _METER_TABLES.get(body.meter_type)
     if not table:
         raise HTTPException(422, "Unknown meter_type")
-    if not fetch(f"SELECT id FROM {table} WHERE id=? AND owner_id=?", (body.meter_id, owner)):
+    # The meter must be this owner's, and its readings are wanted either way:
+    # asked together, they cost one round trip instead of two per keystroke-
+    # debounced recalculation.
+    loaded = fetch_bundle([
+        json_part("meter", f"SELECT id FROM {table} WHERE id=? AND owner_id=?",
+                  (body.meter_id, owner)),
+        json_part("readings",
+                  "SELECT reading_date, reading FROM meter_readings "
+                  "WHERE meter_type=? AND meter_id=? AND owner_id=? ORDER BY reading_date",
+                  (body.meter_type, body.meter_id, owner)),
+    ])
+    if not loaded["meter"]:
         raise HTTPException(404, "Meter not found")
-    rows = fetch("SELECT reading_date, reading FROM meter_readings "
-                 "WHERE meter_type=? AND meter_id=? AND owner_id=? ORDER BY reading_date",
-                 (body.meter_type, body.meter_id, owner))
+    rows = loaded["readings"]
     from logic import estimate_utility_cost
     try:
         return estimate_utility_cost(

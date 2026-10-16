@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "@/lib/api";
+import { todayISO } from "@/lib/utils";
 import { MeterReading, MeterType } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +36,8 @@ export interface CostEstimate {
   total?: number;
   per_month?: number;
   estimated?: boolean;
+  /** The meter counted down over the period — exchanged, or a reading mistyped. */
+  decreasing?: boolean;
 }
 
 type Source = "measured" | "interpolated" | "extrapolated";
@@ -58,10 +61,16 @@ const eur = (n: number) =>
 const num = (n: number, digits = 2) =>
   n.toLocaleString("de-DE", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 
+/** `months` whole months before an ISO date, clamped to the end of the target
+ *  month. Plain Date arithmetic overflows: 31 May minus three months is
+ *  `new Date(y, 1, 31)` — February 31st, which rolls over to 3 March and makes
+ *  the period start days late. */
 function monthsAgo(iso: string, months: number) {
   const [y, m, d] = iso.split("-").map(Number);
-  const t = new Date(y, m - 1 - months, d);
-  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  const target = new Date(y, m - 1 - months, 1);
+  const lastOfMonth = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  const day = Math.min(d, lastOfMonth);
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 /** The tariff last used for this meter, so it is typed once, not every time. */
@@ -114,7 +123,7 @@ export function CostEstimateDialog({
 
   useEffect(() => {
     if (!open || !meter) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayISO();
     setFrom(dates[0] || monthsAgo(today, 12));
     setTo(dates[dates.length - 1] || today);
     const saved = rememberedTariff(storeKey);
@@ -160,7 +169,7 @@ export function CostEstimateDialog({
   }, [open, valid, run]);
 
   const quick = (months: number) => {
-    const end = dates[dates.length - 1] || new Date().toISOString().slice(0, 10);
+    const end = dates[dates.length - 1] || todayISO();
     setTo(end);
     setFrom(monthsAgo(end, months));
   };
@@ -243,11 +252,17 @@ export function CostEstimateDialog({
                   <div className="flex items-end justify-between gap-3">
                     <div>
                       <p className="text-xs text-muted-foreground uppercase tracking-wide">
-                        Cost for {result.days} day{result.days === 1 ? "" : "s"}
+                        {result.decreasing ? "Not a cost" : "Cost"} for {result.days} day
+                        {result.days === 1 ? "" : "s"}
                       </p>
-                      <p className="text-3xl font-semibold tabular-nums mt-0.5">{eur(result.total ?? 0)}</p>
+                      <p className={`text-3xl font-semibold tabular-nums mt-0.5 ${
+                        result.decreasing ? "text-muted-foreground" : ""}`}>
+                        {eur(result.total ?? 0)}
+                      </p>
                     </div>
-                    <p className="text-sm text-muted-foreground">≈ {eur(result.per_month ?? 0)}/month</p>
+                    {!result.decreasing && (
+                      <p className="text-sm text-muted-foreground">≈ {eur(result.per_month ?? 0)}/month</p>
+                    )}
                   </div>
                   <div className="mt-3 space-y-1 text-sm">
                     <div className="flex justify-between">
@@ -282,7 +297,16 @@ export function CostEstimateDialog({
                       );
                     })}
                   </div>
-                  {result.estimated && (
+                  {result.decreasing && (
+                    <p className="mt-2 text-xs text-destructive">
+                      The meter counted <strong>down</strong> over this period
+                      ({num(result.start_value ?? 0, 1)} → {num(result.end_value ?? 0, 1)}{" "}
+                      {unitLabel}), which a meter cannot do. Either it was exchanged — read the
+                      old and the new one separately — or a reading was mistyped. Until that is
+                      corrected this figure is not a cost.
+                    </p>
+                  )}
+                  {result.estimated && !result.decreasing && (
                     <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
                       A reading was derived rather than read, so this is an estimate. Record a
                       reading on the period&apos;s edges to make it exact.

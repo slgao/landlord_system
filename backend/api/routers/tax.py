@@ -158,14 +158,23 @@ def _mortgage_row(r) -> dict:
 
 @router.get("/profiles")
 def list_profiles(owner: int = Depends(require_auth)):
-    props = fetch("SELECT id, name, COALESCE(tax_relevant,1) FROM properties "
-                  "WHERE owner_id=? ORDER BY name", (owner,))
-    profiles = {r[0]: r for r in fetch(
-        "SELECT property_id, purchase_date, purchase_price, building_share_pct,"
-        "       afa_rate_pct, notes FROM property_tax_profiles WHERE owner_id=?", (owner,))}
+    # The three reads are independent, so they travel together: one round trip
+    # instead of three on a database ~25 ms away.
+    loaded = fetch_bundle([
+        json_part("props",
+                  "SELECT id, name, COALESCE(tax_relevant,1) FROM properties "
+                  "WHERE owner_id=? ORDER BY name", (owner,)),
+        json_part("profiles",
+                  "SELECT property_id, purchase_date, purchase_price, building_share_pct, "
+                  "afa_rate_pct, notes FROM property_tax_profiles WHERE owner_id=?", (owner,)),
+        json_part("mortgages",
+                  f"SELECT {_MORTGAGE_COLS} FROM mortgages WHERE owner_id=? ORDER BY id",
+                  (owner,)),
+    ])
+    props = loaded["props"]
+    profiles = {r[0]: r for r in loaded["profiles"]}
     mortgages: dict[int, list] = {}
-    for r in fetch(f"SELECT {_MORTGAGE_COLS} FROM mortgages "
-                   "WHERE owner_id=? ORDER BY id", (owner,)):
+    for r in loaded["mortgages"]:
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
 
     out = []
@@ -320,24 +329,34 @@ def amortization(owner: int = Depends(require_auth)):
     the property's `combined` timeline sums them.
     """
     today = date.today()
+    # Loans, the market values that turn debt into equity, and the flat labels:
+    # three independent reads, so they go in one round trip. They are fetched
+    # together even when there are no loans — one trip either way, and the
+    # no-loan case returns below without touching them.
+    loaded = fetch_bundle([
+        json_part("mortgages",
+                  f"SELECT {_MORTGAGE_COLS} FROM mortgages "
+                  "WHERE owner_id=? ORDER BY start_date, id", (owner,)),
+        json_part("props",
+                  "SELECT id, name, market_value, market_value_date FROM properties "
+                  "WHERE owner_id=?", (owner,)),
+        json_part("flats",
+                  "SELECT property_id, name FROM apartments WHERE owner_id=? ORDER BY name",
+                  (owner,)),
+    ])
     mortgages: dict[int, list] = {}
-    for r in fetch(f"SELECT {_MORTGAGE_COLS} FROM mortgages "
-                   "WHERE owner_id=? ORDER BY start_date, id", (owner,)):
+    for r in loaded["mortgages"]:
         mortgages.setdefault(r[1], []).append(_mortgage_row(r))
     if not mortgages:
         return {"as_of": str(today), "properties": [], "totals": None}
 
-    # Market value is what turns a debt figure into an equity figure.
     names, values = {}, {}
-    for pid, name, mv, mvd in fetch(
-            "SELECT id, name, market_value, market_value_date FROM properties "
-            "WHERE owner_id=?", (owner,)):
+    for pid, name, mv, mvd in loaded["props"]:
         names[pid] = name
         values[pid] = (float(mv) if mv is not None else None,
                        mvd if mvd and mvd != "None" else None)
     flats: dict[int, list] = {}
-    for pid, label in fetch("SELECT property_id, name FROM apartments WHERE owner_id=? "
-                            "ORDER BY name", (owner,)):
+    for pid, label in loaded["flats"]:
         flats.setdefault(pid, []).append(label)
 
     props, all_scheds = [], []

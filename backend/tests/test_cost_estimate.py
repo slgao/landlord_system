@@ -96,3 +96,34 @@ def test_the_monthly_figure_is_the_period_scaled_to_a_month():
     out = estimate_utility_cost(SERIES, "2026-01-01", "2026-03-01",
                                 arbeitspreis=0.35, grundpreis_monthly=12.0)
     assert out["per_month"] == round(out["total"] / out["days"] * 365 / 12, 2)
+
+
+# ── A meter that runs backwards ───────────────────────────────────────────────
+# Real portfolio data has a gas meter reading 788.75 one month and 788.00 the
+# next: the meter was exchanged, or a digit was mistyped. Subtracting those
+# gives a negative consumption, and a negative consumption × a tariff is a
+# negative Arbeitskosten that quietly discounts the bill. The figures still
+# come back — seeing them is how the bad reading gets found — but flagged.
+
+BACKWARDS = [("2026-07-02", 788.75), ("2026-08-19", 788.00)]
+
+
+def test_a_falling_meter_count_is_flagged():
+    out = estimate_utility_cost(BACKWARDS, "2026-07-02", "2026-08-19",
+                                arbeitspreis=0.12, grundpreis_monthly=10.0)
+    assert out["consumption"] < 0
+    assert out["decreasing"] is True
+
+
+def test_a_rising_meter_count_is_not_flagged():
+    out = estimate_utility_cost(SERIES, "2026-01-01", "2026-03-01", arbeitspreis=0.35)
+    assert out["consumption"] > 0
+    assert out["decreasing"] is False
+
+
+def test_an_unchanged_meter_is_not_flagged():
+    """Nothing consumed is not the same as a meter running backwards."""
+    out = estimate_utility_cost([("2026-01-01", 500.0), ("2026-03-01", 500.0)],
+                                "2026-01-01", "2026-03-01", arbeitspreis=0.35)
+    assert out["consumption"] == 0.0
+    assert out["decreasing"] is False

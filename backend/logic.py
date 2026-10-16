@@ -14,7 +14,7 @@ import calendar as _calendar
 import math as _math
 from datetime import date as _date
 from decimal import Decimal
-from db import fetch
+from db import fetch, fetch_bundle, json_part
 
 _ZERO = Decimal("0")
 
@@ -313,7 +313,7 @@ def detect_overdue(default_months_back=12, owner=None):
       • Otherwise it starts `default_months_back` months before the current month.
 
     Only complete months (up to and including last month) count toward the
-    expected total. Uses two queries total regardless of contract/month count.
+    expected total. Uses one query total regardless of contract/month count.
     """
     today = _date.today()
     cur_first = today.replace(day=1)
@@ -321,16 +321,59 @@ def detect_overdue(default_months_back=12, owner=None):
     default_start = _add_months(cur_first, -default_months_back)
     cur_ym = cur_first.strftime("%Y-%m")
 
-    contracts = fetch("""
-        SELECT c.id, t.name, t.email, a.name, c.rent, c.start_date, c.end_date,
-               p.name, COALESCE(c.currency, 'EUR'), c.rent_settled_until
-        FROM contracts c
-        JOIN tenants t ON c.tenant_id = t.id
-        JOIN apartments a ON c.apartment_id = a.id
-        JOIN properties p ON a.property_id = p.id
-        WHERE COALESCE(c.terminated, 0) = 0 AND c.owner_id = ?
-        ORDER BY t.name
-    """, (owner,))
+    # Both reads go in one round trip. The payments side is not narrowed to the
+    # look-back window: the window start depends on each contract's
+    # rent_settled_until, which the other half of this very bundle carries, and
+    # the bound would make the two reads sequential again. Nothing is lost —
+    # every month is filtered against that contract's own window below, and the
+    # grouped result is the same size with or without the bound.
+    #
+    # Money is carried as TEXT and parsed back to Decimal: json_build_array
+    # would hand back floats, and rent arithmetic must not go near binary
+    # floating point.
+    #
+    # Rent only: a Nebenkosten Nachzahlung is not rent, and counting it here
+    # would hide a missed month; a refund would invent one. payment_date is ISO
+    # text, so substr(...,1,7) is 'YYYY-MM'.
+    #
+    # Rent kept from the deposit counts too, in the month of the deduction —
+    # whether the tenant did not pay (Mietrückstand) or you agreed they could
+    # abwohnen. Tagged apart so the reminder can say how much came that way.
+    from kaution_rules import NK_REF_TYPE, RENT_CATEGORIES
+    loaded = fetch_bundle([
+        json_part("contracts", """
+            SELECT c.id, t.name, t.email, a.name, c.rent::text, c.start_date, c.end_date,
+                   p.name, COALESCE(c.currency, 'EUR'), c.rent_settled_until
+            FROM contracts c
+            JOIN tenants t ON c.tenant_id = t.id
+            JOIN apartments a ON c.apartment_id = a.id
+            JOIN properties p ON a.property_id = p.id
+            WHERE COALESCE(c.terminated, 0) = 0 AND c.owner_id = ?
+            ORDER BY t.name
+        """, (owner,)),
+        ("paid", """
+            SELECT json_build_array(p.contract_id, substr(p.payment_date, 1, 7), 0,
+                                    COALESCE(SUM(p.amount), 0)::text)
+            FROM payments p
+            JOIN contracts c ON p.contract_id = c.id
+            WHERE COALESCE(c.terminated, 0) = 0
+              AND c.owner_id = ?
+              AND p.kind = 'rent'
+              AND p.payment_date <= ?
+            GROUP BY p.contract_id, substr(p.payment_date, 1, 7)
+            UNION ALL
+            SELECT json_build_array(d.contract_id, substr(d.date, 1, 7), 1,
+                                    COALESCE(SUM(d.amount), 0)::text)
+            FROM kaution_deductions d
+            JOIN contracts c ON d.contract_id = c.id
+            WHERE COALESCE(c.terminated, 0) = 0
+              AND c.owner_id = ?
+              AND d.category IN (?, ?) AND COALESCE(d.reference_type, '') <> ?
+              AND d.date <= ?
+            GROUP BY d.contract_id, substr(d.date, 1, 7)
+        """, (owner, str(today), owner, *RENT_CATEGORIES, NK_REF_TYPE, str(today))),
+    ])
+    contracts = [(*r[:4], Decimal(r[4]), *r[5:]) for r in loaded["contracts"]]
     if not contracts:
         return []
 
@@ -346,40 +389,10 @@ def detect_overdue(default_months_back=12, owner=None):
                 s = None
         starts[cid] = _add_months(_month_first(s), 1) if s else default_start
 
-    # One grouped query: payments summed per (contract, calendar month) from the
-    # earliest needed month through today. Rent only: a Nebenkosten Nachzahlung
-    # is not rent, and counting it here would hide a missed month; a refund
-    # would invent one. payment_date is ISO text, so
-    # substr(...,1,7) is 'YYYY-MM'.
-    min_start = min(starts.values())
-    #
-    # Rent kept from the deposit counts too, in the month of the deduction —
-    # whether the tenant did not pay (Mietrückstand) or you agreed they could
-    # abwohnen. Tagged apart so the reminder can say how much came that way.
-    from kaution_rules import NK_REF_TYPE, RENT_CATEGORIES
-    paid_rows = fetch("""
-        SELECT p.contract_id, substr(p.payment_date, 1, 7), 0, COALESCE(SUM(p.amount), 0)
-        FROM payments p
-        JOIN contracts c ON p.contract_id = c.id
-        WHERE COALESCE(c.terminated, 0) = 0
-          AND c.owner_id = ?
-          AND p.kind = 'rent'
-          AND p.payment_date >= ? AND p.payment_date <= ?
-        GROUP BY p.contract_id, substr(p.payment_date, 1, 7)
-        UNION ALL
-        SELECT d.contract_id, substr(d.date, 1, 7), 1, COALESCE(SUM(d.amount), 0)
-        FROM kaution_deductions d
-        JOIN contracts c ON d.contract_id = c.id
-        WHERE COALESCE(c.terminated, 0) = 0
-          AND c.owner_id = ?
-          AND d.category IN (?, ?) AND COALESCE(d.reference_type, '') <> ?
-          AND d.date >= ? AND d.date <= ?
-        GROUP BY d.contract_id, substr(d.date, 1, 7)
-    """, (owner, str(min_start), str(today),
-          owner, *RENT_CATEGORIES, NK_REF_TYPE, str(min_start), str(today)))
     paid_by: dict = {}
     deposit_by: dict = {}
-    for cid, ym, from_deposit, total in paid_rows:
+    for cid, ym, from_deposit, total in loaded["paid"]:
+        total = Decimal(total)
         paid_by[(cid, ym)] = paid_by.get((cid, ym), _ZERO) + total
         if from_deposit:
             deposit_by[(cid, ym)] = deposit_by.get((cid, ym), _ZERO) + total
@@ -534,6 +547,13 @@ def estimate_utility_cost(readings, start_date: str, end_date: str,
     total = arbeitskosten + grundkosten
     return {
         "readings": len(readings),
+        # A meter does not run backwards. A falling count means the meter was
+        # exchanged (the new one starts at zero) or a reading was mistyped, and
+        # either way end − start is not a consumption: it produces a negative
+        # Arbeitskosten that silently discounts the bill. The figures are still
+        # returned — seeing them is how the bad reading gets found — but they
+        # are flagged so nothing presents this as a cost.
+        "decreasing": consumption < 0,
         "start_value": round(start_value, 3), "start_source": start_src,
         "end_value": round(end_value, 3), "end_source": end_src,
         "consumption": round(consumption, 3),

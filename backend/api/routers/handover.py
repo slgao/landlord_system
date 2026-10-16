@@ -503,6 +503,14 @@ def add_protocol_reading(protocol_id: int, body: ProtocolReadingIn,
         raise HTTPException(422, "Unknown meter_type")
     if not fetch(f"SELECT id FROM {table} WHERE id=? AND owner_id=?", (body.meter_id, owner)):
         raise HTTPException(404, "Meter not found")
+    # A meter counts up, whether the number is typed here or on the Meter
+    # Readings page. A reading already standing on this date is the row being
+    # replaced, so it is not itself a neighbour.
+    from logic import reading_rejection
+    refusal = reading_rejection(body.meter_type, body.meter_id, prot_date,
+                                body.reading, owner)
+    if refusal:
+        raise HTTPException(422, refusal)
 
     # Adopt whatever already stands for this meter on this date, whoever wrote
     # it — the other handover of a same-day changeover, or the landlord typing it

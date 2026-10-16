@@ -567,3 +567,99 @@ def estimate_utility_cost(readings, start_date: str, end_date: str,
         # An estimate only where a bound had to be derived.
         "estimated": start_src != "measured" or end_src != "measured",
     }
+
+
+# ── A meter only ever counts up ──────────────────────────────────────────────
+# Readings are cumulative: the number on the dial cannot fall. A lower one is
+# almost always a typo — Vattenfall prints its figures without the decimals, so
+# a whole number copied off the invoice reads as a drop of up to a full unit —
+# or a meter that was exchanged, which belongs in a new meter record rather
+# than a backwards reading on the old one.
+#
+# Caught at entry it is one corrected digit. Left in, every downstream figure
+# built on it is wrong: a negative consumption becomes a negative Arbeitskosten
+# that quietly discounts the bill, and the Nebenkostenabrechnung interpolates
+# from it.
+
+# Readings are stored to three decimals, so anything under half a thousandth is
+# the same number written differently, not a meter running backwards.
+_READING_EPS = 0.0005
+
+# What each meter counts, for the refusal message. A Heizkostenverteiler counts
+# in whatever unit its own `unit_label` says, so it is left unnamed here.
+METERED_UNITS = {"strom": "kWh", "gas": "m³", "wasser": "m³", "heizung": ""}
+
+
+def reading_conflict(reading, before=None, after=None):
+    """Why `reading` cannot sit between its neighbours, or None if it can.
+
+    `before` and `after` are the nearest (date, value) recorded on either side,
+    or None where there is none. Returns ("below_previous"|"above_next", date,
+    value) — the caller phrases the message; the comparison lives here so it
+    can be tested without a database.
+
+    An unchanged meter is fine: only a strict fall below the previous reading,
+    or a rise above a later one, is a conflict.
+    """
+    value = float(reading)
+    if before is not None and value < float(before[1]) - _READING_EPS:
+        return ("below_previous", before[0], float(before[1]))
+    if after is not None and value > float(after[1]) + _READING_EPS:
+        return ("above_next", after[0], float(after[1]))
+    return None
+
+
+def _fmt_reading(value: float) -> str:
+    """A reading without the trailing zeros the NUMERIC(.,3) column stores."""
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def reading_neighbours(meter_type: str, meter_id: int, reading_date: str, owner: int):
+    """The nearest readings strictly before and strictly after `reading_date`
+    for this meter, as (date, value) or None — in one round trip.
+
+    A reading already standing on the same date is neither: it is the row being
+    replaced, and whether the new value differs from it is not a conflict.
+    """
+    parts = fetch_bundle([
+        json_part("before",
+                  "SELECT reading_date, reading FROM meter_readings "
+                  "WHERE meter_type=? AND meter_id=? AND owner_id=? AND reading_date < ? "
+                  "ORDER BY reading_date DESC, id DESC LIMIT 1",
+                  (meter_type, meter_id, owner, reading_date)),
+        json_part("after",
+                  "SELECT reading_date, reading FROM meter_readings "
+                  "WHERE meter_type=? AND meter_id=? AND owner_id=? AND reading_date > ? "
+                  "ORDER BY reading_date ASC, id ASC LIMIT 1",
+                  (meter_type, meter_id, owner, reading_date)),
+    ])
+    before = tuple(parts["before"][0]) if parts["before"] else None
+    after = tuple(parts["after"][0]) if parts["after"] else None
+    return before, after
+
+
+def reading_rejection(meter_type: str, meter_id: int, reading_date: str, reading,
+                      owner: int) -> str | None:
+    """The message refusing this reading, or None when it is acceptable.
+
+    Returns a string rather than raising, so the HTTP layer owns the status code
+    and this stays testable on its own.
+    """
+    before, after = reading_neighbours(meter_type, meter_id, reading_date, owner)
+    conflict = reading_conflict(reading, before, after)
+    if not conflict:
+        return None
+    kind, when, value = conflict
+    unit = METERED_UNITS.get(meter_type, "")
+    suffix = f" {unit}" if unit else ""
+    got = _fmt_reading(float(reading))
+    had = _fmt_reading(value)
+    if kind == "below_previous":
+        return (f"A meter only counts up, but {got}{suffix} is below the {had}{suffix} "
+                f"already recorded on {when}. Check the digits after the decimal point — "
+                f"a figure copied from the provider's invoice often leaves them off. If the "
+                f"meter was exchanged, add the replacement as a new meter instead of a lower "
+                f"reading on this one.")
+    return (f"A meter only counts up, but {got}{suffix} is above the {had}{suffix} already "
+            f"recorded later, on {when}. Check the digits after the decimal point, and that "
+            f"this reading is dated the day it was taken.")

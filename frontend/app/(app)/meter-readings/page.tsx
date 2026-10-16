@@ -186,6 +186,47 @@ const MeterBlock = memo(function MeterBlock({
   );
 });
 
+// A meter counts up: the dial cannot show less than it did last time. The page
+// already holds every reading, so the entry form says so while the number is
+// being typed rather than after a round trip. The API refuses it either way —
+// this is the warning, not the gate.
+const METERED_UNIT: Record<MeterType, string> = {
+  strom: "kWh", gas: "m³", wasser: "m³", heizung: "",
+};
+
+/** The nearest readings on either side of `date` for one meter, ignoring any
+ *  already standing on that date — that is the row being replaced. */
+function neighbours(readings: MeterReading[], type: string, meterId: number, date: string) {
+  const mine = readings
+    .filter((r) => r.meter_type === type && r.meter_id === meterId)
+    .sort((a, b) => a.reading_date.localeCompare(b.reading_date));
+  const before = [...mine].reverse().find((r) => r.reading_date < date);
+  const after = mine.find((r) => r.reading_date > date);
+  return { before, after };
+}
+
+/** Why this reading cannot stand, or null. Mirrors logic.reading_conflict. */
+function readingWarning(readings: MeterReading[], type: string, meterId: number,
+                        date: string, value: number, unit: string): string | null {
+  if (!meterId || !date) return null;
+  const EPS = 0.0005;
+  const u = unit ? ` ${unit}` : "";
+  const fmt = (n: number) => String(Number(n.toFixed(3)));
+  const { before, after } = neighbours(readings, type, meterId, date);
+  if (before && value < before.reading - EPS) {
+    return `A meter only counts up, but ${fmt(value)}${u} is below the ${fmt(before.reading)}${u} `
+      + `recorded on ${before.reading_date}. Check the digits after the decimal point — a figure `
+      + `copied from the provider's invoice often leaves them off. If the meter was exchanged, `
+      + `add the replacement as a new meter instead of a lower reading on this one.`;
+  }
+  if (after && value > after.reading + EPS) {
+    return `A meter only counts up, but ${fmt(value)}${u} is above the ${fmt(after.reading)}${u} `
+      + `recorded later, on ${after.reading_date}. Check the digits after the decimal point, and `
+      + `that this reading is dated the day it was taken.`;
+  }
+  return null;
+}
+
 export default function MeterReadingsPage() {
   const qc = useQueryClient();
   const [readingOpen, setReadingOpen] = useState(false);
@@ -223,6 +264,15 @@ export default function MeterReadingsPage() {
 
   const metersByType = (type: MeterType): any[] =>
     type === "strom" ? stromMeters : type === "gas" ? gasMeters : type === "wasser" ? wasserMeters : heizungMeters;
+
+  // Shown live in the entry form, and it also disables Add: a reading that
+  // would go backwards is a mistyped digit far more often than a real event.
+  const readWarning = useMemo(
+    () => readingWarning(readings, readForm.meter_type, readForm.meter_id,
+                         readForm.reading_date, readForm.reading,
+                         METERED_UNIT[readForm.meter_type as MeterType] ?? ""),
+    [readings, readForm],
+  );
 
   const addReading = useMutation({
     mutationFn: () => api.post("/api/meters/readings", readForm),
@@ -398,10 +448,13 @@ export default function MeterReadingsPage() {
               <div className="space-y-1.5"><Label>Reading</Label><Input type="number" step="0.001" value={readForm.reading} onChange={(e) => setReadForm((f) => ({ ...f, reading: Number(e.target.value) }))} /></div>
             </div>
             <div className="space-y-1.5"><Label>Note</Label><Input value={readForm.note} onChange={(e) => setReadForm((f) => ({ ...f, note: e.target.value }))} placeholder="Optional" /></div>
+            {readWarning && (
+              <p className="text-xs text-destructive" role="alert">{readWarning}</p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setReadingOpen(false)}>Cancel</Button>
-            <Button onClick={() => addReading.mutate()} disabled={!readForm.meter_id || !readForm.reading_date || addReading.isPending}>Add</Button>
+            <Button onClick={() => addReading.mutate()} disabled={!readForm.meter_id || !readForm.reading_date || !!readWarning || addReading.isPending}>Add</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

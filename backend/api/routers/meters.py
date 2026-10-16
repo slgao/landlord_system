@@ -493,6 +493,13 @@ def create_reading(body: MeterReadingIn, owner: int = Depends(require_auth)):
         raise HTTPException(422, "Unknown meter_type")
     if not fetch(f"SELECT id FROM {table} WHERE id=? AND owner_id=?", (body.meter_id, owner)):
         raise HTTPException(404, "Meter not found")
+    # A meter counts up. Refusing a backwards reading here is one corrected
+    # digit; accepted, it silently falsifies every figure built on it.
+    from logic import reading_rejection
+    refusal = reading_rejection(body.meter_type, body.meter_id, body.reading_date,
+                                body.reading, owner)
+    if refusal:
+        raise HTTPException(422, refusal)
     nid = execute_returning("""
         INSERT INTO meter_readings (meter_type, meter_id, reading_date, reading, note, owner_id)
         VALUES (?,?,?,?,?,?) RETURNING id

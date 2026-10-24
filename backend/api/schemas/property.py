@@ -14,6 +14,15 @@ class PropertyIn(BaseModel):
     # purchase price was on file — so equity was guesswork until this is set.
     market_value: Optional[float] = Field(default=None, ge=0)
     market_value_date: OptIsoDate = None   # when that estimate was made
+    # The unit's Wohnfläche. Not summed from its apartments: a WG's rooms do
+    # not add up to the flat's area, hallway, kitchen and bath belonging to
+    # none of them.
+    living_sqm: Optional[float] = Field(default=None, ge=0)
+    plot_sqm: Optional[float] = Field(default=None, ge=0)     # Grundstücksfläche
+    # € per m² of living space for comparable flats — what actually values a
+    # condo. The Gutachterausschuss publishes these per district yearly.
+    comparable_per_sqm: Optional[float] = Field(default=None, ge=0)
+    valuation_note: Optional[str] = None   # where that comparable came from
 
 
 class PropertyOut(PropertyIn):

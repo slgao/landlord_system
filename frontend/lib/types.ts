@@ -21,6 +21,73 @@ export interface Property {
   // the purchase price is on file, so equity cannot be computed.
   market_value?: number | null;
   market_value_date?: string | null;
+  // The unit's Wohnfläche. Not summed from its apartments: a WG's rooms do not
+  // add up to the flat's area, hallway, kitchen and bath belonging to none.
+  living_sqm?: number | null;
+  plot_sqm?: number | null;            // Grundstücksfläche, for the land share
+  comparable_per_sqm?: number | null;  // € per m² for comparable flats nearby
+  valuation_note?: string | null;
+}
+
+/** One property's worth, and the open data behind it. */
+export interface PropertyValuation {
+  property_id: number;
+  property_name: string;
+  address?: string | null;
+  we_label?: string | null;
+  living_sqm?: number | null;
+  plot_sqm?: number | null;
+  comparable_per_sqm?: number | null;
+  valuation_note?: string | null;
+  /** The figure in force: the owner's own if set, else the comparable estimate. */
+  value?: number | null;
+  basis?: "own" | "comparable" | null;
+  value_date?: string | null;
+  estimate?: number | null;
+  own_value?: number | null;
+  per_sqm?: number | null;
+  /** Bodenrichtwert — € per m² of land, at `stichtag`. */
+  brw?: number | null;
+  gfz?: number | null;
+  stichtag?: string | null;
+  land_per_floor_sqm?: number | null;
+  land_share?: number | null;
+  land_pct?: number | null;
+  /** True whenever the figure is not the owner's own. */
+  estimated: boolean;
+  /** Fields that must be filled before a value can be worked out at all. */
+  missing: string[];
+  debt: number;
+  equity?: number | null;
+  ltv?: number | null;
+  bezirk?: string | null;
+  ortsteil?: string | null;
+  land_fetched_at?: string | null;
+  matched_address?: string | null;
+}
+
+export interface ValuationOverview {
+  as_of: string;
+  properties: PropertyValuation[];
+  totals: {
+    value: number; debt: number; equity: number; ltv: number | null;
+    estimated: boolean; as_of: string;
+  } | null;
+  licence: string;
+}
+
+export interface LandValue {
+  stichtag: string;
+  brw: number;
+  gfz?: number | null;
+  nutzung?: string | null;
+  bezirk?: string | null;
+  ortsteil?: string | null;
+  zone_id?: string | null;
+  matched_address?: string | null;
+  source?: string | null;
+  fetched_at?: string | null;
+  ambiguous: boolean;
 }
 
 export interface Apartment {

@@ -21,6 +21,7 @@ from api.routers import (
     dashboard, flat_costs, meters, config, reports,
     co_tenants, kaution, billing_profiles, rag, tax, assistant, handover,
     nk_settlements,
+    valuation,
 )
 
 
@@ -130,6 +131,7 @@ app.include_router(billing_profiles.router, prefix="/api", dependencies=_auth)
 app.include_router(rag.router,              prefix="/api", dependencies=_auth)
 app.include_router(tax.router,              prefix="/api", dependencies=_auth)
 app.include_router(assistant.router,        prefix="/api", dependencies=_auth)
+app.include_router(valuation.router,        prefix="/api", dependencies=_auth)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────

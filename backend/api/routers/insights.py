@@ -125,7 +125,7 @@ def flat_insights(owner: int = Depends(require_auth)):
 
     arrears = _arrears_by_property(owner)
 
-    flats, owned_flats = [], []
+    flats, owned_flats, sublets = [], [], []
     for p in loaded["props"]:
         pid, owned = p[0], bool(p[3])
         lv = land.get(pid)
@@ -136,7 +136,8 @@ def flat_insights(owner: int = Depends(require_auth)):
             stichtag=lv[1] if lv else None, plot_sqm=_f(p[7]), mea=_f(p[9]))
 
         rent, let = flat_economics.contracted_rent(by_prop_contracts.get(pid, []), iso)
-        costs, mortgage_cost = flat_economics.split_costs(by_prop_costs.get(pid, []), iso)
+        costs, mortgage_cost, to_owner = flat_economics.split_costs(
+            by_prop_costs.get(pid, []), iso)
 
         # The loan's own schedule where its terms are on file — it knows the
         # interest/Tilgung split. Where they are not, the flat-cost row is the
@@ -155,7 +156,7 @@ def flat_insights(owner: int = Depends(require_auth)):
             # A flat that is not yours is not your asset, so it gets no yield.
             value=v["value"] if owned else None,
             debt=debt.get(pid, 0.0), rooms=rooms.get(pid, 0), let_rooms=len(let),
-            arrears=arrears.get(pid, 0.0))
+            arrears=arrears.get(pid, 0.0), rent_to_owner=float(to_owner))
         entry = {
             "property_id": pid, "property_name": p[1], "we_label": p[2],
             "owned": owned, "living_sqm": _f(p[6]),
@@ -167,14 +168,14 @@ def flat_insights(owner: int = Depends(require_auth)):
             **e,
         }
         flats.append(entry)
-        if owned:
-            owned_flats.append(entry)
+        (owned_flats if owned else sublets).append(entry)
 
     return {
         "as_of": iso,
         "flats": flats,
         "summary": flat_economics.portfolio_summary(owned_flats),
-        "not_owned_count": len(flats) - len(owned_flats),
+        "sublets": flat_economics.sublet_summary(sublets),
+        "not_owned_count": len(sublets),
     }
 
 

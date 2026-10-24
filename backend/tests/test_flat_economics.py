@@ -262,13 +262,14 @@ def test_a_running_cost_is_not_a_mortgage(name):
 
 
 def test_the_mortgage_is_split_out_of_the_running_costs():
-    running, mortgage = split_costs(COSTS, TODAY)
+    running, mortgage, to_owner = split_costs(COSTS, TODAY)
     assert running == Decimal("435.76")        # 358 + 32,76 + 45
     assert mortgage == Decimal("641.84")
+    assert to_owner == Decimal("0")
 
 
 def test_a_flat_with_no_mortgage_cost_splits_to_zero():
-    running, mortgage = split_costs(COSTS[:2] + COSTS[3:], TODAY)
+    running, mortgage, _ = split_costs(COSTS[:2] + COSTS[3:], TODAY)
     assert mortgage == Decimal("0")
     assert running == Decimal("435.76")
 
@@ -276,7 +277,7 @@ def test_a_flat_with_no_mortgage_cost_splits_to_zero():
 def test_the_cashflow_is_unchanged_by_the_reclassification():
     """The money leaving the account is the same; only its label moves. This is
     the invariant the fix had to preserve."""
-    running, mortgage = split_costs(COSTS, TODAY)
+    running, mortgage, _ = split_costs(COSTS, TODAY)
     before = 1400 - float(recurring_costs(COSTS, TODAY)) - 0          # all as cost
     after = economics(rent=1400, costs=running,
                       instalment=float(mortgage), interest=150)["cashflow_monthly"]
@@ -311,3 +312,91 @@ def test_the_summary_counts_how_many_splits_are_unknown():
     # The unknown flat's interest counts as nothing, so the operating total is
     # a floor rather than an exact figure — which is what split_unknown says.
     assert s["operating_monthly"] == pytest.approx(1400 + 1798 - 436 - 740 - 150)
+
+
+# ── A sublet: rented from an owner and let on ────────────────────────────────
+# Three flats here are rented and sublet. The rent paid to the owner is their
+# dominant cost and the thing the arrangement is judged on, so it is separated
+# from the Hausgeld and the internet rather than buried among them.
+
+from flat_economics import is_rent_to_owner, sublet_summary      # noqa: E402
+
+SUBLET_COSTS = [("Miete", "656.74", "monthly", None, None),
+                ("Internet", "33.47", "monthly", None, None),
+                ("Strom Vorauszahlung", "50.00", "monthly", None, None)]
+
+
+@pytest.mark.parametrize("name", ["Miete", "miete", " MIETE ", "Untermiete",
+                                  "Pacht", "Grundmiete", "Miete an Eigentümer"])
+def test_the_ways_rent_to_an_owner_is_named(name):
+    assert is_rent_to_owner(name) is True
+
+
+@pytest.mark.parametrize("name", ["Mieterstrom", "Mietkaution", "Mietausfall",
+                                  "Hausgeld", "Mortgage", "", None])
+def test_a_cost_that_merely_contains_miete_is_not_rent_to_an_owner(name):
+    """Matched strictly, not by substring: three real cost names here would be
+    swallowed by a substring test for 'miete'."""
+    assert is_rent_to_owner(name) is False
+
+
+def test_rent_to_the_owner_is_separated_from_the_running_costs():
+    running, mortgage, to_owner = split_costs(SUBLET_COSTS, TODAY)
+    assert to_owner == Decimal("656.74")
+    assert running == Decimal("83.47")          # 33,47 + 50
+    assert mortgage == Decimal("0")
+
+
+def test_the_cashflow_is_unchanged_by_separating_the_rent_to_owner():
+    """The money out is the same; only its label moves."""
+    all_as_cost = 1798.36 - float(recurring_costs(SUBLET_COSTS, TODAY))
+    running, _, to_owner = split_costs(SUBLET_COSTS, TODAY)
+    e = economics(rent=1798.36, costs=running, rent_to_owner=float(to_owner))
+    assert e["cashflow_monthly"] == pytest.approx(all_as_cost)
+    assert e["rent_to_owner_monthly"] == pytest.approx(656.74)
+
+
+def test_rent_to_the_owner_is_a_real_cost_unlike_the_tilgung():
+    """None of it comes back, so it is subtracted from the operating result
+    too — where the Tilgung is not."""
+    e = economics(rent=1798.36, costs=83.47, rent_to_owner=656.74)
+    assert e["operating_monthly"] == pytest.approx(1058.15)
+    assert e["cashflow_monthly"] == pytest.approx(1058.15)
+
+
+def test_an_owned_flat_has_no_rent_to_owner():
+    assert economics(rent=1400, costs=454)["rent_to_owner_monthly"] == 0.0
+
+
+# ── The sublet summary ───────────────────────────────────────────────────────
+
+def _sublet(rent, to_owner, costs, rooms=1, let=1):
+    return economics(rent=rent, costs=costs, rent_to_owner=to_owner,
+                     rooms=rooms, let_rooms=let)
+
+
+def test_the_sublet_summary_is_the_margin_not_a_yield():
+    s = sublet_summary([_sublet(1798.36, 656.74, 83.47, rooms=3, let=3),
+                        _sublet(950, 527.30, 100)])
+    assert s["flats"] == 2
+    assert s["rent_monthly"] == pytest.approx(2748.36)
+    assert s["rent_to_owner_monthly"] == pytest.approx(1184.04)
+    assert s["margin_monthly"] == pytest.approx(2748.36 - 1184.04 - 183.47)
+    assert "gross_yield" not in s        # the value is somebody else's
+
+
+def test_the_margin_share_says_what_survives_of_the_rent():
+    s = sublet_summary([_sublet(1000, 600, 100)])
+    assert s["margin_pct"] == pytest.approx(30.0)
+
+
+def test_an_empty_sublet_still_owes_the_owner_and_shows_a_loss():
+    """The flat standing empty here costs 590 a month in rent to its owner."""
+    s = sublet_summary([_sublet(0, 590, 109, rooms=1, let=0)])
+    assert s["margin_monthly"] == pytest.approx(-699.0)
+    assert s["margin_pct"] is None       # nothing came in to take a share of
+    assert s["vacant_rooms"] == 1
+
+
+def test_no_sublets_means_no_sublet_summary():
+    assert sublet_summary([]) is None

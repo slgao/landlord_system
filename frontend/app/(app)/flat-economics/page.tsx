@@ -13,7 +13,6 @@ import { api } from "@/lib/api";
 import { FlatEconomics, FlatInsights } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -50,8 +49,11 @@ export default function FlatEconomicsPage() {
   });
 
   const flats = data?.flats ?? [];
+  const owned = flats.filter((f) => f.owned);
+  const sublets = flats.filter((f) => !f.owned);
   const s = data?.summary;
-  const vacant = flats.filter((f) => f.owned && f.vacant_rooms > 0);
+  const sub = data?.sublets;
+  const vacant = flats.filter((f) => f.vacant_rooms > 0);
   const owing = flats.filter((f) => f.arrears > 0);
   const unvalued = flats.filter((f) => f.owned && !f.value);
 
@@ -122,7 +124,10 @@ export default function FlatEconomicsPage() {
                   {vacant.map((f) => `${f.property_name} (${f.vacant_rooms} of ${f.rooms})`)
                          .join(", ")}
                   {" — "}
-                  {eur(vacant.reduce((t, f) => t + f.costs_monthly + f.instalment_monthly, 0))}{" "}
+                  {/* Everything that still has to be paid on it: the rent to its
+                      owner does not stop because nobody is living there. */}
+                  {eur(vacant.reduce((t, f) => t + f.costs_monthly
+                                     + f.rent_to_owner_monthly + f.instalment_monthly, 0))}{" "}
                   a month with no rent against it.
                 </p>
               )}
@@ -154,10 +159,83 @@ export default function FlatEconomicsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {flats.map((f) => <Row key={f.property_id} f={f} />)}
+                {owned.map((f) => <Row key={f.property_id} f={f} />)}
               </TableBody>
             </Table>
           </Card>
+
+          {sub && sublets.length > 0 && (
+            <Card className="overflow-hidden">
+              <div className="p-4 pb-3">
+                <p className="text-sm font-medium">Sublet — rented from an owner, let on</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  A yield means nothing here: the value is somebody else&apos;s. What the
+                  arrangement earns is the margin — rent in, less the rent to the owner, less
+                  the costs that fall on you.
+                </p>
+                <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+                  <span className="tabular-nums">{eur(sub.rent_monthly)} in</span>
+                  <span className="text-muted-foreground">−</span>
+                  <span className="tabular-nums">{eur(sub.rent_to_owner_monthly)} to owners</span>
+                  <span className="text-muted-foreground">−</span>
+                  <span className="tabular-nums">{eur(sub.costs_monthly)} costs</span>
+                  <span className="text-muted-foreground">=</span>
+                  <span className={`font-semibold tabular-nums ${signed(sub.margin_monthly)}`}>
+                    {eur(sub.margin_monthly)} a month
+                  </span>
+                  {sub.margin_pct != null && (
+                    <span className="text-xs text-muted-foreground">
+                      ({sub.margin_pct.toLocaleString("de-DE")} % of the rent taken in)
+                    </span>
+                  )}
+                </div>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Flat</TableHead>
+                    <TableHead className="text-right">Rent in</TableHead>
+                    <TableHead className="text-right">Rent to owner</TableHead>
+                    <TableHead className="text-right">Other costs</TableHead>
+                    <TableHead className="text-right">Margin</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sublets.map((f) => (
+                    <TableRow key={f.property_id}>
+                      <TableCell>
+                        <span className="font-medium">{f.property_name}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {f.let_rooms} of {f.rooms} let
+                          {f.vacant_rooms > 0 && (
+                            <span className="text-destructive"> · {f.vacant_rooms} empty</span>
+                          )}
+                          {f.arrears > 0 && (
+                            <span className="text-destructive"> · {eur(f.arrears)} owed</span>
+                          )}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {eur(f.rent_monthly)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {f.rent_to_owner_monthly
+                          ? eur(f.rent_to_owner_monthly)
+                          : <span className="text-muted-foreground">not recorded</span>}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {eur(f.costs_monthly)}
+                      </TableCell>
+                      <TableCell className={`text-right tabular-nums font-medium ${
+                        signed(f.cashflow_monthly)}`}>
+                        {eur(f.cashflow_monthly)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
 
           <Card className="p-4">
             <p className="flex items-start gap-2 text-xs text-muted-foreground">
@@ -173,8 +251,8 @@ export default function FlatEconomicsPage() {
                 {" "}<strong className="text-foreground">Factor</strong> is the Kaufpreisfaktor,
                 value ÷ annual rent.
                 {unvalued.length > 0 && ` ${unvalued.length} flat${unvalued.length === 1 ? " has" : "s have"} no value yet, so no yield.`}
-                {data && data.not_owned_count > 0 &&
-                  ` ${data.not_owned_count} flat${data.not_owned_count === 1 ? "" : "s"} you do not own ${data.not_owned_count === 1 ? "is" : "are"} shown without yields and left out of the totals.`}
+                {sublets.length > 0 &&
+                  " A flat recording a cost of type Miete, Untermiete or Pacht has it read as rent to its owner."}
               </span>
             </p>
           </Card>
@@ -184,15 +262,15 @@ export default function FlatEconomicsPage() {
   );
 }
 
+/** A flat you own. Sublets have their own table — rent to an owner is not a
+ *  running cost like any other, and a yield on somebody else's value is not a
+ *  number worth printing. */
 function Row({ f }: { f: FlatEconomics }) {
   const empty = f.vacant_rooms > 0;
   return (
-    <TableRow className={f.owned ? undefined : "opacity-60"}>
+    <TableRow>
       <TableCell>
         <span className="font-medium">{f.property_name}</span>
-        {!f.owned && (
-          <Badge variant="secondary" className="ml-2 text-[10px]">not owned</Badge>
-        )}
         <span className="block text-xs text-muted-foreground">
           {f.let_rooms} of {f.rooms} let
           {empty && <span className="text-destructive"> · {f.vacant_rooms} empty</span>}

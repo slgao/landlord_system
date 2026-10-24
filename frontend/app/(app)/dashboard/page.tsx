@@ -25,7 +25,7 @@ const thisMonthKey = new Date().toLocaleString("en", { month: "short", year: "nu
  *  their own page, barely move, and answer none of the questions a landlord
  *  opens the app with. These answer them. */
 function StatCard({ title, value, icon: Icon, note, tone, href }: {
-  title: string; value: string; icon: React.ElementType; note?: string;
+  title: string; value: string; icon: React.ElementType; note?: React.ReactNode;
   tone?: "good" | "bad"; href?: string;
 }) {
   const body = (
@@ -88,6 +88,22 @@ export default function DashboardPage() {
   const vacantCost = vacant.reduce(
     (t, f) => t + f.costs_monthly + f.rent_to_owner_monthly + f.instalment_monthly, 0);
 
+  // What the "Needs doing" card counts, each piece paired with the page that
+  // piece is actually done on: a Mahnung is written on Payment Reminders, an
+  // Abrechnung on NK Settlements, a mortgage or ownership conflict is resolved
+  // on Flat Economics, and the expiring contracts are listed further down this
+  // very page.
+  const todo = [
+    { n: owing.length, href: "/payment-reminders",
+      label: `${owing.length} in arrears` },
+    { n: nkDue.length, href: "/nk-settlements",
+      label: `${nkDue.length} Abrechnung${nkDue.length === 1 ? "" : "en"} due` },
+    { n: alerts?.length ?? 0, href: "#contract-alerts",
+      label: `${alerts?.length ?? 0} contract${alerts?.length === 1 ? "" : "s"}` },
+    { n: warnings.length, href: "/flat-economics",
+      label: `${warnings.length} to check` },
+  ].filter((t) => t.n > 0);
+
   // Build monthly chart data from balance sheet
   const chartData = (() => {
     const props = bs?.properties || [];
@@ -121,8 +137,11 @@ export default function DashboardPage() {
           tone={m ? (m.cashflow_monthly < 0 ? "bad" : "good") : undefined}
           note={m ? `${eur0(m.operating_monthly)} earned, ${eur0(m.principal_monthly)} is Tilgung` : undefined}
         />
+        {/* Net yield goes to Flat Economics, which has the per-flat gross and
+            net yield this summarises. Valuation holds the values the yield is
+            computed ON — m², €/m², debt, equity, LTV — but no yield at all. */}
         <StatCard
-          title="Net yield" icon={TrendingUp} href="/valuation"
+          title="Net yield" icon={TrendingUp} href="/flat-economics"
           value={m?.net_yield != null ? `${m.net_yield.toLocaleString("de-DE")} %` : "—"}
           note={m?.value ? `on ${eur0(m.value)} across ${m.valued_flats} flats` : "set a comparable €/m²"}
         />
@@ -134,16 +153,24 @@ export default function DashboardPage() {
             ? `${vacant.map((f) => f.property_name).join(", ")} — ${eur0(vacantCost)}/mo`
             : "every room let"}
         />
+        {/* Four unrelated jobs add up to this one number, and each is done on a
+            different page — a single card-wide link would have been right for
+            a quarter of it and wrong for the rest. So the card itself is not a
+            link and every part of the breakdown goes where that job is done. */}
         <StatCard
-          title="Needs doing" icon={AlertTriangle} href="/payment-reminders"
+          title="Needs doing" icon={AlertTriangle}
           value={String(owing.length + nkDue.length + (alerts?.length ?? 0) + warnings.length)}
           tone={owing.length || nkDue.length ? "bad" : undefined}
-          note={[
-            owing.length && `${owing.length} in arrears`,
-            nkDue.length && `${nkDue.length} Abrechnung${nkDue.length === 1 ? "" : "en"} due`,
-            alerts?.length && `${alerts.length} contract${alerts.length === 1 ? "" : "s"}`,
-            warnings.length && `${warnings.length} to check`,
-          ].filter(Boolean).join(" · ") || "nothing outstanding"}
+          note={todo.length
+            ? todo.map((t, i) => (
+                <span key={t.href}>
+                  {i > 0 && " · "}
+                  <Link href={t.href} className="hover:text-foreground hover:underline">
+                    {t.label}
+                  </Link>
+                </span>
+              ))
+            : "nothing outstanding"}
         />
       </div>
 
@@ -227,7 +254,7 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      <Card>
+      <Card id="contract-alerts" className="scroll-mt-4">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium">Contract Alerts</CardTitle>
         </CardHeader>

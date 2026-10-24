@@ -133,7 +133,8 @@ _LATEST_LAND_SQL = """
 
 _PROPS_SQL = """
     SELECT id, name, address, we_label, mea::text, market_value::text, market_value_date,
-           living_sqm::text, plot_sqm::text, comparable_per_sqm::text, valuation_note
+           living_sqm::text, plot_sqm::text, comparable_per_sqm::text, valuation_note,
+           COALESCE(owned, 1)
     FROM properties WHERE owner_id=? ORDER BY name
 """
 
@@ -179,9 +180,10 @@ def overview(owner: int = Depends(require_auth)):
             continue                       # unusable terms never break the page
         debt[r[1]] = debt.get(r[1], 0.0) + max(bal, 0.0)
 
-    out, valued = [], []
+    out, owned_vals, owned_debts = [], [], []
     for p in loaded["props"]:
         pid = p[0]
+        owned = bool(p[11])
         lv = land.get(pid)
         v = valuation.value_property(
             living_sqm=_f(p[7]), comparable_per_sqm=_f(p[9]),
@@ -192,7 +194,8 @@ def overview(owner: int = Depends(require_auth)):
         d = debt.get(pid, 0.0)
         entry = {
             "property_id": pid, "property_name": p[1], "address": p[2],
-            "we_label": p[3], "living_sqm": _f(p[7]), "plot_sqm": _f(p[8]),
+            "we_label": p[3], "owned": owned,
+            "living_sqm": _f(p[7]), "plot_sqm": _f(p[8]),
             "comparable_per_sqm": _f(p[9]), "valuation_note": p[10],
             "debt": round(d, 2),
             "equity": round(v["value"] - d, 2) if v["value"] is not None else None,
@@ -203,13 +206,21 @@ def overview(owner: int = Depends(require_auth)):
             "matched_address": lv[8] if lv else None,
             **v,
         }
+        # A flat that is not yours is tracked like any other, but its worth is
+        # not your asset — so it is reported and left out of every total, and
+        # nothing it is missing counts as a gap to fill.
+        if not owned:
+            entry["missing"] = []
         out.append(entry)
-        valued.append(v)
+        if owned:
+            owned_vals.append(v)
+            owned_debts.append(d)
 
     return {
         "as_of": str(today),
         "properties": out,
-        "totals": valuation.portfolio_totals(valued, [debt.get(p[0], 0.0)
-                                                      for p in loaded["props"]]),
+        "totals": valuation.portfolio_totals(owned_vals, owned_debts),
+        "owned_count": len(owned_vals),
+        "not_owned_count": len(out) - len(owned_vals),
         "licence": land_value.LICENCE,
     }

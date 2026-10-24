@@ -16,6 +16,10 @@ export interface Property {
   building_id?: number | null;
   we_label?: string | null;   // Wohnungseigentum unit label, e.g. "WE 3"
   mea?: number | null;        // Miteigentumsanteil
+  // Whether this flat is yours. A managed-but-not-owned flat is tracked like
+  // any other, but its worth is not your asset, so it stays out of the
+  // portfolio value, the equity and the LTV.
+  owned?: boolean;
   building_name?: string | null;
   // What the flat is worth now. Equity is value less debt; without this only
   // the purchase price is on file, so equity cannot be computed.
@@ -35,6 +39,8 @@ export interface PropertyValuation {
   property_name: string;
   address?: string | null;
   we_label?: string | null;
+  /** False for a flat you manage but do not own — left out of every total. */
+  owned: boolean;
   living_sqm?: number | null;
   plot_sqm?: number | null;
   comparable_per_sqm?: number | null;
@@ -69,6 +75,8 @@ export interface PropertyValuation {
 export interface ValuationOverview {
   as_of: string;
   properties: PropertyValuation[];
+  owned_count: number;
+  not_owned_count: number;
   totals: {
     value: number; debt: number; equity: number; ltv: number | null;
     estimated: boolean; as_of: string;

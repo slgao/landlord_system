@@ -10,6 +10,10 @@ class PropertyIn(BaseModel):
     building_id: Optional[int] = None
     we_label: Optional[str] = None       # e.g. "WE 3" — the Wohnungseigentum unit
     mea: Optional[float] = None          # Miteigentumsanteil (display-only)
+    # Whether this flat is yours. A managed-but-not-owned flat is tracked like
+    # any other — rent, meters, Nebenkosten — but its worth is not your asset,
+    # so it stays out of the portfolio value, the equity and the LTV.
+    owned: bool = True
     # What the flat is worth now. Equity is value less debt, and only the
     # purchase price was on file — so equity was guesswork until this is set.
     market_value: Optional[float] = Field(default=None, ge=0)

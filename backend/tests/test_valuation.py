@@ -146,3 +146,31 @@ def test_debt_above_value_gives_negative_equity_not_an_error():
     t = portfolio_totals([{"value": 100_000.0, "estimated": False}], [130_000])
     assert t["equity"] == -30_000.0
     assert t["ltv"] == 130.0
+
+
+# ── Flats that are not the landlord's ────────────────────────────────────────
+# Some flats here are managed but not owned. They are tracked like any other —
+# rent, meters, Nebenkosten — but their worth is somebody else's asset, so it
+# must not reach the portfolio value, the equity or the LTV.
+
+def test_totals_cover_only_the_flats_passed_in():
+    """The endpoint hands portfolio_totals the owned flats alone, so a managed
+    flat cannot move the total even when it has a value of its own."""
+    owned = [{"value": 300_000.0, "estimated": False}]
+    t = portfolio_totals(owned, [100_000])
+    assert t["value"] == 300_000.0
+    assert t["equity"] == 200_000.0
+
+
+def test_a_managed_flat_without_a_value_cannot_withhold_the_total():
+    """The withholding rule exists so an unvalued flat of *yours* is not
+    silently dropped. A flat that is not yours was never in the total, so it
+    must not block it either — that is the endpoint's job, and this records
+    the contract it relies on."""
+    owned = [{"value": 300_000.0, "estimated": False},
+             {"value": 250_000.0, "estimated": True}]
+    assert portfolio_totals(owned, [0, 0]) is not None
+
+
+def test_an_entirely_managed_portfolio_has_no_total():
+    assert portfolio_totals([], []) is None

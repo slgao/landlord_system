@@ -77,7 +77,11 @@ export default function ValuationPage() {
     onError: (e) => toast.error(errorMessage(e, "Could not fetch the land value")),
   });
 
-  const rows = data?.properties ?? [];
+  const all = data?.properties ?? [];
+  // Only the flats that are yours are valued. The rest are listed apart, so
+  // they are visibly excluded rather than quietly absent.
+  const rows = all.filter((p) => p.owned);
+  const managed = all.filter((p) => !p.owned);
   const totals = data?.totals;
   const needInput = rows.filter((p) => p.missing.length > 0);
   const noLand = rows.filter((p) => p.brw == null);
@@ -99,7 +103,8 @@ export default function ValuationPage() {
           {totals ? (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Stat label="Portfolio value" value={eur(totals.value)}
-                    sub={totals.estimated ? "includes estimates" : "your own figures"} />
+                    sub={`${rows.length} flat${rows.length === 1 ? "" : "s"} you own`
+                         + (totals.estimated ? ", includes estimates" : "")} />
               <Stat label="Debt" value={eur(totals.debt)} sub={`as of ${totals.as_of}`} />
               <Stat label="Equity" value={eur(totals.equity)} tone="good"
                     sub="value less what is still owed" />
@@ -143,6 +148,18 @@ export default function ValuationPage() {
             </Card>
           )}
 
+          {rows.length === 0 ? (
+            <Card className="p-4">
+              <p className="text-sm">No flats marked as yours yet.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Tick <em>I own this flat</em> on the{" "}
+                <Link href="/properties" className="underline hover:no-underline">
+                  Properties
+                </Link>{" "}
+                page for the ones you own, and they will be valued here.
+              </p>
+            </Card>
+          ) : (
           <Card className="overflow-x-auto">
             <Table>
               <TableHeader>
@@ -167,6 +184,37 @@ export default function ValuationPage() {
               </TableBody>
             </Table>
           </Card>
+          )}
+
+          {managed.length > 0 && (
+            <Card className="p-4">
+              <p className="text-sm font-medium">
+                Not owned — left out of the valuation
+              </p>
+              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                {managed.map((p) => (
+                  <li key={p.property_id}>
+                    {p.property_name}
+                    {(p.ortsteil || p.bezirk) && (
+                      <span className="text-xs">
+                        {" "}· {[p.ortsteil, p.bezirk].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs text-muted-foreground">
+                These are tracked like any other flat — rent, meters,
+                Nebenkosten — but their worth is not your asset, so no value,
+                equity or LTV is computed for them. Change that with{" "}
+                <em>I own this flat</em> on the{" "}
+                <Link href="/properties" className="underline hover:no-underline">
+                  Properties
+                </Link>{" "}
+                page.
+              </p>
+            </Card>
+          )}
 
           <Card className="p-4">
             <p className="flex items-start gap-2 text-xs text-muted-foreground">

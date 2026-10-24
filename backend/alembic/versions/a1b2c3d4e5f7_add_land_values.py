@@ -23,6 +23,11 @@ so the land value's own history is visible — the point of an annual series.
 
 New columns on `properties`:
 
+- owned              — whether this flat is the landlord's own. Some flats here
+                       are managed but not owned: their rent and meters are
+                       tracked like any other, but their value is not his asset
+                       and must stay out of the portfolio's worth and equity.
+                       Default 1, because everything already on file is owned.
 - living_sqm         — the unit's Wohnfläche. Not derived from its apartments:
                        a WG's rooms do not sum to the flat's area (hallway,
                        kitchen and bath belong to none of them), and two
@@ -45,6 +50,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    op.add_column('properties', sa.Column('owned', sa.Integer(), nullable=False,
+                                          server_default='1'))
     op.add_column('properties', sa.Column('living_sqm', sa.Numeric(10, 2), nullable=True))
     op.add_column('properties', sa.Column('plot_sqm', sa.Numeric(10, 2), nullable=True))
     op.add_column('properties', sa.Column('comparable_per_sqm', sa.Numeric(10, 2), nullable=True))
@@ -94,5 +101,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table('land_values')
-    for col in ('valuation_note', 'comparable_per_sqm', 'plot_sqm', 'living_sqm'):
+    for col in ('valuation_note', 'comparable_per_sqm', 'plot_sqm', 'living_sqm', 'owned'):
         op.drop_column('properties', col)

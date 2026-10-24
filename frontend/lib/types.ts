@@ -794,6 +794,8 @@ export interface FlatEconomics {
   rent_monthly: number;
   rent_per_sqm?: number | null;
   costs_monthly: number;
+  /** Rent paid to the flat's owner — a sublet only; 0 for a flat you own. */
+  rent_to_owner_monthly: number;
   instalment_monthly: number;
   /** null when the loan's terms are not on file, so the split is unknowable. */
   interest_monthly?: number | null;
@@ -821,12 +823,20 @@ export interface FlatInsights {
   flats: FlatEconomics[];
   summary: {
     flats: number; valued_flats: number;
-    rent_monthly: number; costs_monthly: number; instalment_monthly: number;
+    rent_monthly: number; costs_monthly: number; rent_to_owner_monthly: number;
+    instalment_monthly: number;
     interest_monthly: number; principal_monthly: number;
     cashflow_monthly: number; operating_monthly: number;
     split_unknown: number; arrears: number;
     rooms: number; let_rooms: number; occupancy: number | null;
     value: number | null; gross_yield: number | null; net_yield: number | null;
+  } | null;
+  /** The flats rented from an owner and let on. A yield means nothing here. */
+  sublets: {
+    flats: number;
+    rent_monthly: number; rent_to_owner_monthly: number; costs_monthly: number;
+    margin_monthly: number; margin_pct: number | null;
+    rooms: number; let_rooms: number; vacant_rooms: number; arrears: number;
   } | null;
   not_owned_count: number;
 }

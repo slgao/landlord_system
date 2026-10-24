@@ -96,24 +96,49 @@ def recurring_costs(cost_rows, on_date: str) -> Decimal:
     return total
 
 
+# Rent paid to the flat's owner, on a flat that is sublet rather than owned.
+# Matched strictly, not by substring like the mortgage types: "Mieterstrom",
+# "Mietkaution" and "Mietausfall" are all ordinary costs that a substring test
+# for "miete" would swallow.
+_RENT_TO_OWNER_COST_TYPES = frozenset({
+    "miete", "untermiete", "pacht", "mietzahlung", "miete an eigentuemer",
+    "miete an eigentümer", "grundmiete",
+})
+
+
+def is_rent_to_owner(cost_type) -> bool:
+    return str(cost_type or "").strip().lower() in _RENT_TO_OWNER_COST_TYPES
+
+
 def split_costs(cost_rows, on_date: str):
-    """(running costs, mortgage recorded as a cost) for one flat.
+    """(running costs, mortgage, rent paid to the owner) for one flat.
 
     `cost_rows` is [(cost_type, amount, frequency, valid_from, valid_to)].
 
-    The two are separated because the mortgage is not a running cost: part of
-    every instalment buys the flat. Where the loan is also in the mortgages
-    table its schedule is the better source — it knows the split — and the
-    caller prefers that; where it is not, this is the only record of the money
-    and must not be dropped.
+    All three are real money, and all three are subtracted — they are separated
+    only because they answer different questions:
+
+    - the mortgage is not a running cost at all: part of every instalment buys
+      the flat, so it needs the interest/Tilgung split the loan's terms give;
+    - rent paid to an owner is the dominant cost of a sublet and the thing its
+      margin is measured against, so burying it among the Hausgeld and the
+      internet hides what the arrangement actually earns.
     """
-    running = [r for r in cost_rows if not is_mortgage_cost(r[0])]
-    mortgage = [r for r in cost_rows if is_mortgage_cost(r[0])]
-    return recurring_costs(running, on_date), recurring_costs(mortgage, on_date)
+    running, mortgage, to_owner = [], [], []
+    for r in cost_rows:
+        if is_mortgage_cost(r[0]):
+            mortgage.append(r)
+        elif is_rent_to_owner(r[0]):
+            to_owner.append(r)
+        else:
+            running.append(r)
+    return (recurring_costs(running, on_date),
+            recurring_costs(mortgage, on_date),
+            recurring_costs(to_owner, on_date))
 
 
 def economics(*, rent, costs, instalment=0.0, interest=0.0, value=None,
-              debt=0.0, rooms=0, let_rooms=0, arrears=0.0):
+              debt=0.0, rooms=0, let_rooms=0, arrears=0.0, rent_to_owner=0.0):
     """One flat's monthly economics, and the yields that follow from them.
 
     `instalment` is the full monthly mortgage payment and `interest` the part
@@ -123,6 +148,7 @@ def economics(*, rent, costs, instalment=0.0, interest=0.0, value=None,
     """
     rent_f = float(rent or 0)
     costs_f = float(costs or 0)
+    to_owner = float(rent_to_owner or 0)
     inst = float(instalment or 0)
     # The split is unknown when the instalment comes from a flat-cost row and
     # the loan's terms are not on file. Cashflow is still exact; the operating
@@ -132,15 +158,19 @@ def economics(*, rent, costs, instalment=0.0, interest=0.0, value=None,
     int_f = min(float(interest or 0), inst)      # never more than is actually paid
     principal = inst - int_f if known else None
 
-    cashflow = rent_f - costs_f - inst
-    operating = (rent_f - costs_f - int_f) if (known or not inst) else None
+    # Rent to the owner is an ordinary cost — unlike the Tilgung, none of it
+    # comes back — so it is subtracted from both.
+    cashflow = rent_f - costs_f - to_owner - inst
+    operating = (rent_f - costs_f - to_owner - int_f) if (known or not inst) else None
     annual_rent = rent_f * 12
-    annual_net = (rent_f - costs_f) * 12
+    annual_net = (rent_f - costs_f - to_owner) * 12
 
     val = float(value) if value else None
     return {
         "rent_monthly": round(rent_f, 2),
         "costs_monthly": round(costs_f, 2),
+        # Only a sublet has one; for an owned flat it is 0.
+        "rent_to_owner_monthly": round(to_owner, 2),
         "instalment_monthly": round(inst, 2),
         "interest_monthly": round(int_f, 2) if known else None,
         "principal_monthly": round(principal, 2) if known else None,
@@ -181,6 +211,7 @@ def portfolio_summary(flats):
         return None
     rent = sum(f["rent_monthly"] for f in flats)
     costs = sum(f["costs_monthly"] for f in flats)
+    to_owner = sum(f.get("rent_to_owner_monthly", 0) for f in flats)
     inst = sum(f["instalment_monthly"] for f in flats)
     # A flat whose loan terms are not on file contributes to the instalment but
     # not to the split. Its interest counts as nothing here rather than as a
@@ -198,17 +229,19 @@ def portfolio_summary(flats):
     valued = [f for f in flats if f.get("value")]
     value = sum(f["value"] for f in valued) if valued else None
     valued_rent = sum(f["rent_monthly"] for f in valued) * 12 if valued else 0.0
-    valued_net = sum(f["rent_monthly"] - f["costs_monthly"] for f in valued) * 12 if valued else 0.0
+    valued_net = sum(f["rent_monthly"] - f["costs_monthly"]
+                     - f.get("rent_to_owner_monthly", 0) for f in valued) * 12 if valued else 0.0
 
     return {
         "flats": len(flats),
         "rent_monthly": round(rent, 2),
         "costs_monthly": round(costs, 2),
+        "rent_to_owner_monthly": round(to_owner, 2),
         "instalment_monthly": round(inst, 2),
         "interest_monthly": round(interest, 2),
         "principal_monthly": round(principal, 2),
-        "cashflow_monthly": round(rent - costs - inst, 2),
-        "operating_monthly": round(rent - costs - interest, 2),
+        "cashflow_monthly": round(rent - costs - to_owner - inst, 2),
+        "operating_monthly": round(rent - costs - to_owner - interest, 2),
         "split_unknown": unknown,
         "arrears": round(arrears, 2),
         "rooms": rooms,
@@ -218,4 +251,35 @@ def portfolio_summary(flats):
         "valued_flats": len(valued),
         "gross_yield": round(valued_rent / value * 100, 2) if value else None,
         "net_yield": round(valued_net / value * 100, 2) if value else None,
+    }
+
+
+def sublet_summary(flats):
+    """The flats rented from an owner and let on.
+
+    A yield means nothing here — the value is somebody else's. What the
+    arrangement earns is the margin: rent in, less the rent paid to the owner,
+    less whatever running costs fall on the subletter.
+    """
+    if not flats:
+        return None
+    rent = sum(f["rent_monthly"] for f in flats)
+    to_owner = sum(f.get("rent_to_owner_monthly", 0) for f in flats)
+    costs = sum(f["costs_monthly"] for f in flats)
+    rooms = sum(f["rooms"] for f in flats)
+    let_rooms = sum(f["let_rooms"] for f in flats)
+    margin = rent - to_owner - costs
+    return {
+        "flats": len(flats),
+        "rent_monthly": round(rent, 2),
+        "rent_to_owner_monthly": round(to_owner, 2),
+        "costs_monthly": round(costs, 2),
+        "margin_monthly": round(margin, 2),
+        # What share of the rent taken in survives as margin. Negative when a
+        # flat stands empty and the owner is still being paid.
+        "margin_pct": round(margin / rent * 100, 1) if rent else None,
+        "rooms": rooms,
+        "let_rooms": let_rooms,
+        "vacant_rooms": max(rooms - let_rooms, 0),
+        "arrears": round(sum(f["arrears"] for f in flats), 2),
     }

@@ -24,12 +24,21 @@ const thisMonthKey = new Date().toLocaleString("en", { month: "short", year: "nu
  *  tenants and contracts — four numbers that are each already the headline of
  *  their own page, barely move, and answer none of the questions a landlord
  *  opens the app with. These answer them. */
-function StatCard({ title, value, icon: Icon, note, tone, href }: {
+function StatCard({ title, value, icon: Icon, note, tone, href, label }: {
   title: string; value: string; icon: React.ElementType; note?: React.ReactNode;
-  tone?: "good" | "bad"; href?: string;
+  tone?: "good" | "bad"; href?: string; label?: string;
 }) {
-  const body = (
-    <Card className={href ? "transition-colors hover:border-foreground/20" : undefined}>
+  // The card-wide link is an overlay covering the card rather than a wrapper
+  // around it, because a note can carry links of its own — one per job on the
+  // "Needs doing" card — and an <a> inside an <a> is not valid HTML. Those
+  // paint above the overlay (`relative z-10` where they are written), so the
+  // whole card area clicks through to `href` and a clicked part of the
+  // breakdown wins over it.
+  return (
+    <Card className={`relative ${href ? "transition-colors hover:border-foreground/20" : ""}`}>
+      {href && (
+        <Link href={href} aria-label={label ?? title} className="absolute inset-0 rounded-lg" />
+      )}
       <CardContent className="flex items-center justify-between p-5">
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground uppercase tracking-wide">{title}</p>
@@ -44,7 +53,6 @@ function StatCard({ title, value, icon: Icon, note, tone, href }: {
       </CardContent>
     </Card>
   );
-  return href ? <Link href={href}>{body}</Link> : body;
 }
 
 export default function DashboardPage() {
@@ -154,18 +162,21 @@ export default function DashboardPage() {
             : "every room let"}
         />
         {/* Four unrelated jobs add up to this one number, and each is done on a
-            different page — a single card-wide link would have been right for
-            a quarter of it and wrong for the rest. So the card itself is not a
-            link and every part of the breakdown goes where that job is done. */}
+            different page, so every part of the breakdown links to where that
+            job is done. The card area itself follows the first of them — the
+            most pressing, since `todo` is built worst-first — so this card
+            clicks like the other three rather than only on its text. */}
         <StatCard
-          title="Needs doing" icon={AlertTriangle}
+          title="Needs doing" icon={AlertTriangle} href={todo[0]?.href}
+          label={todo.length ? `Needs doing: ${todo[0].label}` : "Needs doing"}
           value={String(owing.length + nkDue.length + (alerts?.length ?? 0) + warnings.length)}
           tone={owing.length || nkDue.length ? "bad" : undefined}
           note={todo.length
             ? todo.map((t, i) => (
                 <span key={t.href}>
                   {i > 0 && " · "}
-                  <Link href={t.href} className="hover:text-foreground hover:underline">
+                  <Link href={t.href}
+                    className="relative z-10 hover:text-foreground hover:underline">
                     {t.label}
                   </Link>
                 </span>

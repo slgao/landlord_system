@@ -23,6 +23,8 @@ const eur = (n: number) =>
   `${n.toLocaleString("de-DE", { maximumFractionDigits: 0 })} €`;
 const pct = (n: number, d = 2) =>
   `${n.toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d })} %`;
+const num = (n: number, d = 0) =>
+  n.toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d });
 const dash = <span className="text-muted-foreground">—</span>;
 
 /** Red below zero, green above — for a figure where the sign is the point. */
@@ -205,6 +207,112 @@ export default function FlatEconomicsPage() {
               </TableBody>
             </Table>
           </Card>
+
+          {/* What the flats were bought with. The Kaufpreis already lives in
+              Tax Setup for the AfA; nothing is duplicated here. */}
+          {data?.purchase && (
+            <Card className="overflow-hidden">
+              <div className="p-4 pb-3">
+                <p className="text-sm font-medium">Since purchase</p>
+                <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+                  <span className="tabular-nums">{eur(data.purchase.invested_total)} invested</span>
+                  <span className="text-muted-foreground">−</span>
+                  <span className="tabular-nums">{eur(data.purchase.loans_original)} borrowed</span>
+                  <span className="text-muted-foreground">=</span>
+                  <span className={`font-semibold tabular-nums ${signed(data.purchase.equity_invested)}`}>
+                    {eur(data.purchase.equity_invested)} of your own money
+                  </span>
+                  {data.purchase.equity_return_invested != null && (
+                    <span className="text-muted-foreground">
+                      · earning <strong className="text-foreground">
+                        {pct(data.purchase.equity_return_invested)}
+                      </strong> a year on it
+                    </span>
+                  )}
+                </div>
+                {data.purchase.value_gain != null && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Worth {eur(data.purchase.value_gain)} more than the{" "}
+                    {eur(data.purchase.purchase_price)} paid, on today&apos;s estimate.
+                  </p>
+                )}
+                {data.purchase.costs_missing && (
+                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                    Some Kaufnebenkosten are blank — Grunderwerbsteuer, Notar, Grundbuch,
+                    Makler. Until they are filled in on{" "}
+                    <Link href="/tax-setup" className="underline hover:no-underline">
+                      Tax Setup
+                    </Link>
+                    , the equity above reads too low and the return on it too high. A loan
+                    that covered them can exceed the purchase price on its own.
+                  </p>
+                )}
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Flat</TableHead>
+                    <TableHead className="text-right">Kaufpreis</TableHead>
+                    <TableHead className="text-right">Nebenkosten</TableHead>
+                    <TableHead className="text-right">Borrowed</TableHead>
+                    <TableHead className="text-right">Own money</TableHead>
+                    <TableHead className="text-right">EK-Rendite</TableHead>
+                    <TableHead className="text-right">Since then</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {owned.filter((f) => f.purchase).map((f) => (
+                    <TableRow key={f.property_id}>
+                      <TableCell>
+                        <span className="font-medium">{f.property_name}</span>
+                        {f.purchase_date && (
+                          <span className="block text-xs text-muted-foreground">
+                            bought {f.purchase_date}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {eur(f.purchase!.purchase_price)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {f.purchase!.purchase_costs != null
+                          ? eur(f.purchase!.purchase_costs)
+                          : <span className="text-amber-700 dark:text-amber-400">not set</span>}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {eur(f.purchase!.loans_original)}
+                        {f.purchase!.loan_to_price != null && (
+                          <span className="block text-[10px] text-muted-foreground">
+                            {num(f.purchase!.loan_to_price, 0)} % of the price
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className={`text-right tabular-nums ${
+                        signed(f.purchase!.equity_invested)}`}>
+                        {eur(f.purchase!.equity_invested)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {f.equity_return_invested != null
+                          ? pct(f.equity_return_invested)
+                          : dash}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {f.value_gain ? (
+                          <span className={signed(f.value_gain.gain)}>
+                            {eur(f.value_gain.gain)}
+                            <span className="block text-[10px] text-muted-foreground">
+                              {f.value_gain.gain_pct > 0 ? "+" : ""}
+                              {num(f.value_gain.gain_pct, 0)} %
+                            </span>
+                          </span>
+                        ) : dash}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
 
           {sub && sublets.length > 0 && (
             <Card className="overflow-hidden">

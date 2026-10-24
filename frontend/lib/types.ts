@@ -567,6 +567,8 @@ export interface TaxProfile {
   tax_relevant: boolean;
   purchase_date: string | null;
   purchase_price: number | null;
+  /** Grunderwerbsteuer, Notar, Grundbuch, Makler — needed for the equity. */
+  purchase_costs?: number | null;
   building_share_pct: number | null;
   afa_rate_pct: number | null;
   notes: string | null;
@@ -816,6 +818,18 @@ export interface FlatEconomics {
   vacant_rooms: number;
   occupancy?: number | null;
   arrears: number;
+  purchase_date?: string | null;
+  /** Null until the Kaufpreis is on file in Tax Setup. */
+  purchase: {
+    purchase_price: number; purchase_costs: number | null;
+    invested_total: number; loans_original: number; equity_invested: number;
+    loan_to_price: number | null;
+    /** True while the Kaufnebenkosten are blank — the equity then reads low. */
+    costs_missing: boolean;
+  } | null;
+  /** Eigenkapitalrendite on the money actually put in. */
+  equity_return_invested?: number | null;
+  value_gain?: { gain: number; gain_pct: number } | null;
 }
 
 export interface FlatInsights {
@@ -848,4 +862,11 @@ export interface FlatInsights {
     rooms: number; let_rooms: number; vacant_rooms: number; arrears: number;
   } | null;
   not_owned_count: number;
+  /** What the owned flats cost to buy, across those with a Kaufpreis on file. */
+  purchase: {
+    flats: number; purchase_price: number; invested_total: number;
+    loans_original: number; equity_invested: number; loan_to_price: number | null;
+    equity_return_invested: number | null; value_gain: number | null;
+    costs_missing: boolean;
+  } | null;
 }

@@ -453,3 +453,132 @@ def test_the_cashflow_is_the_same_whichever_side_of_the_tick_the_flat_is_on():
     owned = economics(rent=950, costs=running + to_owner, rent_to_owner=0.0)
     sublet = economics(rent=950, costs=running, rent_to_owner=float(to_owner))
     assert owned["cashflow_monthly"] == pytest.approx(sublet["cashflow_monthly"])
+
+
+# ── What the flat was bought with ────────────────────────────────────────────
+# The Kaufpreis is already on file for the AfA, and the loans carry their
+# original principal. Between them: how much of the purchase was the owner's
+# own money, which is what an Eigenkapitalrendite is a return on.
+
+from flat_economics import (equity_return_on_investment, portfolio_purchase,  # noqa: E402
+                            purchase_equity, value_gain)
+
+
+def test_the_equity_is_the_price_plus_costs_less_what_was_borrowed():
+    p = purchase_equity(99_000, 8_910, 100_000)
+    assert p["invested_total"] == 107_910.0
+    assert p["equity_invested"] == 7_910.0
+    assert p["loan_to_price"] == 101.0          # the loan covered the Nebenkosten too
+
+
+def test_without_the_nebenkosten_the_equity_reads_as_nothing():
+    """Three of five flats here land on 0 or below without them, which is why
+    the gap is reported rather than silently defaulted."""
+    p = purchase_equity(99_000, None, 100_000)
+    assert p["equity_invested"] == -1_000.0
+    assert p["costs_missing"] is True
+
+
+def test_the_nebenkosten_being_present_is_said_plainly():
+    assert purchase_equity(99_000, 8_910, 100_000)["costs_missing"] is False
+
+
+def test_no_kaufpreis_means_no_figure_rather_than_a_guess():
+    assert purchase_equity(None, 8_910, 100_000) is None
+    assert purchase_equity(0, 8_910, 100_000) is None
+
+
+def test_a_flat_bought_outright_is_all_equity():
+    p = purchase_equity(200_000, 20_000, 0)
+    assert p["equity_invested"] == 220_000.0
+    assert p["loan_to_price"] == 0.0
+
+
+# ── Eigenkapitalrendite ──────────────────────────────────────────────────────
+
+def test_the_return_is_the_operating_result_against_the_equity():
+    # 226 €/month on 7.910 € put in
+    assert equity_return_on_investment(226, 7_910) == pytest.approx(34.29, abs=0.01)
+
+
+def test_the_tilgung_is_not_part_of_the_return():
+    """It is the investment growing, not income from it — so the numerator is
+    the operating result, which already excludes it."""
+    e = economics(rent=860, costs=461, instalment=364, interest=173)
+    assert e["operating_monthly"] == pytest.approx(226.0)
+    assert equity_return_on_investment(e["operating_monthly"], 7_910) == pytest.approx(
+        34.29, abs=0.01)
+
+
+@pytest.mark.parametrize("equity", [0, -1_000, None])
+def test_no_return_on_equity_that_is_zero_or_negative(equity):
+    """A flat bought entirely on credit is described by its cashflow, not by a
+    percentage of nothing."""
+    assert equity_return_on_investment(226, equity) is None
+
+
+def test_no_return_when_the_operating_result_is_unknown():
+    assert equity_return_on_investment(None, 7_910) is None
+
+
+def test_a_loss_is_a_negative_return_not_a_missing_one():
+    assert equity_return_on_investment(-100, 10_000) == pytest.approx(-12.0)
+
+
+# ── Value gain ───────────────────────────────────────────────────────────────
+
+def test_the_gain_is_measured_against_what_was_paid():
+    g = value_gain(185_883, 99_000)
+    assert g["gain"] == pytest.approx(86_883.0)
+    assert g["gain_pct"] == pytest.approx(87.8, abs=0.1)
+
+
+def test_a_fall_in_value_is_reported_too():
+    assert value_gain(90_000, 99_000)["gain"] == pytest.approx(-9_000.0)
+
+
+def test_no_gain_without_both_figures():
+    assert value_gain(None, 99_000) is None
+    assert value_gain(185_883, None) is None
+
+
+# ── The portfolio ────────────────────────────────────────────────────────────
+
+def _bought(price, costs, borrowed, operating, value=None):
+    p = purchase_equity(price, costs, borrowed)
+    return {"purchase": p, "operating_monthly": operating,
+            "value_gain": value_gain(value, price)}
+
+
+def test_the_portfolio_sums_what_was_put_in():
+    s = portfolio_purchase([_bought(99_000, 8_910, 100_000, 226, 185_883),
+                            _bought(170_000, 15_300, 136_000, 469, 181_604)])
+    assert s["flats"] == 2
+    assert s["invested_total"] == pytest.approx(293_210.0)
+    assert s["equity_invested"] == pytest.approx(57_210.0)
+    assert s["costs_missing"] is False
+
+
+def test_the_portfolio_says_when_any_nebenkosten_are_missing():
+    """The equity looks smaller and the return on it larger than they are."""
+    s = portfolio_purchase([_bought(99_000, 8_910, 100_000, 226),
+                            _bought(170_000, None, 136_000, 469)])
+    assert s["costs_missing"] is True
+
+
+def test_a_flat_without_a_kaufpreis_is_left_out_and_counted_apart():
+    s = portfolio_purchase([_bought(99_000, 8_910, 100_000, 226),
+                            {"purchase": None, "operating_monthly": 300}])
+    assert s["flats"] == 1
+    assert s["invested_total"] == pytest.approx(107_910.0)
+
+
+def test_the_portfolio_gain_is_withheld_unless_every_flat_has_one():
+    s = portfolio_purchase([_bought(99_000, 8_910, 100_000, 226, 185_883),
+                            _bought(170_000, 15_300, 136_000, 469, None)])
+    assert s["value_gain"] is None
+
+
+def test_no_purchases_on_file_means_no_summary():
+    assert portfolio_purchase([{"purchase": None}]) is None
+    assert portfolio_purchase([]) is None

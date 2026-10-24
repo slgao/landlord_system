@@ -227,6 +227,11 @@ export default function FlatEconomicsPage() {
                       · earning <strong className="text-foreground">
                         {pct(data.purchase.equity_return_invested)}
                       </strong> a year on it
+                      {data.purchase.cash_return_invested != null && (
+                        <>, of which <strong className="text-foreground">
+                          {pct(data.purchase.cash_return_invested)}
+                        </strong> reaches the account</>
+                      )}
                     </span>
                   )}
                 </div>
@@ -236,6 +241,14 @@ export default function FlatEconomicsPage() {
                     {eur(data.purchase.purchase_price)} paid, on today&apos;s estimate.
                   </p>
                 )}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  <strong className="text-foreground">EK-Rendite</strong> is the operating
+                  result against that equity — what the flats earn, with the Tilgung counted
+                  as the saving it is. <strong className="text-foreground">Of it cash</strong>{" "}
+                  is the same equity against what actually reaches the account, after the
+                  whole instalment. The gap between them is the Tilgung: money you keep, but
+                  not money you can spend.
+                </p>
                 {data.purchase.costs_missing && (
                   <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
                     Some Kaufnebenkosten are blank — Grunderwerbsteuer, Notar, Grundbuch,
@@ -256,7 +269,14 @@ export default function FlatEconomicsPage() {
                     <TableHead className="text-right">Nebenkosten</TableHead>
                     <TableHead className="text-right">Borrowed</TableHead>
                     <TableHead className="text-right">Own money</TableHead>
-                    <TableHead className="text-right">EK-Rendite</TableHead>
+                    <TableHead className="text-right"
+                               title="Operating result (rent less costs less interest) against the equity put in — the Tilgung counts as saving, not spending">
+                      EK-Rendite
+                    </TableHead>
+                    <TableHead className="text-right"
+                               title="The same equity, measured against the cash that actually reaches the account after the whole instalment">
+                      of it cash
+                    </TableHead>
                     <TableHead className="text-right">Since then</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -295,6 +315,13 @@ export default function FlatEconomicsPage() {
                         {f.equity_return_invested != null
                           ? pct(f.equity_return_invested)
                           : dash}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {f.cash_return_invested != null ? (
+                          <span className={signed(f.cash_return_invested)}>
+                            {pct(f.cash_return_invested)}
+                          </span>
+                        ) : dash}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {f.value_gain ? (

@@ -195,10 +195,12 @@ def flat_insights(owner: int = Depends(require_auth)):
             **({"purchase": bought,
                 "equity_return_invested": flat_economics.equity_return_on_investment(
                     e["operating_monthly"], bought["equity_invested"]),
+                "cash_return_invested": flat_economics.equity_return_on_investment(
+                    e["cashflow_monthly"], bought["equity_invested"]),
                 "value_gain": flat_economics.value_gain(
                     v["value"], bought["purchase_price"])}
                if bought else {"purchase": None, "equity_return_invested": None,
-                               "value_gain": None}),
+                               "cash_return_invested": None, "value_gain": None}),
             "value": v["value"] if owned else None,
             "value_estimated": v["estimated"] if owned else None,
             "debt": round(debt.get(pid, 0.0), 2),

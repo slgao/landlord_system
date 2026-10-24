@@ -544,9 +544,12 @@ def test_no_gain_without_both_figures():
 
 # ── The portfolio ────────────────────────────────────────────────────────────
 
-def _bought(price, costs, borrowed, operating, value=None):
+def _bought(price, costs, borrowed, operating, value=None, cashflow=None):
+    """A flat as portfolio_purchase sees it. `cashflow` defaults to the
+    operating result, which is what a flat with no mortgage has."""
     p = purchase_equity(price, costs, borrowed)
     return {"purchase": p, "operating_monthly": operating,
+            "cashflow_monthly": operating if cashflow is None else cashflow,
             "value_gain": value_gain(value, price)}
 
 
@@ -582,3 +585,45 @@ def test_the_portfolio_gain_is_withheld_unless_every_flat_has_one():
 def test_no_purchases_on_file_means_no_summary():
     assert portfolio_purchase([{"purchase": None}]) is None
     assert portfolio_purchase([]) is None
+
+
+# ── The same equity, measured two ways ───────────────────────────────────────
+# What the flat earns (operating, counting the Tilgung as saving) and what
+# reaches the account (cashflow, after the whole instalment). The gap between
+# them is the Tilgung, and it is the difference between a flat that funds
+# itself and one that is a good investment you have to feed.
+
+def test_the_cash_return_is_lower_than_the_operating_one_while_a_loan_is_repaid():
+    e = economics(rent=1400, costs=454, instalment=644, interest=130)
+    op = equity_return_on_investment(e["operating_monthly"], 14_000)
+    cash = equity_return_on_investment(e["cashflow_monthly"], 14_000)
+    assert op > cash
+    # the gap is exactly the Tilgung against the same equity
+    assert op - cash == pytest.approx(e["principal_monthly"] * 12 / 14_000 * 100, abs=0.01)
+
+
+def test_the_two_agree_where_there_is_no_mortgage():
+    """Nothing is being repaid, so nothing separates them."""
+    e = economics(rent=950, costs=627, instalment=0, interest=0)
+    assert (equity_return_on_investment(e["operating_monthly"], 50_000)
+            == equity_return_on_investment(e["cashflow_monthly"], 50_000))
+
+
+def test_a_flat_that_must_be_fed_has_a_negative_cash_return_and_still_earns():
+    """The case the two measures exist to tell apart."""
+    e = economics(rent=738, costs=355, instalment=412, interest=150)
+    assert equity_return_on_investment(e["cashflow_monthly"], 10_000) < 0
+    assert equity_return_on_investment(e["operating_monthly"], 10_000) > 0
+
+
+def test_the_portfolio_reports_both_against_the_same_equity():
+    s = portfolio_purchase([_bought(99_000, 8_910, 100_000, 226, 185_883)
+                            | {"cashflow_monthly": 35.0}])
+    assert s["equity_return_invested"] == pytest.approx(226 * 12 / 7_910 * 100, abs=0.01)
+    assert s["cash_return_invested"] == pytest.approx(35 * 12 / 7_910 * 100, abs=0.01)
+
+
+def test_a_missing_cashflow_counts_as_nothing_rather_than_breaking_the_total():
+    s = portfolio_purchase([_bought(99_000, 8_910, 100_000, 226, 185_883)
+                            | {"cashflow_monthly": None}])
+    assert s["cash_return_invested"] == 0.0

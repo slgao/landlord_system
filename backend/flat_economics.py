@@ -301,18 +301,25 @@ def purchase_equity(purchase_price=None, purchase_costs=None, loans_original=Non
     }
 
 
-def equity_return_on_investment(operating_monthly, equity_invested):
-    """Eigenkapitalrendite: what the flat earns a year against the money put in.
+def equity_return_on_investment(monthly_result, equity_invested):
+    """Eigenkapitalrendite: a yearly result against the money put in.
 
-    The numerator is the operating result — rent less running costs less
-    interest — because the Tilgung is not a return, it is the investment
-    growing. None where the equity is unknown, zero or negative: a percentage
-    return on nothing is not a number, and a flat bought entirely on credit is
-    better described by its cashflow.
+    Two results are worth measuring this way and they answer different
+    questions, so the numerator is the caller's choice:
+
+    - the **operating result** (rent less running costs less interest) is what
+      the flat earns, counting the Tilgung as the saving it is;
+    - the **cashflow** (the same, less the whole instalment) is what reaches
+      the account — lower wherever a loan is being repaid, and the figure that
+      says whether a flat funds itself.
+
+    None where the equity is unknown, zero or negative: a percentage return on
+    nothing is not a number, and a flat bought entirely on credit is better
+    described by its cashflow in euro.
     """
-    if operating_monthly is None or not equity_invested or equity_invested <= 0:
+    if monthly_result is None or not equity_invested or equity_invested <= 0:
         return None
-    return round(float(operating_monthly) * 12 / float(equity_invested) * 100, 2)
+    return round(float(monthly_result) * 12 / float(equity_invested) * 100, 2)
 
 
 def value_gain(current_value=None, purchase_price=None):
@@ -337,7 +344,8 @@ def portfolio_purchase(flats):
     invested = sum(f["purchase"]["invested_total"] for f in have)
     borrowed = sum(f["purchase"]["loans_original"] for f in have)
     equity = invested - borrowed
-    operating = sum(f["operating_monthly"] or 0 for f in have)
+    operating = sum(f.get("operating_monthly") or 0 for f in have)
+    cash = sum(f.get("cashflow_monthly") or 0 for f in have)
     gains = [f["value_gain"]["gain"] for f in have if f.get("value_gain")]
     return {
         "flats": len(have),
@@ -347,6 +355,8 @@ def portfolio_purchase(flats):
         "equity_invested": round(equity, 2),
         "loan_to_price": round(borrowed / price * 100, 1) if price else None,
         "equity_return_invested": equity_return_on_investment(operating, equity),
+        # The same equity measured against what actually reaches the account.
+        "cash_return_invested": equity_return_on_investment(cash, equity),
         "value_gain": round(sum(gains), 2) if len(gains) == len(have) else None,
         # True while any flat is missing its Kaufnebenkosten, which makes the
         # equity look smaller and the return on it larger than they are.

@@ -827,8 +827,10 @@ export interface FlatEconomics {
     /** True while the Kaufnebenkosten are blank — the equity then reads low. */
     costs_missing: boolean;
   } | null;
-  /** Eigenkapitalrendite on the money actually put in. */
+  /** Eigenkapitalrendite on the money put in, from the operating result. */
   equity_return_invested?: number | null;
+  /** The same equity, measured against what reaches the account. */
+  cash_return_invested?: number | null;
   value_gain?: { gain: number; gain_pct: number } | null;
 }
 
@@ -866,7 +868,8 @@ export interface FlatInsights {
   purchase: {
     flats: number; purchase_price: number; invested_total: number;
     loans_original: number; equity_invested: number; loan_to_price: number | null;
-    equity_return_invested: number | null; value_gain: number | null;
+    equity_return_invested: number | null; cash_return_invested: number | null;
+    value_gain: number | null;
     costs_missing: boolean;
   } | null;
 }

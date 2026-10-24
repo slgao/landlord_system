@@ -27,9 +27,15 @@ type Form = {
   mea: string;
   market_value: string;
   market_value_date: string;
+  owned: boolean;
+  living_sqm: string;
+  plot_sqm: string;
+  comparable_per_sqm: string;
+  valuation_note: string;
 };
 const EMPTY: Form = { name: "", address: "", building_id: null, we_label: "", mea: "",
-                      market_value: "", market_value_date: "" };
+                      market_value: "", market_value_date: "", owned: true, living_sqm: "",
+                      plot_sqm: "", comparable_per_sqm: "", valuation_note: "" };
 
 function buildingLabel(b: Building): string {
   return b.name || [b.street, b.house_no].filter(Boolean).join(" ") || `Building #${b.id}`;
@@ -61,6 +67,12 @@ export default function PropertiesPage() {
         mea: data.mea === "" ? null : parseFloat(data.mea),
         market_value: data.market_value === "" ? null : parseFloat(data.market_value),
         market_value_date: data.market_value_date || null,
+        owned: data.owned,
+        living_sqm: data.living_sqm === "" ? null : parseFloat(data.living_sqm),
+        plot_sqm: data.plot_sqm === "" ? null : parseFloat(data.plot_sqm),
+        comparable_per_sqm: data.comparable_per_sqm === "" ? null
+          : parseFloat(data.comparable_per_sqm),
+        valuation_note: data.valuation_note || null,
       };
       return editing
         ? api.put(`/api/properties/${editing.id}`, payload)
@@ -113,6 +125,11 @@ export default function PropertiesPage() {
       mea: p.mea == null ? "" : String(p.mea),
       market_value: p.market_value == null ? "" : String(p.market_value),
       market_value_date: p.market_value_date || "",
+      owned: p.owned !== false,
+      living_sqm: p.living_sqm == null ? "" : String(p.living_sqm),
+      plot_sqm: p.plot_sqm == null ? "" : String(p.plot_sqm),
+      comparable_per_sqm: p.comparable_per_sqm == null ? "" : String(p.comparable_per_sqm),
+      valuation_note: p.valuation_note || "",
     });
     setOpen(true);
   }
@@ -282,6 +299,81 @@ export default function PropertiesPage() {
                 <p className="text-xs text-muted-foreground">When the estimate was made.</p>
               </div>
             </div>
+
+            {/* Whether the flat is yours at all. A managed flat is tracked
+                like any other, but its worth is not your asset — so this
+                decides whether the rest of this block means anything. */}
+            <div className="rounded-lg border border-border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox" className="size-4 accent-primary"
+                  checked={form.owned}
+                  onChange={(e) => setForm((f) => ({ ...f, owned: e.target.checked }))}
+                />
+                I own this flat
+              </label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {form.owned
+                  ? "Counted in the portfolio value, the equity and the LTV."
+                  : "Managed but not owned — tracked like any other flat, but left out of the valuation and every total."}
+              </p>
+            </div>
+
+            {form.owned && (
+            <>
+            {/* What the valuation needs. The land value comes free from
+                Berlin's open data; these two are the parts only the owner
+                knows, and without them there is no figure to compute. */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="p-living">Living area (m²)</Label>
+                <Input
+                  type="number" step="0.01" min="0"
+                  id="p-living" value={form.living_sqm}
+                  onChange={(e) => setForm((f) => ({ ...f, living_sqm: e.target.value }))}
+                  placeholder="e.g. 49"
+                />
+                <p className="text-xs text-muted-foreground">
+                  The flat&apos;s Wohnfläche — a WG&apos;s rooms do not add up to it.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="p-comp">Comparable (€/m²)</Label>
+                <Input
+                  type="number" step="50" min="0"
+                  id="p-comp" value={form.comparable_per_sqm}
+                  onChange={(e) => setForm((f) => ({ ...f, comparable_per_sqm: e.target.value }))}
+                  placeholder="e.g. 5400"
+                />
+                <p className="text-xs text-muted-foreground">
+                  What similar flats fetch. The Gutachterausschuss publishes these per district.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="p-plot">Plot area (m²)</Label>
+                <Input
+                  type="number" step="1" min="0"
+                  id="p-plot" value={form.plot_sqm}
+                  onChange={(e) => setForm((f) => ({ ...f, plot_sqm: e.target.value }))}
+                  placeholder="optional"
+                />
+                <p className="text-xs text-muted-foreground">
+                  With the MEA this gives the exact land share.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="p-vnote">Valuation note</Label>
+              <Input
+                id="p-vnote" value={form.valuation_note}
+                onChange={(e) => setForm((f) => ({ ...f, valuation_note: e.target.value }))}
+                placeholder="Where the comparable came from, e.g. Immobilienmarktbericht 2024/2025"
+              />
+            </div>
+
+            </>
+            )}
 
             <div className="space-y-1.5">
               <Label>Address (legacy / per-WE, optional)</Label>

@@ -1,6 +1,7 @@
 """PDF generation, calculation, and report endpoints."""
 import functools
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
 from fastapi.responses import Response
@@ -8,7 +9,7 @@ from pydantic import BaseModel
 from typing import Optional, Any
 from db import get_config, fetch, execute, execute_returning
 from auth import require_auth
-from api.errors import client_detail, log_and_reference
+from api.errors import client_detail, db_error_response, log_and_reference
 from api.schemas.common import IsoDate
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
@@ -31,6 +32,12 @@ def _surface_errors(fn):
         except HTTPException:
             raise
         except Exception as e:
+            # A value the database refuses is the caller's mistake; only the
+            # rest is ours to apologise for with a reference id.
+            client = db_error_response(e)
+            if client:
+                status, detail = client
+                raise HTTPException(status_code=status, detail=detail)
             ref = log_and_reference(e, f"reports.{fn.__name__}")
             raise HTTPException(status_code=500, detail=client_detail(ref))
     return wrapper
@@ -71,12 +78,15 @@ def balance_sheet_data(year: int = _Year, include_one_off: bool = False,
     month's costs — real money out, but lumpy, so the caller chooses."""
     from balance_compute import _compute_snapshot
     snapshot, props = _compute_snapshot(year, owner, include_one_off)
-    # serialise Decimal values for JSON
+    # Decimal does not serialise to JSON, so the money becomes float here.
+    #
+    # Only the Decimals. This used to try float(v) on every value of every row
+    # and keep whatever came back, which quietly reinterpreted text: a flat
+    # named "12" was returned as the number 12, and one named "NaN" or "inf" —
+    # float() accepts both — became a non-finite float that took the whole
+    # response down with a 500 on serialisation. The name of a flat is a name.
     def _f(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return v
+        return float(v) if isinstance(v, Decimal) else v
     props_clean = []
     for p in props:
         rows_clean = [{k: _f(vv) for k, vv in row.items()} for row in p["monthly_rows"]]
@@ -115,13 +125,25 @@ class NKCalcRequest(BaseModel):
     bk: Optional[Any] = None
 
 
-def _norm_billings(x):
+def _norm_billings(x, label="A utility section"):
     """A utility section may arrive as a single billing dict or a list of
     billing dicts (multiple yearly bills for the same metering). Normalise to
-    a list so the rest of the code is uniform."""
+    a list so the rest of the code is uniform.
+
+    The sections are typed `Any`, because each utility has its own keys and
+    several are optional — which means the only thing standing between a
+    string here and `"text".get("eff_days")` further down is this function.
+    That crashed with a 500 on `{"strom": -1}`; it is a 422 now.
+    """
     if not x:
         return []
-    return x if isinstance(x, list) else [x]
+    items = x if isinstance(x, list) else [x]
+    for item in items:
+        if not isinstance(item, dict):
+            raise HTTPException(422, f"{label}: expected the billing figures as an "
+                                     f"object, or a list of them, not "
+                                     f"{type(item).__name__}.")
+    return items
 
 
 # Every utility prorates the flat's cost as cost × eff_days / bill_days: the
@@ -140,12 +162,33 @@ def _check_period(label: str, part, whole, unit: str) -> None:
                                  "has to lie inside the billing period.")
 
 
+def _check_extra(extra) -> None:
+    """The „Zusätzliche Positionen“ section: a list of items, or the legacy
+    {"items": [...]} wrapper around one. Each item needs a description and an
+    amount, both of which the PDF reads straight off the dict."""
+    if not extra:
+        return
+    items = extra.get("items") if isinstance(extra, dict) else extra
+    if items is None:
+        return
+    if not isinstance(items, list):
+        raise HTTPException(422, "Zusätzliche Positionen: expected a list of items, "
+                                 f"not {type(items).__name__}.")
+    for item in items:
+        if not isinstance(item, dict):
+            raise HTTPException(422, "Zusätzliche Positionen: each item has to be an "
+                                     f"object, not {type(item).__name__}.")
+        if item.get("description") and not isinstance(item.get("amount"), (int, float)):
+            raise HTTPException(422, f"Zusätzliche Positionen: „{item['description']}“ "
+                                     "needs an amount.")
+
+
 def _check_billings(body) -> None:
     for label, key in (("Strom", "strom"), ("Gas", "gas"), ("Kaltwasser", "water"),
                        ("Warmwasser", "warmwater"), ("Heizung", "heizung")):
-        for b in _norm_billings(getattr(body, key, None)):
+        for b in _norm_billings(getattr(body, key, None), label):
             _check_period(label, b.get("eff_days"), b.get("bill_days"), "days")
-    for b in _norm_billings(getattr(body, "bk", None)):
+    for b in _norm_billings(getattr(body, "bk", None), "Betriebskosten"):
         try:
             bk_start = date.fromisoformat(b["bk_start"])
             bk_end = date.fromisoformat(b["bk_end"])
@@ -249,10 +292,14 @@ def nebenkostenabrechnung_pdf(body: NKRequest, owner: int = Depends(require_auth
     # checked here too rather than trusting them.
     for label, key in (("Strom", "strom"), ("Gas", "gas"), ("Kaltwasser", "water"),
                        ("Warmwasser", "warmwater"), ("Heizung", "heizung")):
-        for b in _norm_billings(getattr(body, key, None)):
+        for b in _norm_billings(getattr(body, key, None), label):
             _check_period(label, b.get("days"), b.get("bill_days"), "days")
-    for b in _norm_billings(getattr(body, "bk", None)):
+    for b in _norm_billings(getattr(body, "bk", None), "Betriebskosten"):
         _check_period("Betriebskosten", b.get("months"), b.get("num_months"), "months")
+    # `extra` is the one section that is a list of items rather than a billing,
+    # and it is read as `item.get("description")` further down — so the same
+    # rule applies: anything that is not an object is a 422, not a 500.
+    _check_extra(getattr(body, "extra", None))
     from pdfgen import invoice_pdf
     # Resolve the primary tenant's gender for the salutation/honorific (the
     # frontend sends a placeholder "diverse").
@@ -305,8 +352,8 @@ def nebenkostenabrechnung_pdf(body: NKRequest, owner: int = Depends(require_auth
             still_held = round(float(amount) - float(deducted) - float(returned), 2)
             if not settled and still_held > 0.005:
                 kaution_info = {"kaution_amount": still_held, "kaution_currency": currency}
-    # invoice_pdf writes to disk and returns the file path and the result
-    path, total = invoice_pdf(
+    # invoice_pdf returns the document itself and the result it states
+    pdf_bytes, total = invoice_pdf(
         tenant=body.tenant, address=address,
         landlord_name=_landlord_name(), gender=gender,
         signature_path=_sig(owner), strom=body.strom, gas=body.gas,
@@ -315,7 +362,6 @@ def nebenkostenabrechnung_pdf(body: NKRequest, owner: int = Depends(require_auth
         landlord_info=body.landlord_info, co_tenants=co_tenants,
         contract_period=contract_period,
     )
-    pdf_bytes = Path(path).read_bytes()
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": 'attachment; filename="Nebenkostenabrechnung.pdf"',
                              # + Nachzahlung / − Guthaben, before any Kaution offset
@@ -352,11 +398,10 @@ def mahnung_pdf(body: MahnungRequest, owner: int = Depends(require_auth)):
         rows = fetch("SELECT name, gender FROM co_tenants WHERE contract_id=? AND in_contract=1 "
                      "AND owner_id=? ORDER BY id", (body.contract_id, owner))
         co_tenants = [{"name": r[0], "gender": r[1]} for r in rows] or None
-    path = generate_mahnung(
+    pdf_bytes = generate_mahnung(
         body.tenant_name, body.amount_due, address,
         gender=gender, signature_path=_sig(owner), co_tenants=co_tenants,
     )
-    pdf_bytes = Path(path).read_bytes()
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": 'attachment; filename="Mahnung.pdf"'})
 

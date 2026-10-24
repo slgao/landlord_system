@@ -11,9 +11,11 @@
 #
 # ================================================================
 
+import math as _math
 import re as _re
 import os
 import contextvars
+from decimal import Decimal as _Decimal
 import psycopg2
 from psycopg2 import pool as _pg_pool
 from dotenv import load_dotenv
@@ -275,6 +277,7 @@ def insert(table, values):
     current request's owner and returns the generated id. All callers operate
     on owner-scoped tables."""
     owner = require_owner()
+    _reject_non_finite(values)
     conn = get_conn()
     try:
         c = conn.cursor()
@@ -301,7 +304,44 @@ def insert(table, values):
 _CONN_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
 
 
+class NonFiniteNumber(ValueError):
+    """A NaN or an infinity was about to be written to the database.
+
+    A NUMERIC column accepts NaN, and nothing downstream survives it: the
+    column sums to NaN, and every report that touches the row dies rendering
+    its response ("Out of range float values are not JSON compliant"), for
+    good, with no way to reach the row from the UI.
+
+    The API refuses non-finite *JSON numbers* at the door, but that is not the
+    only way one arrives: `{"amount": "NaN"}` is a string, which pydantic
+    coerces to float("nan") for a float field, and a division in a calculation
+    can produce one with no request to blame at all. This is the chokepoint
+    every write passes through, so it is the one place the invariant can be
+    stated once and hold.
+    """
+
+
+def _reject_non_finite(params):
+    """Raise if any bound parameter is a NaN or an infinity.
+
+    Checked by exact class rather than isinstance: this runs on every bound
+    parameter of every statement, and bool/int/str/None — nearly all of them —
+    then cost one pointer comparison each.
+    """
+    if not params:
+        return
+    values = params.values() if isinstance(params, dict) else params
+    for v in values:
+        cls = v.__class__
+        if cls is float:
+            if not _math.isfinite(v):
+                raise NonFiniteNumber("a number must be finite, not NaN or infinity")
+        elif cls is _Decimal and not v.is_finite():
+            raise NonFiniteNumber("a number must be finite, not NaN or infinity")
+
+
 def _run_once(query, params, commit, returning=False):
+    _reject_non_finite(params)
     conn = get_conn()
     try:
         c = conn.cursor()
@@ -398,6 +438,37 @@ def execute_returning(query, params=()):
         return _run_once(query, params, commit=True, returning=True)
     except _CONN_ERRORS:
         return _run_once(query, params, commit=True, returning=True)
+
+
+# Every foreign key whose leading column no index covers. A join over such a
+# column reads the whole child table, and the parent's DELETE scans it too to
+# check the constraint — so the cost of one owner's page is set by how much
+# data every *other* owner has entered. `indkey[0]` is the leading column,
+# because that is the only position a join or a range scan can use.
+_UNINDEXED_FKS_SQL = """
+    SELECT c.conrelid::regclass::text, a.attname, c.confrelid::regclass::text
+    FROM pg_constraint c
+    JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON k.ord = 1
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+    WHERE c.contype = 'f'
+      AND NOT EXISTS (SELECT 1 FROM pg_index i
+                      WHERE i.indrelid = c.conrelid AND i.indkey[0] = a.attnum)
+    ORDER BY 1, 2
+"""
+
+
+def unindexed_foreign_keys() -> list[tuple[str, str, str]]:
+    """(child table, column, parent table) for each foreign key with no index."""
+    return [(str(t), str(col), str(parent)) for t, col, parent in fetch(_UNINDEXED_FKS_SQL)]
+
+
+def describe_unindexed_fks(rows) -> str | None:
+    """One log line naming them, or None when there is nothing to say."""
+    if not rows:
+        return None
+    return ("%d foreign key(s) have no index, so every join over them reads the "
+            "whole child table: %s" % (len(rows),
+                                       ", ".join(f"{t}.{c}" for t, c, _p in rows)))
 
 
 def get_tenant_gender(tenant_name):

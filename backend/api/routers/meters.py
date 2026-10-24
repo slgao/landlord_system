@@ -16,11 +16,31 @@ def _own_apartment(apartment_id: int, owner: int):
 
 # ── Strom ────────────────────────────────────────────────────────────────────
 
+# What the write path stores when the caller leaves a field out. The readers
+# below fall back to the same values, because these columns are all nullable:
+# a row written before a column existed, or by hand in SQL, holds NULL, and
+# `float(None)` raised — taking the whole meter list (and the overview that
+# joins all five kinds) down with a 500 rather than showing one odd meter.
+D_SCOPE_SHARED = "shared"
+D_SCOPE_ROOM = "room"
+D_Z_ZAHL = 1.0
+D_BRENNWERT = 10.0
+D_UNIT_PRICE = 0.0
+D_UNIT_LABEL = "Einheiten"
+D_CONVERSION_FACTOR = 1.0
+D_WASSER_TYPE = "kalt"
+
+
+def _num(v, default: float) -> float:
+    """A numeric column that may be NULL, as the float the schema promises."""
+    return default if v is None else float(v)
+
+
 class StromMeterIn(BaseModel):
     apartment_id: int
     serial_number: Optional[str] = None
     description: Optional[str] = None
-    scope: str = "shared"
+    scope: str = D_SCOPE_SHARED
 
 
 class StromMeterOut(BaseModel):
@@ -41,7 +61,8 @@ _STROM_SEL = """
 
 def _strom(r):
     return StromMeterOut(id=r[0], apartment_id=r[1], apartment_name=r[2],
-                         serial_number=r[3], description=r[4], scope=r[5])
+                         serial_number=r[3], description=r[4],
+                         scope=r[5] or D_SCOPE_SHARED)
 
 
 @router.get("/strom", response_model=list[StromMeterOut])
@@ -90,9 +111,9 @@ class GasMeterIn(BaseModel):
     apartment_id: int
     serial_number: Optional[str] = None
     description: Optional[str] = None
-    z_zahl: float = 1.0
-    brennwert: float = 10.0
-    scope: str = "shared"
+    z_zahl: float = D_Z_ZAHL
+    brennwert: float = D_BRENNWERT
+    scope: str = D_SCOPE_SHARED
 
 
 class GasMeterOut(BaseModel):
@@ -116,7 +137,9 @@ _GAS_SEL = """
 def _gas(r):
     return GasMeterOut(id=r[0], apartment_id=r[1], apartment_name=r[2],
                        serial_number=r[3], description=r[4],
-                       z_zahl=float(r[5]), brennwert=float(r[6]), scope=r[7])
+                       z_zahl=_num(r[5], D_Z_ZAHL),
+                       brennwert=_num(r[6], D_BRENNWERT),
+                       scope=r[7] or D_SCOPE_SHARED)
 
 
 @router.get("/gas", response_model=list[GasMeterOut])
@@ -168,8 +191,8 @@ class WasserMeterIn(BaseModel):
     apartment_id: int
     serial_number: Optional[str] = None
     description: Optional[str] = None
-    type: str = "kalt"
-    scope: str = "shared"
+    type: str = D_WASSER_TYPE
+    scope: str = D_SCOPE_SHARED
 
 
 class WasserMeterOut(BaseModel):
@@ -191,7 +214,9 @@ _WASSER_SEL = """
 
 def _wasser(r):
     return WasserMeterOut(id=r[0], apartment_id=r[1], apartment_name=r[2],
-                          serial_number=r[3], description=r[4], type=r[5], scope=r[6])
+                          serial_number=r[3], description=r[4],
+                          type=r[5] or D_WASSER_TYPE,
+                          scope=r[6] or D_SCOPE_SHARED)
 
 
 @router.get("/wasser", response_model=list[WasserMeterOut])
@@ -242,10 +267,10 @@ class HeizungMeterIn(BaseModel):
     apartment_id: int
     serial_number: Optional[str] = None
     description: Optional[str] = None
-    unit_price: float = 0.0
-    unit_label: str = "Einheiten"
-    conversion_factor: float = 1.0
-    scope: str = "room"
+    unit_price: float = D_UNIT_PRICE
+    unit_label: str = D_UNIT_LABEL
+    conversion_factor: float = D_CONVERSION_FACTOR
+    scope: str = D_SCOPE_ROOM
 
 
 class HeizungMeterOut(BaseModel):
@@ -270,8 +295,10 @@ _HEIZUNG_SEL = """
 def _heizung(r):
     return HeizungMeterOut(id=r[0], apartment_id=r[1], apartment_name=r[2],
                            serial_number=r[3], description=r[4],
-                           unit_price=float(r[5]), unit_label=r[6],
-                           conversion_factor=float(r[7]), scope=r[8])
+                           unit_price=_num(r[5], D_UNIT_PRICE),
+                           unit_label=r[6] or D_UNIT_LABEL,
+                           conversion_factor=_num(r[7], D_CONVERSION_FACTOR),
+                           scope=r[8] or D_SCOPE_ROOM)
 
 
 @router.get("/heizung", response_model=list[HeizungMeterOut])

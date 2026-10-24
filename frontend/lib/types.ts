@@ -831,10 +831,14 @@ export interface FlatInsights {
     rooms: number; let_rooms: number; occupancy: number | null;
     value: number | null; gross_yield: number | null; net_yield: number | null;
   } | null;
-  /** Properties whose mortgage is on file twice, with the two records disagreeing. */
-  mortgage_conflicts: {
+  /** Contradictions in the data worth the landlord's attention. */
+  warnings: {
+    kind: "mortgage_conflict" | "rent_to_owner_on_owned" | "loan_on_sublet";
     property_id: number; property_name: string;
-    loan_instalment: number; mortgage_cost: number; difference: number;
+    /** mortgage_conflict only */
+    loan_instalment?: number; mortgage_cost?: number; difference?: number;
+    /** the other two */
+    amount?: number;
   }[];
   /** The flats rented from an owner and let on. A yield means nothing here. */
   sublets: {

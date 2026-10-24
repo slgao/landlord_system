@@ -116,30 +116,45 @@ export default function FlatEconomicsPage() {
             )}
           </Card>
 
-          {/* The mortgage on file twice, the two records disagreeing. The loans
-              are used; this says the typed figure no longer matches them. */}
-          {(data?.mortgage_conflicts?.length ?? 0) > 0 && (
+          {/* Contradictions in the data. Each says which figure was used, so
+              the numbers above are still readable while it is sorted out. */}
+          {(data?.warnings?.length ?? 0) > 0 && (
             <Card className="p-4 border-amber-500/40">
               <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                Mortgage recorded twice, and the two disagree
+                Worth a look
               </p>
-              <ul className="mt-2 space-y-1 text-sm">
-                {data!.mortgage_conflicts.map((c) => (
-                  <li key={c.property_id}>
-                    <span className="font-medium">{c.property_name}</span>{" "}
-                    <span className="text-muted-foreground">
-                      — loan terms say {eur(c.loan_instalment)}/month, the{" "}
-                      <em>Mortgage</em> flat cost says {eur(c.mortgage_cost)}{" "}
-                      ({c.difference > 0 ? "+" : ""}{eur(c.difference)})
-                    </span>
+              <ul className="mt-2 space-y-2 text-sm">
+                {data!.warnings.map((w, i) => (
+                  <li key={`${w.property_id}-${w.kind}-${i}`}>
+                    <span className="font-medium">{w.property_name}</span>{" "}
+                    {w.kind === "mortgage_conflict" && (
+                      <span className="text-muted-foreground">
+                        — the mortgage is on file twice and the two disagree: the loan&apos;s
+                        terms say {eur(w.loan_instalment ?? 0)}/month, a <em>Mortgage</em>{" "}
+                        flat cost says {eur(w.mortgage_cost ?? 0)}{" "}
+                        ({(w.difference ?? 0) > 0 ? "+" : ""}{eur(w.difference ?? 0)}).
+                        The loan is used, because only its terms split interest from Tilgung.
+                        Delete the duplicate cost, or correct whichever record is out of date.
+                      </span>
+                    )}
+                    {w.kind === "rent_to_owner_on_owned" && (
+                      <span className="text-muted-foreground">
+                        — you own this flat, but it still has a <em>Miete</em> cost of{" "}
+                        {eur(w.amount ?? 0)}/month. It is counted as an ordinary running
+                        cost. That is right for a ground rent (Erbbauzins); if it is left
+                        over from when the flat was a sublet, delete it.
+                      </span>
+                    )}
+                    {w.kind === "loan_on_sublet" && (
+                      <span className="text-muted-foreground">
+                        — this flat is marked as not owned, but carries a loan of{" "}
+                        {eur(w.amount ?? 0)}/month, which is subtracted from its margin.
+                        Either it is yours after all, or the loan belongs elsewhere.
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
-              <p className="mt-2 text-xs text-muted-foreground">
-                The loan&apos;s own terms are used here, because only they split interest
-                from Tilgung. Delete the duplicate flat cost, or correct whichever record
-                is out of date — until then the two figures will keep drifting apart.
-              </p>
             </Card>
           )}
 
@@ -239,6 +254,11 @@ export default function FlatEconomicsPage() {
                           )}
                           {f.arrears > 0 && (
                             <span className="text-destructive"> · {eur(f.arrears)} owed</span>
+                          )}
+                          {f.instalment_monthly > 0 && (
+                            <span className="text-destructive">
+                              {" "}· plus {eur(f.instalment_monthly)} loan
+                            </span>
                           )}
                         </span>
                       </TableCell>

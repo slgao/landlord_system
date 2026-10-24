@@ -1,0 +1,239 @@
+"use client";
+
+// What each flat actually earns.
+//
+// The page exists to keep three answers apart, because they routinely disagree:
+// what the bank account sees each month (cashflow), what the flat earns once
+// you stop counting the Tilgung as a cost (operating result), and what that is
+// as a return on the flat's worth (yield). A flat can be cashflow negative and
+// still be a good investment — and nothing else in the app says so.
+
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { FlatEconomics, FlatInsights } from "@/lib/types";
+import { PageHeader } from "@/components/page-header";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { Info } from "lucide-react";
+import Link from "next/link";
+
+const eur = (n: number) =>
+  `${n.toLocaleString("de-DE", { maximumFractionDigits: 0 })} €`;
+const pct = (n: number, d = 2) =>
+  `${n.toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d })} %`;
+const dash = <span className="text-muted-foreground">—</span>;
+
+/** Red below zero, green above — for a figure where the sign is the point. */
+function signed(n: number) {
+  return n < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400";
+}
+
+function Stat({ label, value, sub, className }: {
+  label: string; value: string; sub?: string; className?: string;
+}) {
+  return (
+    <Card className="p-4">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-2xl font-semibold tabular-nums ${className ?? ""}`}>{value}</p>
+      {sub && <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>}
+    </Card>
+  );
+}
+
+export default function FlatEconomicsPage() {
+  const { data, isLoading } = useQuery<FlatInsights>({
+    queryKey: ["flat-insights"],
+    queryFn: () => api.get("/api/insights/flats").then((r) => r.data),
+  });
+
+  const flats = data?.flats ?? [];
+  const s = data?.summary;
+  const vacant = flats.filter((f) => f.owned && f.vacant_rooms > 0);
+  const owing = flats.filter((f) => f.arrears > 0);
+  const unvalued = flats.filter((f) => f.owned && !f.value);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Flat Economics"
+        description="What each flat earns, costs and owes, per month."
+      />
+
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : !s ? (
+        <Card className="p-4">
+          <p className="text-sm">Nothing to show yet.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Tick <em>I own this flat</em> on the{" "}
+            <Link href="/properties" className="underline hover:no-underline">Properties</Link>{" "}
+            page for the flats that are yours.
+          </p>
+        </Card>
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat label="Rent in" value={eur(s.rent_monthly)}
+                  sub={`${s.let_rooms} of ${s.rooms} rooms let`} />
+            <Stat label="Running costs" value={eur(s.costs_monthly)}
+                  sub="Hausgeld, Grundsteuer, Internet…" />
+            <Stat label="Cashflow" value={eur(s.cashflow_monthly)}
+                  className={signed(s.cashflow_monthly)}
+                  sub={`after ${eur(s.instalment_monthly)} of instalments`} />
+            <Stat label="Operating result" value={eur(s.operating_monthly)}
+                  className={signed(s.operating_monthly)}
+                  sub={s.split_unknown > 0
+                    ? `at least — ${s.split_unknown} loan${s.split_unknown === 1 ? "" : "s"} not on file`
+                    : `${eur(s.principal_monthly)} of it is Tilgung`} />
+          </div>
+
+          {/* The one number that explains the gap between the two above. */}
+          <Card className="p-4">
+            <p className="text-sm">
+              Of the {eur(s.instalment_monthly)} leaving each month,{" "}
+              <strong>{eur(s.interest_monthly)}</strong> is interest and{" "}
+              <strong>{eur(s.principal_monthly)}</strong> buys the flats. The Tilgung is not a
+              cost — it is the reason the cashflow and the operating result differ by{" "}
+              {eur(s.operating_monthly - s.cashflow_monthly)} a month.
+            </p>
+            {s.gross_yield != null ? (
+              <p className="mt-2 text-sm text-muted-foreground">
+                On {eur(s.value ?? 0)} of value across {s.valued_flats} valued flat
+                {s.valued_flats === 1 ? "" : "s"}: {pct(s.gross_yield)} gross,{" "}
+                {pct(s.net_yield ?? 0)} net.
+              </p>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                No yields yet — set a comparable €/m² on the{" "}
+                <Link href="/valuation" className="underline hover:no-underline">Valuation</Link>{" "}
+                page and they follow.
+              </p>
+            )}
+          </Card>
+
+          {(vacant.length > 0 || owing.length > 0) && (
+            <Card className="p-4">
+              {vacant.length > 0 && (
+                <p className="text-sm">
+                  <strong>Standing empty:</strong>{" "}
+                  {vacant.map((f) => `${f.property_name} (${f.vacant_rooms} of ${f.rooms})`)
+                         .join(", ")}
+                  {" — "}
+                  {eur(vacant.reduce((t, f) => t + f.costs_monthly + f.instalment_monthly, 0))}{" "}
+                  a month with no rent against it.
+                </p>
+              )}
+              {owing.length > 0 && (
+                <p className={vacant.length > 0 ? "mt-2 text-sm" : "text-sm"}>
+                  <strong>Rent outstanding:</strong>{" "}
+                  {owing.map((f) => `${f.property_name} ${eur(f.arrears)}`).join(", ")}.{" "}
+                  <Link href="/payment-reminders" className="underline hover:no-underline">
+                    Payment Reminders
+                  </Link>
+                </p>
+              )}
+            </Card>
+          )}
+
+          <Card className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Flat</TableHead>
+                  <TableHead className="text-right">Rent</TableHead>
+                  <TableHead className="text-right">Costs</TableHead>
+                  <TableHead className="text-right">Instalment</TableHead>
+                  <TableHead className="text-right">Cashflow</TableHead>
+                  <TableHead className="text-right">Operating</TableHead>
+                  <TableHead className="text-right">Gross</TableHead>
+                  <TableHead className="text-right">Net</TableHead>
+                  <TableHead className="text-right">Factor</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {flats.map((f) => <Row key={f.property_id} f={f} />)}
+              </TableBody>
+            </Table>
+          </Card>
+
+          <Card className="p-4">
+            <p className="flex items-start gap-2 text-xs text-muted-foreground">
+              <Info className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                <strong className="text-foreground">How these are worked out.</strong>{" "}
+                Rent is what is currently contracted, one contract per room, not an average of
+                what arrived. Costs are the recurring charges in force today — a superseded
+                price does not count beside its successor. The instalment comes from the loan&apos;s
+                own terms where they are on file, which is what splits interest from Tilgung;
+                where only a <em>Mortgage</em> flat cost records it, the cashflow is still exact
+                but the split is left blank rather than guessed.
+                {" "}<strong className="text-foreground">Factor</strong> is the Kaufpreisfaktor,
+                value ÷ annual rent.
+                {unvalued.length > 0 && ` ${unvalued.length} flat${unvalued.length === 1 ? " has" : "s have"} no value yet, so no yield.`}
+                {data && data.not_owned_count > 0 &&
+                  ` ${data.not_owned_count} flat${data.not_owned_count === 1 ? "" : "s"} you do not own ${data.not_owned_count === 1 ? "is" : "are"} shown without yields and left out of the totals.`}
+              </span>
+            </p>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Row({ f }: { f: FlatEconomics }) {
+  const empty = f.vacant_rooms > 0;
+  return (
+    <TableRow className={f.owned ? undefined : "opacity-60"}>
+      <TableCell>
+        <span className="font-medium">{f.property_name}</span>
+        {!f.owned && (
+          <Badge variant="secondary" className="ml-2 text-[10px]">not owned</Badge>
+        )}
+        <span className="block text-xs text-muted-foreground">
+          {f.let_rooms} of {f.rooms} let
+          {empty && <span className="text-destructive"> · {f.vacant_rooms} empty</span>}
+          {f.living_sqm ? ` · ${f.living_sqm.toLocaleString("de-DE")} m²` : ""}
+          {f.rent_per_sqm ? ` · ${eur(f.rent_per_sqm)}/m²` : ""}
+          {f.arrears > 0 && (
+            <span className="text-destructive"> · {eur(f.arrears)} owed</span>
+          )}
+        </span>
+      </TableCell>
+      <TableCell className="text-right tabular-nums">{eur(f.rent_monthly)}</TableCell>
+      <TableCell className="text-right tabular-nums">{eur(f.costs_monthly)}</TableCell>
+      <TableCell className="text-right">
+        {f.instalment_monthly ? (
+          <>
+            <span className="tabular-nums">{eur(f.instalment_monthly)}</span>
+            <span className="block text-[10px] text-muted-foreground">
+              {f.split_known && f.interest_monthly != null
+                ? `${eur(f.interest_monthly)} interest · ${eur(f.principal_monthly ?? 0)} Tilgung`
+                : "split unknown — no loan terms on file"}
+            </span>
+          </>
+        ) : dash}
+      </TableCell>
+      <TableCell className={`text-right tabular-nums font-medium ${signed(f.cashflow_monthly)}`}>
+        {eur(f.cashflow_monthly)}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {f.operating_monthly == null ? dash : (
+          <span className={signed(f.operating_monthly)}>{eur(f.operating_monthly)}</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {f.gross_yield == null ? dash : pct(f.gross_yield)}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {f.net_yield == null ? dash : pct(f.net_yield)}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {f.kaufpreisfaktor == null ? dash : `${f.kaufpreisfaktor.toLocaleString("de-DE")}×`}
+      </TableCell>
+    </TableRow>
+  );
+}

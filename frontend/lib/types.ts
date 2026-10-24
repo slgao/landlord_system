@@ -780,3 +780,53 @@ export interface Amortization {
     properties_total: number;
   }) | null;
 }
+
+/** One flat's monthly economics. Everything is per month unless named otherwise. */
+export interface FlatEconomics {
+  property_id: number;
+  property_name: string;
+  we_label?: string | null;
+  owned: boolean;
+  living_sqm?: number | null;
+  value?: number | null;
+  value_estimated?: boolean | null;
+  debt: number;
+  rent_monthly: number;
+  rent_per_sqm?: number | null;
+  costs_monthly: number;
+  instalment_monthly: number;
+  /** null when the loan's terms are not on file, so the split is unknowable. */
+  interest_monthly?: number | null;
+  principal_monthly?: number | null;
+  split_known: boolean;
+  /** What the account sees: rent less costs less the whole instalment. */
+  cashflow_monthly: number;
+  /** Rent less costs less interest — the Tilgung is saving, not spending. */
+  operating_monthly?: number | null;
+  annual_rent: number;
+  annual_net: number;
+  gross_yield?: number | null;
+  net_yield?: number | null;
+  kaufpreisfaktor?: number | null;
+  equity_return?: number | null;
+  rooms: number;
+  let_rooms: number;
+  vacant_rooms: number;
+  occupancy?: number | null;
+  arrears: number;
+}
+
+export interface FlatInsights {
+  as_of: string;
+  flats: FlatEconomics[];
+  summary: {
+    flats: number; valued_flats: number;
+    rent_monthly: number; costs_monthly: number; instalment_monthly: number;
+    interest_monthly: number; principal_monthly: number;
+    cashflow_monthly: number; operating_monthly: number;
+    split_unknown: number; arrears: number;
+    rooms: number; let_rooms: number; occupancy: number | null;
+    value: number | null; gross_yield: number | null; net_yield: number | null;
+  } | null;
+  not_owned_count: number;
+}

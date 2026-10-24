@@ -19,6 +19,10 @@ an average of what happened to arrive.
 """
 from decimal import Decimal
 
+# Re-exported: the tests and the routers import them from here, and the
+# balance sheet imports them from cost_types. One definition, two doors.
+from cost_types import (is_mortgage_cost, is_rent_to_owner,  # noqa: F401
+                        mortgage_conflict, resolve_instalment)
 from tax_logic import monthly_equivalent
 
 _ZERO = Decimal("0")
@@ -55,18 +59,6 @@ def contracted_rent(contracts, on_date: str):
     return sum((r for _, r in best.values()), _ZERO), {a: r for a, (_, r) in best.items()}
 
 
-# A flat cost recording the mortgage instalment. The loan itself belongs in the
-# mortgages table, where its terms give the interest/Tilgung split; this cost
-# type is the older way of recording the same money. Counting both would
-# subtract the mortgage twice — five flats here have it recorded both ways.
-_MORTGAGE_COST_TYPES = ("mortgage", "hypothek", "darlehen", "annuität", "annuitaet", "kredit")
-
-
-def is_mortgage_cost(cost_type) -> bool:
-    name = str(cost_type or "").strip().lower()
-    return any(k in name for k in _MORTGAGE_COST_TYPES)
-
-
 def recurring_costs(cost_rows, on_date: str) -> Decimal:
     """Monthly cost of the flat's recurring charges in force on `on_date`.
 
@@ -94,20 +86,6 @@ def recurring_costs(cost_rows, on_date: str) -> Decimal:
         # whatever precision it is handed, and a quarterly 300 must stay 100.
         total += monthly_equivalent(Decimal(str(amount)), freq)
     return total
-
-
-# Rent paid to the flat's owner, on a flat that is sublet rather than owned.
-# Matched strictly, not by substring like the mortgage types: "Mieterstrom",
-# "Mietkaution" and "Mietausfall" are all ordinary costs that a substring test
-# for "miete" would swallow.
-_RENT_TO_OWNER_COST_TYPES = frozenset({
-    "miete", "untermiete", "pacht", "mietzahlung", "miete an eigentuemer",
-    "miete an eigentümer", "grundmiete",
-})
-
-
-def is_rent_to_owner(cost_type) -> bool:
-    return str(cost_type or "").strip().lower() in _RENT_TO_OWNER_COST_TYPES
 
 
 def split_costs(cost_rows, on_date: str):

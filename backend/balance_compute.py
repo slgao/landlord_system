@@ -13,6 +13,7 @@ import calendar
 from datetime import date
 from decimal import Decimal
 from db import fetch, fetch_bundle
+from cost_types import is_mortgage_cost
 from tax_logic import monthly_equivalent
 
 _ZERO = Decimal("0")
@@ -266,6 +267,73 @@ def _load_settlements(owner, year: int) -> dict:
     return {(pid, ym): total for pid, ym, total in rows}
 
 
+def loan_instalment(loans, on_date: str) -> Decimal:
+    """What the loans on a property cost per month on `on_date`.
+
+    An annuity's payment is constant — principal × (Zins + Tilgung) ÷ 12 — and
+    stays constant across a Zinsbindung reset too, because the usual
+    Prolongation keeps the rate and lets the Tilgung share absorb the new
+    interest. So it needs no schedule: only the dates decide whether a loan is
+    being serviced yet, or still.
+
+    `loans` is [(principal, interest_rate_pct, tilgung_rate_pct, start_date,
+    fixed_until, follow_up_rate_pct)] — the shape _load_mortgages returns.
+    """
+    total = _ZERO
+    for principal, ir, tr, start, _fixed, _follow in loans:
+        if _blank(start) or str(start) > on_date:
+            continue                       # signed, not yet drawn
+        rate = (ir or _ZERO) + (tr or _ZERO)
+        if principal is None or rate <= 0:
+            continue
+        payment = Decimal(principal) * rate / Decimal(100) / Decimal(12)
+        # Past its payoff the loan costs nothing. Interest-only loans never
+        # pay off, and tilgung 0 is caught by the rate check above.
+        if tr and tr > 0:
+            months = _payoff_months(Decimal(principal), Decimal(ir or 0),
+                                    Decimal(tr), payment)
+            if months is not None and _months_since(str(start), on_date) >= months:
+                continue
+        total += payment
+    return total
+
+
+def _months_since(start: str, on_date: str) -> int:
+    try:
+        a, b = date.fromisoformat(start[:10]), date.fromisoformat(on_date[:10])
+    except ValueError:
+        return 0
+    return (b.year - a.year) * 12 + (b.month - a.month)
+
+
+def _payoff_months(principal: Decimal, ir: Decimal, tr: Decimal, payment: Decimal):
+    """Roughly how many monthly payments clear the loan, or None if it never
+    does. Only used to stop charging a loan that finished years ago, so an
+    approximation is enough — a month either way at payoff changes nothing a
+    balance sheet reports."""
+    if payment <= 0:
+        return None
+    bal, i_m, n = principal, ir / Decimal(1200), 0
+    while bal > 0 and n < 1200:            # 100 years, then give up
+        bal = bal + bal * i_m - payment
+        n += 1
+    return n if bal <= 0 else None
+
+
+def _mortgage_due(loans, mortgage_rows, m_start: str, m_end: str, y: int, m: int) -> Decimal:
+    """The property's monthly mortgage payment, from whichever record it has.
+
+    The loans win where there are any — only their terms split interest from
+    Tilgung. Where there are none, the `Mortgage` flat-cost rows are the only
+    record of the money and must not be dropped: a landlord who has entered
+    the costs but not yet the loan still pays a mortgage.
+    """
+    from_loans = loan_instalment(loans, m_end)
+    if from_loans:
+        return from_loans
+    return month_costs(mortgage_rows, m_start, m_end, y, m)
+
+
 def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     """Return (snapshot, props) suitable for balance_sheet_pdf / the API,
     scoped to the given owner.
@@ -293,8 +361,8 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
             FROM contracts c JOIN apartments a ON c.apartment_id = a.id
             WHERE c.owner_id = ?""", (owner,)),
         ("costs", """
-            SELECT json_build_array(a.property_id, fc.amount::text, fc.frequency,
-                                    fc.valid_from, fc.valid_to)
+            SELECT json_build_array(a.property_id, fc.cost_type, fc.amount::text,
+                                    fc.frequency, fc.valid_from, fc.valid_to)
             FROM flat_costs fc JOIN apartments a ON fc.apartment_id = a.id
             WHERE fc.owner_id = ?""", (owner,)),
         ("mortgages", """
@@ -346,9 +414,14 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     contracts: dict = {}
     for pid, apt, rent, cs, ce, cid in loaded["contracts"]:
         contracts.setdefault(pid, []).append((apt, _dec(rent), cs, ce, cid))
+    # Running costs and the mortgage are kept apart: the mortgage is the one
+    # cost that may also be on file as a loan, and only one of the two records
+    # may be counted (see cost_types.resolve_instalment).
     costs: dict = {}
-    for pid, amt, freq, vf, vt in loaded["costs"]:
-        costs.setdefault(pid, []).append((_dec(amt), freq, vf, vt))
+    mortgage_costs: dict = {}
+    for pid, ctype, amt, freq, vf, vt in loaded["costs"]:
+        bucket = mortgage_costs if is_mortgage_cost(ctype) else costs
+        bucket.setdefault(pid, []).append((_dec(amt), freq, vf, vt))
     mortgages: dict = {}
     for pid, principal, ir, tr, sd, fixed_until, follow in loaded["mortgages"]:
         mortgages.setdefault(pid, []).append(
@@ -370,6 +443,8 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
     for pid, pname in properties:
         exp = expected_rent(contracts.get(pid, []), snap_start, snap_end)
         cst = month_costs(costs.get(pid, []), snap_start, snap_end, today.year, today.month)
+        cst += _mortgage_due(mortgages.get(pid, []), mortgage_costs.get(pid, []),
+                             snap_start, snap_end, today.year, today.month)
         snapshot.append({"name": pname, "expected": float(exp), "costs": float(cst), "net": float(exp - cst)})
 
     props = []
@@ -382,6 +457,9 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
             expected = expected_rent(contracts.get(prop_id, []), m_start, m_end)
             actual = paid.get((prop_id, m_start[:7]), _ZERO)
             recurring = month_costs(costs.get(prop_id, []), m_start, m_end, y, m)
+            recurring += _mortgage_due(mortgages.get(prop_id, []),
+                                       mortgage_costs.get(prop_id, []),
+                                       m_start, m_end, y, m)
             settlement = settled.get((prop_id, m_start[:7]), _ZERO)
             # Money in from a tenant lowers what the one-offs cost you; a
             # refund you pay out raises it.

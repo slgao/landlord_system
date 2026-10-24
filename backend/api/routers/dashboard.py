@@ -79,3 +79,11 @@ def _parse(value) -> date | None:
         return date.fromisoformat(str(value))
     except ValueError:
         return None
+
+
+# A bundled "everything the dashboard needs" endpoint was tried here and
+# removed. Calling the four loads in sequence on the server cost seven round
+# trips and 147 ms, where the browser fetching them in parallel waits only for
+# the slowest — about 52 ms. Bundling only pays when it collapses queries into
+# one statement, as fetch_bundle does; chaining whole endpoints trades
+# parallelism for nothing.

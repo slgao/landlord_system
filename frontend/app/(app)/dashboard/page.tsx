@@ -2,36 +2,49 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { DashboardStats, ContractAlert, NKDashboard } from "@/lib/types";
+import { DashboardStats, ContractAlert, NKDashboard, FlatInsights } from "@/lib/types";
 import Link from "next/link";
 import { eur, fmtDate, resultLabel } from "@/components/nk-settlements";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Building2, Home, Users, FileText } from "lucide-react";
+import { AlertTriangle, DoorOpen, TrendingUp, Wallet } from "lucide-react";
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from "recharts";
 import { C, fmtAxis, ChartTooltip, ChartLegend } from "@/components/chart";
 
+/** Whole euro — a headline figure does not need its cents. */
+const eur0 = (n: number) => `${n.toLocaleString("de-DE", { maximumFractionDigits: 0 })} €`;
+
 const currentYear = new Date().getFullYear();
 const thisMonthKey = new Date().toLocaleString("en", { month: "short", year: "numeric" });
 
-function StatCard({ title, value, icon: Icon, note }: { title: string; value: number; icon: React.ElementType; note?: string }) {
-  return (
-    <Card>
+/** A headline figure. The dashboard used to count properties, apartments,
+ *  tenants and contracts — four numbers that are each already the headline of
+ *  their own page, barely move, and answer none of the questions a landlord
+ *  opens the app with. These answer them. */
+function StatCard({ title, value, icon: Icon, note, tone, href }: {
+  title: string; value: string; icon: React.ElementType; note?: string;
+  tone?: "good" | "bad"; href?: string;
+}) {
+  const body = (
+    <Card className={href ? "transition-colors hover:border-foreground/20" : undefined}>
       <CardContent className="flex items-center justify-between p-5">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-muted-foreground uppercase tracking-wide">{title}</p>
-          <p className="text-3xl font-semibold mt-0.5">{value}</p>
-          {note && <p className="text-xs text-sky-700 dark:text-sky-400 mt-0.5">{note}</p>}
+          <p className={`text-2xl font-semibold mt-0.5 tabular-nums ${
+            tone === "good" ? "text-emerald-600 dark:text-emerald-400"
+            : tone === "bad" ? "text-destructive" : ""}`}>{value}</p>
+          {note && <p className="text-xs text-muted-foreground mt-0.5 truncate">{note}</p>}
         </div>
-        <div className="size-10 rounded-lg bg-primary/10 flex items-center justify-center">
+        <div className="size-10 shrink-0 rounded-lg bg-primary/10 flex items-center justify-center">
           <Icon className="size-5 text-primary" />
         </div>
       </CardContent>
     </Card>
   );
+  return href ? <Link href={href}>{body}</Link> : body;
 }
 
 export default function DashboardPage() {
@@ -55,6 +68,25 @@ export default function DashboardPage() {
     queryKey: ["balance-sheet-dash", currentYear],
     queryFn: () => api.get(`/api/reports/balance-sheet/${currentYear}`).then((r) => r.data),
   });
+  // The money. Fetched in parallel with the rest — chaining these on the
+  // server costs more than it saves, since the page then waits for the sum of
+  // them rather than the slowest.
+  const { data: ins } = useQuery<FlatInsights>({
+    queryKey: ["flat-insights"],
+    queryFn: () => api.get("/api/insights/flats").then((r) => r.data),
+  });
+  const m = ins?.summary;
+  const allFlats = ins?.flats ?? [];
+  const vacant = allFlats.filter((f) => f.vacant_rooms > 0);
+  const owing = allFlats.filter((f) => f.arrears > 0);
+  const warnings = ins?.warnings ?? [];
+  // Across everything let out, not just the flats you own: a sublet standing
+  // empty still costs the rent you pay its owner, so counting only owned
+  // rooms would have said "7 of 7 let" beside a flat flagged as empty.
+  const rooms = allFlats.reduce((t, f) => t + f.rooms, 0);
+  const letRooms = allFlats.reduce((t, f) => t + f.let_rooms, 0);
+  const vacantCost = vacant.reduce(
+    (t, f) => t + f.costs_monthly + f.rent_to_owner_monthly + f.instalment_monthly, 0);
 
   // Build monthly chart data from balance sheet
   const chartData = (() => {
@@ -83,12 +115,54 @@ export default function DashboardPage() {
       <h1 className="text-xl font-semibold">Dashboard</h1>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Properties" value={stats?.properties ?? 0} icon={Building2} />
-        <StatCard title="Apartments" value={stats?.apartments ?? 0} icon={Home} />
-        <StatCard title="Tenants" value={stats?.tenants ?? 0} icon={Users} />
-        <StatCard title="Active Contracts" value={stats?.contracts ?? 0} icon={FileText}
-          note={stats?.upcoming ? `+${stats.upcoming} starting soon` : undefined} />
+        <StatCard
+          title="Cashflow" icon={Wallet} href="/flat-economics"
+          value={m ? `${eur0(m.cashflow_monthly)}/mo` : "—"}
+          tone={m ? (m.cashflow_monthly < 0 ? "bad" : "good") : undefined}
+          note={m ? `${eur0(m.operating_monthly)} earned, ${eur0(m.principal_monthly)} is Tilgung` : undefined}
+        />
+        <StatCard
+          title="Net yield" icon={TrendingUp} href="/valuation"
+          value={m?.net_yield != null ? `${m.net_yield.toLocaleString("de-DE")} %` : "—"}
+          note={m?.value ? `on ${eur0(m.value)} across ${m.valued_flats} flats` : "set a comparable €/m²"}
+        />
+        <StatCard
+          title="Let" icon={DoorOpen} href="/contracts"
+          value={ins ? `${letRooms} of ${rooms}` : "—"}
+          tone={vacant.length ? "bad" : undefined}
+          note={vacant.length
+            ? `${vacant.map((f) => f.property_name).join(", ")} — ${eur0(vacantCost)}/mo`
+            : "every room let"}
+        />
+        <StatCard
+          title="Needs doing" icon={AlertTriangle} href="/payment-reminders"
+          value={String(owing.length + nkDue.length + (alerts?.length ?? 0) + warnings.length)}
+          tone={owing.length || nkDue.length ? "bad" : undefined}
+          note={[
+            owing.length && `${owing.length} in arrears`,
+            nkDue.length && `${nkDue.length} Abrechnung${nkDue.length === 1 ? "" : "en"} due`,
+            alerts?.length && `${alerts.length} contract${alerts.length === 1 ? "" : "s"}`,
+            warnings.length && `${warnings.length} to check`,
+          ].filter(Boolean).join(" · ") || "nothing outstanding"}
+        />
       </div>
+
+      {/* The counts that used to headline this page. Each is the headline of
+          its own page; here they are a reference line, not the story. */}
+      {stats && (
+        <p className="text-xs text-muted-foreground">
+          <Link href="/properties" className="hover:text-foreground">{stats.properties} properties</Link>
+          {" · "}
+          <Link href="/apartments" className="hover:text-foreground">{stats.apartments} apartments</Link>
+          {" · "}
+          <Link href="/tenants" className="hover:text-foreground">{stats.tenants} tenants</Link>
+          {" · "}
+          <Link href="/contracts" className="hover:text-foreground">
+            {stats.contracts} active contracts
+          </Link>
+          {stats.upcoming ? ` · ${stats.upcoming} starting soon` : ""}
+        </p>
+      )}
 
       {chartData.length > 0 && (
         <Card>

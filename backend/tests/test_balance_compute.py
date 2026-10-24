@@ -154,7 +154,10 @@ def test_a_blank_zinsbindung_changes_nothing(monkeypatch):
 def _books(monkeypatch, costs=(), expenses=(), payments=()):
     """Route balance_compute's one bundled load to canned rows.
 
-    `costs` rows are (property_id, amount, frequency, valid_from, valid_to),
+    `costs` rows are (property_id, amount, frequency, valid_from, valid_to) —
+    the cost_type the load now also selects is filled in as an ordinary running
+    cost, since these cases are about one-offs and recurring charges, not the
+    mortgage (which has its own tests),
     `expenses` rows (property_id, 'YYYY-MM', amount) and `payments` rows
     (property_id, 'YYYY-MM', amount, kind) — the shapes the loads select,
     plus the kind that decides which bucket a payment lands in.
@@ -169,7 +172,7 @@ def _books(monkeypatch, costs=(), expenses=(), payments=()):
         return {
             "properties": [[1, "Haus A"]],
             "contracts": [],
-            "costs": [[c[0], c[1], c[2], c[3], c[4]] for c in costs],
+            "costs": [[c[0], "Hausgeld", c[1], c[2], c[3], c[4]] for c in costs],
             "mortgages": [],
             "rent": money({"rent", "deposit_rent"}),
             "one_off": [[e[0], e[1], e[2]] for e in expenses],

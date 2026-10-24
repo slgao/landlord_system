@@ -125,7 +125,7 @@ def flat_insights(owner: int = Depends(require_auth)):
 
     arrears = _arrears_by_property(owner)
 
-    flats, owned_flats, sublets = [], [], []
+    flats, owned_flats, sublets, conflicts = [], [], [], []
     for p in loaded["props"]:
         pid, owned = p[0], bool(p[3])
         lv = land.get(pid)
@@ -143,12 +143,16 @@ def flat_insights(owner: int = Depends(require_auth)):
         # interest/Tilgung split. Where they are not, the flat-cost row is the
         # only record of the money and is used as the instalment, with the
         # split reported as unknown rather than guessed.
-        if pid in inst:
-            instalment, int_month = inst[pid], interest.get(pid, 0.0)
-        elif mortgage_cost:
-            instalment, int_month = float(mortgage_cost), None
-        else:
-            instalment, int_month = 0.0, 0.0
+        instalment, split_known = flat_economics.resolve_instalment(
+            inst.get(pid), mortgage_cost)
+        int_month = interest.get(pid, 0.0) if split_known and instalment else (
+            0.0 if not instalment else None)
+
+        # Both records on file and disagreeing: the loans are used, but the
+        # typed figure is reported so the drift cannot hide.
+        clash = flat_economics.mortgage_conflict(inst.get(pid), mortgage_cost)
+        if clash:
+            conflicts.append({"property_id": pid, "property_name": p[1], **clash})
 
         e = flat_economics.economics(
             rent=rent, costs=costs,
@@ -175,6 +179,8 @@ def flat_insights(owner: int = Depends(require_auth)):
         "flats": flats,
         "summary": flat_economics.portfolio_summary(owned_flats),
         "sublets": flat_economics.sublet_summary(sublets),
+        # A property whose mortgage is on file twice, with the two disagreeing.
+        "mortgage_conflicts": conflicts,
         "not_owned_count": len(sublets),
     }
 

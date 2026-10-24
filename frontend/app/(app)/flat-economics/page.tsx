@@ -116,6 +116,33 @@ export default function FlatEconomicsPage() {
             )}
           </Card>
 
+          {/* The mortgage on file twice, the two records disagreeing. The loans
+              are used; this says the typed figure no longer matches them. */}
+          {(data?.mortgage_conflicts?.length ?? 0) > 0 && (
+            <Card className="p-4 border-amber-500/40">
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                Mortgage recorded twice, and the two disagree
+              </p>
+              <ul className="mt-2 space-y-1 text-sm">
+                {data!.mortgage_conflicts.map((c) => (
+                  <li key={c.property_id}>
+                    <span className="font-medium">{c.property_name}</span>{" "}
+                    <span className="text-muted-foreground">
+                      — loan terms say {eur(c.loan_instalment)}/month, the{" "}
+                      <em>Mortgage</em> flat cost says {eur(c.mortgage_cost)}{" "}
+                      ({c.difference > 0 ? "+" : ""}{eur(c.difference)})
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs text-muted-foreground">
+                The loan&apos;s own terms are used here, because only they split interest
+                from Tilgung. Delete the duplicate flat cost, or correct whichever record
+                is out of date — until then the two figures will keep drifting apart.
+              </p>
+            </Card>
+          )}
+
           {(vacant.length > 0 || owing.length > 0) && (
             <Card className="p-4">
               {vacant.length > 0 && (

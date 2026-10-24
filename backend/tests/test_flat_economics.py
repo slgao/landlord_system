@@ -400,3 +400,56 @@ def test_an_empty_sublet_still_owes_the_owner_and_shows_a_loss():
 
 def test_no_sublets_means_no_sublet_summary():
     assert sublet_summary([]) is None
+
+
+# ── Flipping a flat between owned and sublet ─────────────────────────────────
+# The ownership tick can be changed at any time, and the cost rows do not move
+# with it. A Miete row left on a flat that is now owned, or a loan left on one
+# that is now a sublet, must not leave money subtracted from a total but
+# missing from every column.
+
+def test_rent_to_an_owner_does_not_collide_with_a_loan():
+    """They are different cost types and different classifiers, so a Miete row
+    can never be mistaken for the mortgage a loan duplicates."""
+    assert is_mortgage_cost("Miete") is False
+    assert is_rent_to_owner("Mortgage") is False
+    from cost_types import mortgage_conflict
+    assert mortgage_conflict(506.29, 0) is None          # Miete is not a mortgage cost
+
+
+def test_a_miete_row_on_an_owned_flat_is_an_ordinary_running_cost():
+    """What the endpoint does with it: folded into costs, so Rent − Costs −
+    Instalment reconciles with the cashflow shown beside them."""
+    running, _, to_owner = split_costs(
+        [("Miete", "527.30", "monthly", None, None),
+         ("Internet", "100.00", "monthly", None, None)], TODAY)
+    # owned: the endpoint adds to_owner into costs and zeroes it
+    e = economics(rent=950, costs=running + to_owner, rent_to_owner=0.0)
+    assert e["costs_monthly"] == pytest.approx(627.30)
+    assert e["rent_to_owner_monthly"] == 0.0
+    assert e["cashflow_monthly"] == pytest.approx(322.70)
+    # the row adds up as displayed
+    assert 950 - e["costs_monthly"] - e["instalment_monthly"] == pytest.approx(
+        e["cashflow_monthly"])
+
+
+def test_the_same_flat_as_a_sublet_separates_the_rent_to_its_owner():
+    """Same rows, other side of the tick: the margin is identical, only the
+    labelling differs."""
+    running, _, to_owner = split_costs(
+        [("Miete", "527.30", "monthly", None, None),
+         ("Internet", "100.00", "monthly", None, None)], TODAY)
+    e = economics(rent=950, costs=running, rent_to_owner=float(to_owner))
+    assert e["costs_monthly"] == pytest.approx(100.00)
+    assert e["rent_to_owner_monthly"] == pytest.approx(527.30)
+    assert e["cashflow_monthly"] == pytest.approx(322.70)
+
+
+def test_the_cashflow_is_the_same_whichever_side_of_the_tick_the_flat_is_on():
+    """Ownership changes what a flat means, not what it costs."""
+    rows = [("Miete", "527.30", "monthly", None, None),
+            ("Internet", "100.00", "monthly", None, None)]
+    running, _, to_owner = split_costs(rows, TODAY)
+    owned = economics(rent=950, costs=running + to_owner, rent_to_owner=0.0)
+    sublet = economics(rent=950, costs=running, rent_to_owner=float(to_owner))
+    assert owned["cashflow_monthly"] == pytest.approx(sublet["cashflow_monthly"])

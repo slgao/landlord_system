@@ -125,7 +125,7 @@ def flat_insights(owner: int = Depends(require_auth)):
 
     arrears = _arrears_by_property(owner)
 
-    flats, owned_flats, sublets, conflicts = [], [], [], []
+    flats, owned_flats, sublets, warnings = [], [], [], []
     for p in loaded["props"]:
         pid, owned = p[0], bool(p[3])
         lv = land.get(pid)
@@ -139,6 +139,16 @@ def flat_insights(owner: int = Depends(require_auth)):
         costs, mortgage_cost, to_owner = flat_economics.split_costs(
             by_prop_costs.get(pid, []), iso)
 
+        # "Rent to the owner" is a sublet's idea. On a flat you own, such a row
+        # is either a ground rent (Erbbauzins) or left over from when the flat
+        # was a sublet — either way it is an ordinary running cost, and keeping
+        # it in a column of its own would leave the money subtracted from the
+        # cashflow but shown nowhere.
+        rent_to_owner_on_owned = float(to_owner) if (owned and to_owner) else 0.0
+        if owned and to_owner:
+            costs += to_owner
+            to_owner = 0
+
         # The loan's own schedule where its terms are on file — it knows the
         # interest/Tilgung split. Where they are not, the flat-cost row is the
         # only record of the money and is used as the instalment, with the
@@ -148,11 +158,18 @@ def flat_insights(owner: int = Depends(require_auth)):
         int_month = interest.get(pid, 0.0) if split_known and instalment else (
             0.0 if not instalment else None)
 
-        # Both records on file and disagreeing: the loans are used, but the
-        # typed figure is reported so the drift cannot hide.
+        # Both records of the mortgage on file and disagreeing: the loans are
+        # used, but the typed figure is reported so the drift cannot hide.
         clash = flat_economics.mortgage_conflict(inst.get(pid), mortgage_cost)
         if clash:
-            conflicts.append({"property_id": pid, "property_name": p[1], **clash})
+            warnings.append({"kind": "mortgage_conflict", "property_id": pid,
+                             "property_name": p[1], **clash})
+        if rent_to_owner_on_owned:
+            warnings.append({"kind": "rent_to_owner_on_owned", "property_id": pid,
+                             "property_name": p[1], "amount": round(rent_to_owner_on_owned, 2)})
+        if not owned and instalment:
+            warnings.append({"kind": "loan_on_sublet", "property_id": pid,
+                             "property_name": p[1], "amount": round(instalment, 2)})
 
         e = flat_economics.economics(
             rent=rent, costs=costs,
@@ -179,8 +196,10 @@ def flat_insights(owner: int = Depends(require_auth)):
         "flats": flats,
         "summary": flat_economics.portfolio_summary(owned_flats),
         "sublets": flat_economics.sublet_summary(sublets),
-        # A property whose mortgage is on file twice, with the two disagreeing.
-        "mortgage_conflicts": conflicts,
+        # Contradictions in the data worth a landlord's attention: a mortgage
+        # recorded twice and disagreeing, a flat you own paying rent to an
+        # owner, a flat you do not own carrying a loan.
+        "warnings": warnings,
         "not_owned_count": len(sublets),
     }
 

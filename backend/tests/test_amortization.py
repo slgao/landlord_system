@@ -97,8 +97,12 @@ def _install(monkeypatch, properties, loans, apartments=()):
     trip, so the fake answers the bundle by part name. `fetch` is left failing
     so an unbundled query added later shows up as a test failure, not a silent
     extra round trip."""
-    canned = {"mortgages": list(loans), "props": list(properties),
-              "flats": list(apartments)}
+    # A property row is (id, name, market_value, market_value_date) here; the
+    # endpoint also selects the fields the comparable valuation needs, which
+    # these cases leave empty so the owner's own market_value is what decides.
+    props = [tuple(p) + (None,) * (8 - len(p)) for p in properties]
+    canned = {"mortgages": list(loans), "props": props, "flats": list(apartments),
+              "land": []}
 
     def fake_bundle(parts):
         names = [n for n, _, _ in parts]
@@ -106,11 +110,11 @@ def _install(monkeypatch, properties, loans, apartments=()):
         assert not unknown, f"unexpected bundle parts: {sorted(unknown)}"
         return {n: canned[n] for n in names}
 
-    def fail_fetch(sql, params=()):
+    def fake_fetch(sql, params=()):
         raise AssertionError(f"unbundled query: {' '.join(sql.split())}")
 
     monkeypatch.setattr(tax_router, "fetch_bundle", fake_bundle)
-    monkeypatch.setattr(tax_router, "fetch", fail_fetch)
+    monkeypatch.setattr(tax_router, "fetch", fake_fetch)
 
 
 def test_equity_is_value_less_debt(monkeypatch):
@@ -180,3 +184,45 @@ def test_repricing_defers_payoff_in_the_endpoint_too(monkeypatch):
     repriced = tax_router.amortization(owner=1)["properties"][0]
     assert repriced["paid_off_year"] > flat["paid_off_year"]
     assert repriced["interest_lifetime"] > flat["interest_lifetime"]
+
+
+# ── The Financing page and the Valuation page must agree ─────────────────────
+# They read the same portfolio and both report equity. Financing used to read
+# only properties.market_value, so with values coming from a comparable €/m²
+# it said "0 of 5 valued, equity unknown" while Valuation showed 459.853 € off
+# the identical debt. One portfolio, two answers.
+
+def test_a_comparable_valuation_reaches_the_financing_page(monkeypatch):
+    """No market_value typed in, but a living area and a comparable €/m² — the
+    same inputs the Valuation page uses."""
+    _install(monkeypatch,
+             # id, name, market_value, date, living_sqm, comparable, plot, mea
+             properties=[(1, "Haus A", None, None, "50", "5000", None, None)],
+             loans=[_loan(1, 1, "L", 100_000, 3.0, 2.0, "2020-01-01")])
+    r = tax_router.amortization(owner=1)
+    p = r["properties"][0]
+    assert p["market_value"] == pytest.approx(250_000.0)     # 50 m² x 5.000
+    assert p["value_estimated"] is True
+    assert p["equity"] == pytest.approx(250_000.0 - p["balance_now"], abs=0.01)
+    assert r["totals"]["properties_valued"] == 1
+    assert r["totals"]["value_estimated"] is True
+
+
+def test_the_owners_own_figure_still_wins_on_the_financing_page(monkeypatch):
+    _install(monkeypatch,
+             properties=[(1, "Haus A", 300_000, "2026-06-30", "50", "5000", None, None)],
+             loans=[_loan(1, 1, "L", 100_000, 3.0, 2.0, "2020-01-01")])
+    p = tax_router.amortization(owner=1)["properties"][0]
+    assert p["market_value"] == pytest.approx(300_000.0)
+    assert p["value_estimated"] is False
+
+
+def test_a_flat_with_neither_is_still_unvalued(monkeypatch):
+    """The withholding rule survives: a flat with no price and no comparable
+    cannot be valued, and the portfolio total stays withheld."""
+    _install(monkeypatch,
+             properties=[(1, "Haus A", None, None, None, None, None, None)],
+             loans=[_loan(1, 1, "L", 100_000, 3.0, 2.0, "2020-01-01")])
+    r = tax_router.amortization(owner=1)
+    assert r["properties"][0]["market_value"] is None
+    assert r["totals"]["equity"] is None

@@ -346,11 +346,23 @@ def amortization(owner: int = Depends(require_auth)):
                   f"SELECT {_MORTGAGE_COLS} FROM mortgages "
                   "WHERE owner_id=? ORDER BY start_date, id", (owner,)),
         json_part("props",
-                  "SELECT id, name, market_value, market_value_date FROM properties "
-                  "WHERE owner_id=?", (owner,)),
+                  "SELECT id, name, market_value::text, market_value_date, "
+                  "living_sqm::text, comparable_per_sqm::text, plot_sqm::text, mea::text "
+                  "FROM properties WHERE owner_id=?", (owner,)),
         json_part("flats",
                   "SELECT property_id, name FROM apartments WHERE owner_id=? ORDER BY name",
                   (owner,)),
+        # The land values the comparable valuation reads. DISTINCT ON cannot
+        # sit in a column list, so the json wrap goes outside it.
+        ("land", """
+            SELECT json_build_array(property_id, stichtag, brw, gfz)
+            FROM (
+                SELECT DISTINCT ON (property_id)
+                       property_id, stichtag, brw::text AS brw, gfz::text AS gfz
+                FROM land_values WHERE owner_id=?
+                ORDER BY property_id, stichtag DESC
+            ) t
+        """, (owner,)),
     ])
     mortgages: dict[int, list] = {}
     for r in loaded["mortgages"]:
@@ -358,11 +370,27 @@ def amortization(owner: int = Depends(require_auth)):
     if not mortgages:
         return {"as_of": str(today), "properties": [], "totals": None}
 
+    # The same figure the Valuation page shows, by the same rule: the owner's
+    # own valuation where there is one, otherwise the living area times a
+    # comparable €/m². Reading only market_value here left this page saying
+    # "0 of 5 valued, equity unknown" while Valuation showed 459.853 € off the
+    # identical debt — one portfolio, two answers.
+    import valuation as _valuation
+    land = {r[0]: r for r in loaded["land"]}
+
+    def _n(v):
+        return float(v) if v not in (None, "") else None
+
     names, values = {}, {}
-    for pid, name, mv, mvd in loaded["props"]:
+    for pid, name, mv, mvd, living, comparable, plot, mea in loaded["props"]:
+        lv = land.get(pid)
+        v = _valuation.value_property(
+            living_sqm=_n(living), comparable_per_sqm=_n(comparable),
+            market_value=_n(mv), market_value_date=mvd,
+            brw=_n(lv[2]) if lv else None, gfz=_n(lv[3]) if lv else None,
+            stichtag=lv[1] if lv else None, plot_sqm=_n(plot), mea=_n(mea))
         names[pid] = name
-        values[pid] = (float(mv) if mv is not None else None,
-                       mvd if mvd and mvd != "None" else None)
+        values[pid] = (v["value"], v["value_date"], v["estimated"])
     flats: dict[int, list] = {}
     for pid, label in loaded["flats"]:
         flats.setdefault(pid, []).append(label)
@@ -394,7 +422,7 @@ def amortization(owner: int = Depends(require_auth)):
         # into the property's rate would invoice you for a loan you no longer
         # have. balance_now is 0 in both of those cases, which is exactly the test.
         rate_now = sum(e["monthly_payment"] for e in entries if e["balance_now"] > 0)
-        market_value, value_date = values.get(pid, (None, None))
+        market_value, value_date, value_estimated = values.get(pid, (None, None, None))
         balance_now = round(sum(e["balance_now"] for e in entries), 2)
         props.append({
             "property_id": pid,
@@ -404,6 +432,8 @@ def amortization(owner: int = Depends(require_auth)):
             # "not known" rather than quietly implying the debt is the whole story.
             "market_value": market_value,
             "market_value_date": value_date,
+            # True where the figure is a comparable estimate, not the owner's own.
+            "value_estimated": value_estimated,
             "equity": round(market_value - balance_now, 2) if market_value is not None else None,
             # The nearest reset across this property's loans — what the projection
             # below stops being a fact at.
@@ -433,6 +463,7 @@ def amortization(owner: int = Depends(require_auth)):
         "market_value": round(sum(p["market_value"] for p in valued), 2) if all_valued else None,
         "equity": round(sum(p["equity"] for p in valued), 2) if all_valued else None,
         "properties_valued": len(valued),
+        "value_estimated": any(p.get("value_estimated") for p in valued),
         "properties_total": len(props),
         "next_reset": min((p["next_reset"] for p in props if p["next_reset"]), default=None),
         "principal_total": round(sum(p["principal_total"] for p in props), 2),

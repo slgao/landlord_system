@@ -15,7 +15,9 @@ from auth import (
     active_user, invalidate_user,
 )
 import users_db
-from api.errors import client_detail, log_and_reference
+import auth_throttle
+from api.errors import client_detail, db_error_response, log_and_reference
+from api.strict_json import RejectNonFiniteNumbers
 from api.routers import (
     properties, buildings, apartments, tenants, contracts, payments,
     dashboard, flat_costs, meters, config, reports,
@@ -45,6 +47,20 @@ def _warn_unencrypted_secrets() -> None:
             rows[0][0])
 
 
+def _warn_unindexed_fks() -> None:
+    """An unindexed foreign key does not fail, it just makes a page slow in
+    proportion to how much data everyone else has entered — which is invisible
+    on a developer's small database and only shows up in production. Checked at
+    boot so the next one says so in the log instead of waiting to be profiled."""
+    try:
+        from db import unindexed_foreign_keys, describe_unindexed_fks
+        msg = describe_unindexed_fks(unindexed_foreign_keys())
+    except Exception:
+        return                      # never let a diagnostic stop the app booting
+    if msg:
+        logging.getLogger("uvicorn.error").warning("schema: %s", msg)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Fail fast on insecure production config, then bring the schema to head
@@ -52,6 +68,7 @@ async def lifespan(app: FastAPI):
     verify_startup_config()
     migrate_to_head()
     _warn_unencrypted_secrets()
+    _warn_unindexed_fks()
     yield
 
 
@@ -74,6 +91,11 @@ _cors_origins = [
 # Added before CORS, so CORS stays the outermost layer and still answers
 # preflights and stamps its headers on errors. Reports and lists are JSON that
 # compresses roughly ten to one; below a kilobyte it is not worth the CPU.
+#
+# Starlette makes the last-added middleware the outermost, so what is added
+# first here runs closest to the routes — which is where the body check wants
+# to be: its 422 has to pass back out through CORS to be readable in a browser.
+app.add_middleware(RejectNonFiniteNumbers)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
@@ -104,6 +126,12 @@ async def _unhandled(request: Request, exc: Exception):
     unauthenticated ones, and a psycopg2 error carries the database host and
     user, so an outage would have answered an anonymous login with them.
     """
+    # A value the schema will not take is the caller's mistake, and saying so
+    # is more use than a reference id they cannot act on.
+    client = db_error_response(exc)
+    if client:
+        status, detail = client
+        return JSONResponse(status_code=status, content={"detail": detail})
     ref = log_and_reference(exc, f"{request.method} {request.url.path}")
     return JSONResponse(status_code=500, content={"detail": client_detail(ref)})
 
@@ -163,22 +191,47 @@ class MeResponse(BaseModel):
 
 
 @app.post("/api/auth/token", response_model=TokenResponse, tags=["Auth"])
-def login(body: LoginRequest):
+def login(body: LoginRequest, request: Request):
+    keys = auth_throttle.keys_for(body.username, request)
+    if auth_throttle.too_many_attempts(keys):
+        # Refused before the hash is verified, so a locked-out caller cannot
+        # use the attempt as a way to make the server do bcrypt work either.
+        raise HTTPException(status_code=429, detail="Too many failed attempts. "
+                                                   "Wait a few minutes and try again.",
+                            headers={"Retry-After": str(int(auth_throttle.WINDOW_S))})
     user = users_db.get_user_by_email(body.username)
-    if not user or not user["is_active"] or not users_db.verify_password(
-            body.password, user["password_hash"]):
+    # The verify runs even when there is no such user, against a decoy hash.
+    # Returning early here is what made a login 270 ms for an address with an
+    # account and 2 ms for one without, which answers "who has an account
+    # here?" for anyone willing to time it.
+    hashed = user["password_hash"] if user else auth_throttle.decoy_hash()
+    ok = users_db.verify_password(body.password, hashed)
+    if not user or not user["is_active"] or not ok:
+        auth_throttle.record_attempt(keys)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    auth_throttle.clear(keys)
     return TokenResponse(access_token=create_access_token(user["id"]))
 
 
 @app.post("/api/auth/register", response_model=TokenResponse, status_code=201, tags=["Auth"])
-def register(body: RegisterRequest):
+def register(body: RegisterRequest, request: Request):
+    # Counted on the same budget as failed logins, per address: registration is
+    # unauthenticated, writes a row and runs a bcrypt hash, so without a limit
+    # one caller can fill the users table and keep the CPU busy doing it.
+    ip_key = [f"ip:{auth_throttle.client_ip(request)}"]
+    if auth_throttle.too_many_attempts(ip_key):
+        raise HTTPException(status_code=429, detail="Too many attempts. Wait a few "
+                                                   "minutes and try again.",
+                            headers={"Retry-After": str(int(auth_throttle.WINDOW_S))})
     email = body.email.strip().lower()
     if "@" not in email or len(body.password) < 8:
         raise HTTPException(status_code=400,
                             detail="A valid email and a password of 8+ characters are required")
     if users_db.get_user_by_email(email):
         raise HTTPException(status_code=409, detail="An account with this email already exists")
+    # Every registration counts against the address, successful or not: the
+    # budget here is on creating accounts, not on getting them wrong.
+    auth_throttle.record_attempt(ip_key)
     uid = users_db.create_user(email, body.password, body.display_name)
     # Ids are handed out by the database and could re-use one whose negative
     # result is still cached from before the row existed.

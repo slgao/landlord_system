@@ -18,6 +18,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_RIGHT, TA_LEFT, TA_CENTER
 from datetime import date, timedelta
+from io import BytesIO as _BytesIO
 from pathlib import Path
 from currencies import sym as _sym
 
@@ -393,8 +394,16 @@ def invoice_pdf(
     Pass None to omit a section entirely.
     """
     s = _styles()
-    safe_tenant = tenant.replace("/", "-").replace("\\", "-")
-    file = f"pdf/Abrechnung_{safe_tenant}.pdf"
+    # Built in memory, not written to disk under the tenant's name.
+    #
+    # It used to go to pdf/Abrechnung_<tenant>.pdf, a path shared by every
+    # landlord using the deployment: two of them with a tenant of the same
+    # name wrote to the same file, and since the endpoint builds the PDF and
+    # then reads that path back, one could be handed the other's letter —
+    # with the other tenancy's address and figures in it. A long name failed
+    # outright (OSError: File name too long), and a NUL byte in one raised
+    # before anything was written. A buffer has no name to collide.
+    buf = _BytesIO()
     story = []
     today_str = date.today().strftime("%d.%m.%Y")
 
@@ -1064,20 +1073,21 @@ def invoice_pdf(
             story.append(info_t)
 
     doc = SimpleDocTemplate(
-        file, pagesize=A4, title=f"Abrechnung_{tenant}",
+        buf, pagesize=A4, title=f"Abrechnung_{tenant}",
         leftMargin=25*mm, rightMargin=20*mm, topMargin=20*mm, bottomMargin=20*mm
     )
     doc.build(story)
     # The result the tenant is told, so the caller can record the settlement
     # with the same figure the letter states.
-    return file, round(total, 2)
+    return buf.getvalue(), round(total, 2)
 
 
 # ── Mahnung ────────────────────────────────────────────────────────────────────
 
 def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signature_path=None, co_tenants=None):
-    safe_name = tenant_name.replace("/", "-").replace("\\", "-")
-    file = f"pdf/Mahnung_{safe_name}.pdf"
+    # In memory for the same reason as invoice_pdf above: pdf/Mahnung_<name>
+    # .pdf was one path for every landlord on the deployment.
+    buf = _BytesIO()
     s = _styles()
     today_str = date.today().strftime("%d.%m.%Y")
     due_str   = (date.today() + timedelta(days=7)).strftime("%d.%m.%Y")
@@ -1161,11 +1171,11 @@ def generate_mahnung(tenant_name, amount, address=None, gender="diverse", signat
     story.extend(_signature_block("Ihre Vermieter", signature_path, s))
 
     doc = SimpleDocTemplate(
-        file, pagesize=A4, title=f"Mahnung_{tenant_name}",
+        buf, pagesize=A4, title=f"Mahnung_{tenant_name}",
         leftMargin=25*mm, rightMargin=20*mm, topMargin=20*mm, bottomMargin=20*mm
     )
     doc.build(story)
-    return file
+    return buf.getvalue()
 
 
 # ── Balance Sheet Annual Report ────────────────────────────────────────────────

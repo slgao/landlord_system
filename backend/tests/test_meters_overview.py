@@ -78,3 +78,38 @@ def test_overview_is_not_captured_by_a_parameterised_route():
     assert "/api/meters/overview" in paths
     # No meters route is a bare /api/meters/{param} that could swallow it.
     assert not any(p.startswith("/api/meters/{") for p in paths)
+
+
+# ── A nullable column read as a float ────────────────────────────────────────
+
+def test_a_meter_with_empty_numbers_still_lists():
+    """`float(None)` took the whole list down with a 500.
+
+    Every one of these columns is nullable, and the write path has a default
+    for each — so a row holding NULL (written before the column existed, or by
+    hand in SQL) reads back as what the API would have stored, instead of
+    making one odd meter hide the other eleven behind an error page.
+    """
+    gas = meters._gas((20, 1, "WE 1", "G-1", None, None, None, None))
+    assert gas.z_zahl == meters.D_Z_ZAHL
+    assert gas.brennwert == meters.D_BRENNWERT
+    assert gas.scope == meters.D_SCOPE_SHARED
+
+    heizung = meters._heizung((30, 1, "WE 1", "H-1", None, None, None, None, None))
+    assert heizung.unit_price == meters.D_UNIT_PRICE
+    assert heizung.unit_label == meters.D_UNIT_LABEL
+    assert heizung.conversion_factor == meters.D_CONVERSION_FACTOR
+    assert heizung.scope == meters.D_SCOPE_ROOM
+
+    assert meters._strom((10, 1, "WE 1", "S-1", None, None)).scope == meters.D_SCOPE_SHARED
+    wasser = meters._wasser((40, 1, "WE 1", "W-1", None, None, None))
+    assert wasser.type == meters.D_WASSER_TYPE
+    assert wasser.scope == meters.D_SCOPE_SHARED
+
+
+def test_a_stored_value_is_never_overridden_by_the_default():
+    gas = meters._gas((20, 1, "WE 1", "G-1", None, 0.95, 11.2, "room"))
+    assert (gas.z_zahl, gas.brennwert, gas.scope) == (0.95, 11.2, "room")
+    # 0 is a value, not an absence: a heating unit price of zero is deliberate.
+    h = meters._heizung((30, 1, "WE 1", "H-1", None, 0, "kWh", 0.5, "shared"))
+    assert h.unit_price == 0.0

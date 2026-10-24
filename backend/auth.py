@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from jose import JWTError, jwt
 
 from db import set_current_owner
+import auth_throttle
 import users_db
 
 log = logging.getLogger("uvicorn.error")
@@ -162,10 +163,22 @@ def _authenticate(request: Request, basic_creds: Optional[HTTPBasicCredentials])
         return uid
 
     if basic_creds:
+        # Basic is a password-guessing surface like the login endpoint, and the
+        # same two rules apply: count the attempts, and spend the same bcrypt
+        # time whether or not the account exists.
+        keys = auth_throttle.keys_for(basic_creds.username, request)
+        if auth_throttle.too_many_attempts(keys):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                                detail="Too many failed attempts. Wait a few "
+                                       "minutes and try again.",
+                                headers={"Retry-After": str(int(auth_throttle.WINDOW_S))})
         user = users_db.get_user_by_email(basic_creds.username)
-        if user and user["is_active"] and users_db.verify_password(
-                basic_creds.password, user["password_hash"]):
+        hashed = user["password_hash"] if user else auth_throttle.decoy_hash()
+        ok = users_db.verify_password(basic_creds.password, hashed)
+        if user and user["is_active"] and ok:
+            auth_throttle.clear(keys)
             return user["id"]
+        auth_throttle.record_attempt(keys)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

@@ -46,6 +46,7 @@ function ProfileRow({ p }: { p: TaxProfile }) {
   const [f, setF] = useState({
     purchase_date: p.purchase_date ?? "",
     purchase_price: p.purchase_price != null ? String(p.purchase_price) : "",
+    purchase_costs: p.purchase_costs != null ? String(p.purchase_costs) : "",
     building_share_pct: p.building_share_pct != null ? String(p.building_share_pct) : "",
     afa_rate_pct: p.afa_rate_pct != null ? String(p.afa_rate_pct) : "2.0",
     notes: p.notes ?? "",
@@ -55,6 +56,7 @@ function ProfileRow({ p }: { p: TaxProfile }) {
     mutationFn: () => api.put(`/api/tax/profiles/${p.property_id}`, {
       purchase_date: f.purchase_date || null,
       purchase_price: f.purchase_price ? parseFloat(f.purchase_price) : null,
+      purchase_costs: f.purchase_costs ? parseFloat(f.purchase_costs) : null,
       building_share_pct: f.building_share_pct ? parseFloat(f.building_share_pct) : null,
       afa_rate_pct: f.afa_rate_pct ? parseFloat(f.afa_rate_pct) : null,
       notes: f.notes || null,
@@ -92,6 +94,13 @@ function ProfileRow({ p }: { p: TaxProfile }) {
         onChange={(e) => setF({ ...f, purchase_date: e.target.value })} /></TableCell>
       <TableCell><Input type="number" step="1000" placeholder="Price €" className="h-8 w-28 font-mono"
         value={f.purchase_price} onChange={(e) => setF({ ...f, purchase_price: e.target.value })} /></TableCell>
+      {/* Grunderwerbsteuer, Notar, Grundbuch, Makler. Without it the equity a
+          flat was bought with reads as zero — a loan that covered them can
+          exceed the purchase price on its own. */}
+      <TableCell><Input type="number" step="500" placeholder="Nebenk. €"
+        className="h-8 w-28 font-mono"
+        title="Kaufnebenkosten: Grunderwerbsteuer, Notar, Grundbuch, Makler. In Berlin roughly 8–12 % of the price."
+        value={f.purchase_costs} onChange={(e) => setF({ ...f, purchase_costs: e.target.value })} /></TableCell>
       <TableCell><Input type="number" step="1" placeholder="%" className="h-8 w-16 font-mono"
         value={f.building_share_pct} onChange={(e) => setF({ ...f, building_share_pct: e.target.value })} /></TableCell>
       <TableCell><Input type="number" step="0.5" className="h-8 w-16 font-mono"
@@ -690,7 +699,11 @@ export default function TaxSetupPage() {
                 <TableHeader><TableRow>
                   <TableHead>Tax scope</TableHead>
                   <TableHead>Property</TableHead><TableHead>Purchase date</TableHead>
-                  <TableHead>Price</TableHead><TableHead>Building %</TableHead>
+                  <TableHead>Price</TableHead>
+                  <TableHead title="Kaufnebenkosten: Grunderwerbsteuer, Notar, Grundbuch, Makler">
+                    Nebenkosten
+                  </TableHead>
+                  <TableHead>Building %</TableHead>
                   <TableHead>AfA %</TableHead>
                   <TableHead className="text-right">AfA / year</TableHead><TableHead />
                 </TableRow></TableHeader>

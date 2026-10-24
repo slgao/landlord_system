@@ -52,6 +52,9 @@ _MAX_PDF_BYTES = 5 * 1024 * 1024
 class TaxProfileIn(BaseModel):
     purchase_date: OptIsoDate = None
     purchase_price: Optional[float] = None
+    # Grunderwerbsteuer, Notar, Grundbuch, Makler. Not derivable from anything
+    # on file, and without it the equity a flat was bought with reads as zero.
+    purchase_costs: Optional[float] = None
     building_share_pct: Optional[float] = None
     afa_rate_pct: Optional[float] = None
     notes: Optional[str] = None
@@ -166,7 +169,8 @@ def list_profiles(owner: int = Depends(require_auth)):
                   "WHERE owner_id=? ORDER BY name", (owner,)),
         json_part("profiles",
                   "SELECT property_id, purchase_date, purchase_price, building_share_pct, "
-                  "afa_rate_pct, notes FROM property_tax_profiles WHERE owner_id=?", (owner,)),
+                  "afa_rate_pct, notes, purchase_costs "
+                  "FROM property_tax_profiles WHERE owner_id=?", (owner,)),
         json_part("mortgages",
                   f"SELECT {_MORTGAGE_COLS} FROM mortgages WHERE owner_id=? ORDER BY id",
                   (owner,)),
@@ -188,6 +192,7 @@ def list_profiles(owner: int = Depends(require_auth)):
             "building_share_pct": float(p[3]) if p and p[3] is not None else None,
             "afa_rate_pct": float(p[4]) if p and p[4] is not None else None,
             "notes": _clean(p[5]) if p else None,
+            "purchase_costs": float(p[6]) if p and p[6] is not None else None,
             "mortgages": mortgages.get(pid, []),
             "afa_annual": None,
         }
@@ -207,12 +212,15 @@ def list_profiles(owner: int = Depends(require_auth)):
 def upsert_profile(property_id: int, body: TaxProfileIn, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM properties WHERE id=? AND owner_id=?", (property_id, owner)):
         raise HTTPException(status_code=404, detail="Property not found")
+    # Order matters: insert() names the table's writable columns in schema
+    # order, and purchase_costs was appended after owner_id, which it skips.
     vals = (body.purchase_date, body.purchase_price, body.building_share_pct,
-            body.afa_rate_pct, body.notes)
+            body.afa_rate_pct, body.notes, body.purchase_costs)
     if fetch("SELECT id FROM property_tax_profiles WHERE property_id=? AND owner_id=?",
              (property_id, owner)):
         execute("""UPDATE property_tax_profiles SET purchase_date=?, purchase_price=?,
-                   building_share_pct=?, afa_rate_pct=?, notes=? WHERE property_id=? AND owner_id=?""",
+                   building_share_pct=?, afa_rate_pct=?, notes=?, purchase_costs=?
+                   WHERE property_id=? AND owner_id=?""",
                 (*vals, property_id, owner))
     else:
         insert("property_tax_profiles", (property_id, *vals))

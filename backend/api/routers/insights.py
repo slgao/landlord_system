@@ -21,9 +21,13 @@ router = APIRouter(prefix="/insights", tags=["Insights"])
 # json_build_array would hand back floats, and rent arithmetic must not go near
 # binary floating point.
 _PROPS_SQL = """
-    SELECT id, name, we_label, COALESCE(owned, 1), market_value::text, market_value_date,
-           living_sqm::text, plot_sqm::text, comparable_per_sqm::text, mea::text
-    FROM properties WHERE owner_id=? ORDER BY name
+    SELECT p.id, p.name, p.we_label, COALESCE(p.owned, 1), p.market_value::text,
+           p.market_value_date, p.living_sqm::text, p.plot_sqm::text,
+           p.comparable_per_sqm::text, p.mea::text,
+           t.purchase_price::text, t.purchase_costs::text, t.purchase_date
+    FROM properties p
+    LEFT JOIN property_tax_profiles t ON t.property_id = p.id AND t.owner_id = p.owner_id
+    WHERE p.owner_id=? ORDER BY p.name
 """
 
 _CONTRACTS_SQL = """
@@ -103,6 +107,7 @@ def flat_insights(owner: int = Depends(require_auth)):
     inst: dict = {}
     interest: dict = {}
     debt: dict = {}
+    borrowed: dict = {}
     for r in loaded["mortgages"]:
         m = {"principal": _f(r[1]), "interest_rate_pct": _f(r[2]),
              "tilgung_rate_pct": _f(r[3]), "start_date": r[4],
@@ -117,6 +122,9 @@ def flat_insights(owner: int = Depends(require_auth)):
         if b["balance_end"] <= 0 and b["interest"] <= 0:
             continue
         pid = r[0]
+        # What was borrowed at the outset, whatever is left of it now: the
+        # Eigenkapital a flat was bought with is the price less this.
+        borrowed[pid] = borrowed.get(pid, 0.0) + (_f(r[1]) or 0.0)
         debt[pid] = debt.get(pid, 0.0) + max(b["balance_end"], 0.0)
         if b["balance_end"] > 0:
             inst[pid] = inst.get(pid, 0.0) + b["monthly_payment"]
@@ -178,9 +186,19 @@ def flat_insights(owner: int = Depends(require_auth)):
             value=v["value"] if owned else None,
             debt=debt.get(pid, 0.0), rooms=rooms.get(pid, 0), let_rooms=len(let),
             arrears=arrears.get(pid, 0.0), rent_to_owner=float(to_owner))
+        bought = flat_economics.purchase_equity(
+            _f(p[10]), _f(p[11]), borrowed.get(pid)) if owned else None
         entry = {
             "property_id": pid, "property_name": p[1], "we_label": p[2],
             "owned": owned, "living_sqm": _f(p[6]),
+            "purchase_date": p[12] if p[12] and p[12] != "None" else None,
+            **({"purchase": bought,
+                "equity_return_invested": flat_economics.equity_return_on_investment(
+                    e["operating_monthly"], bought["equity_invested"]),
+                "value_gain": flat_economics.value_gain(
+                    v["value"], bought["purchase_price"])}
+               if bought else {"purchase": None, "equity_return_invested": None,
+                               "value_gain": None}),
             "value": v["value"] if owned else None,
             "value_estimated": v["estimated"] if owned else None,
             "debt": round(debt.get(pid, 0.0), 2),
@@ -195,6 +213,7 @@ def flat_insights(owner: int = Depends(require_auth)):
         "as_of": iso,
         "flats": flats,
         "summary": flat_economics.portfolio_summary(owned_flats),
+        "purchase": flat_economics.portfolio_purchase(owned_flats),
         "sublets": flat_economics.sublet_summary(sublets),
         # Contradictions in the data worth a landlord's attention: a mortgage
         # recorded twice and disagreeing, a flat you own paying rent to an

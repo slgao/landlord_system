@@ -261,3 +261,94 @@ def sublet_summary(flats):
         "vacant_rooms": max(rooms - let_rooms, 0),
         "arrears": round(sum(f["arrears"] for f in flats), 2),
     }
+
+
+# ── What the flat was bought with ────────────────────────────────────────────
+# The Kaufpreis lives in property_tax_profiles, where the AfA already reads it,
+# and the loans carry their original principal. Between them they say how much
+# of the purchase was the landlord's own money — which is what an
+# Eigenkapitalrendite is a return on.
+
+def purchase_equity(purchase_price=None, purchase_costs=None, loans_original=None):
+    """What went into the flat, and how much of it was equity.
+
+    Returns None where the Kaufpreis is not on file: a return on an unknown
+    investment is not worth guessing at.
+
+    The Nebenkosten matter more than they look. Berlin's Grunderwerbsteuer,
+    notary and Grundbuch come to roughly a tenth of the price, and a loan that
+    covered them can exceed the purchase price on its own — which is why the
+    equity here can legitimately be small, and why leaving the Nebenkosten
+    blank makes it look like zero.
+    """
+    if not purchase_price:
+        return None
+    price = float(purchase_price)
+    extra = float(purchase_costs or 0)
+    borrowed = float(loans_original or 0)
+    invested = price + extra
+    return {
+        "purchase_price": round(price, 2),
+        "purchase_costs": round(extra, 2) if purchase_costs else None,
+        "invested_total": round(invested, 2),
+        "loans_original": round(borrowed, 2),
+        "equity_invested": round(invested - borrowed, 2),
+        # The share of the purchase that was borrowed. Over 100 % means the
+        # loan covered the Nebenkosten too.
+        "loan_to_price": round(borrowed / price * 100, 1) if price else None,
+        # Said plainly, because it changes how every figure below reads.
+        "costs_missing": not purchase_costs,
+    }
+
+
+def equity_return_on_investment(operating_monthly, equity_invested):
+    """Eigenkapitalrendite: what the flat earns a year against the money put in.
+
+    The numerator is the operating result — rent less running costs less
+    interest — because the Tilgung is not a return, it is the investment
+    growing. None where the equity is unknown, zero or negative: a percentage
+    return on nothing is not a number, and a flat bought entirely on credit is
+    better described by its cashflow.
+    """
+    if operating_monthly is None or not equity_invested or equity_invested <= 0:
+        return None
+    return round(float(operating_monthly) * 12 / float(equity_invested) * 100, 2)
+
+
+def value_gain(current_value=None, purchase_price=None):
+    """What the flat has gained since it was bought, in euro and per cent."""
+    if not current_value or not purchase_price:
+        return None
+    gain = float(current_value) - float(purchase_price)
+    return {"gain": round(gain, 2),
+            "gain_pct": round(gain / float(purchase_price) * 100, 1)}
+
+
+def portfolio_purchase(flats):
+    """What the owned flats cost to buy, and what the equity in them earns.
+
+    Only the flats whose Kaufpreis is on file contribute; the count is
+    returned so a partial figure is never read as the whole portfolio.
+    """
+    have = [f for f in flats if f.get("purchase")]
+    if not have:
+        return None
+    price = sum(f["purchase"]["purchase_price"] for f in have)
+    invested = sum(f["purchase"]["invested_total"] for f in have)
+    borrowed = sum(f["purchase"]["loans_original"] for f in have)
+    equity = invested - borrowed
+    operating = sum(f["operating_monthly"] or 0 for f in have)
+    gains = [f["value_gain"]["gain"] for f in have if f.get("value_gain")]
+    return {
+        "flats": len(have),
+        "purchase_price": round(price, 2),
+        "invested_total": round(invested, 2),
+        "loans_original": round(borrowed, 2),
+        "equity_invested": round(equity, 2),
+        "loan_to_price": round(borrowed / price * 100, 1) if price else None,
+        "equity_return_invested": equity_return_on_investment(operating, equity),
+        "value_gain": round(sum(gains), 2) if len(gains) == len(have) else None,
+        # True while any flat is missing its Kaufnebenkosten, which makes the
+        # equity look smaller and the return on it larger than they are.
+        "costs_missing": any(f["purchase"]["costs_missing"] for f in have),
+    }

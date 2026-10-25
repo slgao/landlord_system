@@ -198,3 +198,78 @@ def test_the_month_rule_accepts_a_plain_amount_too():
     from rent_periods import rent_for_month
     assert rent_for_month(900, "2026-05-01") == Decimal("900")
     assert rent_for_month(RentSchedule([("2026-05-20", 900)]), "2026-05-01") == Decimal("900")
+
+
+# ── §558: what an ordinary increase has to satisfy ───────────────────────────
+
+def _codes(findings):
+    return {f["code"] for f in findings}
+
+
+def test_a_modest_increase_after_three_years_passes_quietly():
+    from rent_periods import check_increase
+    s = RentSchedule([("2021-01-01", 1000), ("2023-01-01", 1050)])
+    assert check_increase(s, "2026-07-01", 1150) == []
+
+
+def test_an_increase_over_the_tight_cap_names_both_thresholds():
+    from rent_periods import check_increase
+    s = RentSchedule([("2023-01-01", 1000)])
+    f = check_increase(s, "2026-07-01", 1180)          # +18 %
+    assert "kappungsgrenze" in _codes(f)
+    hit = [x for x in f if x["code"] == "kappungsgrenze"][0]
+    assert hit["over_general"] is False
+    assert "15 %" in hit["message"] and "20 %" in hit["message"]
+    assert hit["paragraph"] == "§558 Abs. 3 BGB"
+
+
+def test_an_increase_over_the_general_cap_says_so():
+    from rent_periods import check_increase
+    s = RentSchedule([("2023-01-01", 1000)])
+    hit = [x for x in check_increase(s, "2026-07-01", 1250)
+           if x["code"] == "kappungsgrenze"][0]
+    assert hit["over_general"] is True
+
+
+def test_the_cap_is_measured_against_three_years_ago_not_the_current_rent():
+    from rent_periods import check_increase
+    # Raised in steps: 1000 → 1100 → 1150. Against the current 1150 the last
+    # step is 4 %; against the 1000 of three years ago it is 15 % — which is
+    # the comparison §558 Abs. 3 actually makes.
+    s = RentSchedule([("2023-06-01", 1000), ("2025-01-01", 1100)])
+    f = check_increase(s, "2026-07-01", 1210)
+    assert "kappungsgrenze" in _codes(f)
+
+
+def test_an_increase_too_soon_after_the_last_one_is_flagged():
+    from rent_periods import check_increase
+    s = RentSchedule([("2020-01-01", 900), ("2026-01-01", 1000)])
+    f = check_increase(s, "2026-09-01", 1030)          # eight months later
+    hit = [x for x in f if x["code"] == "wartefrist"][0]
+    assert "15" in hit["message"]
+    assert hit["paragraph"] == "§558 Abs. 1 BGB"
+
+
+def test_the_waiting_period_does_not_apply_to_the_first_increase():
+    from rent_periods import check_increase
+    s = RentSchedule([("2026-01-01", 1000)])
+    assert "wartefrist" not in _codes(check_increase(s, "2026-09-01", 1030))
+
+
+def test_the_other_kinds_answer_to_their_own_paragraphs():
+    from rent_periods import check_increase
+    s = RentSchedule([("2026-01-01", 1000)])
+    for kind in ("staffel", "index", "modernisation", "initial"):
+        assert check_increase(s, "2026-07-01", 1400, kind=kind) == []
+
+
+def test_a_reduction_is_recorded_but_remarked_on():
+    from rent_periods import check_increase
+    s = RentSchedule([("2024-01-01", 1000)])
+    f = check_increase(s, "2026-07-01", 900)
+    assert "reduction" in _codes(f)
+
+
+def test_nothing_is_claimed_about_a_tenancy_with_no_prices():
+    from rent_periods import check_increase
+    assert check_increase(RentSchedule([]), "2026-07-01", 1200) == []

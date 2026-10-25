@@ -488,6 +488,21 @@ class RentPeriodIn(BaseModel):
         return self
 
 
+class RentCheck(BaseModel):
+    """Something about an increase that is worth a second look. Never a
+    refusal: every rule here has lawful exceptions, and a tool that blocked
+    the entry would simply be wrong about somebody's tenancy."""
+    code: str
+    paragraph: str = ""
+    message: str
+    over_general: bool = False
+
+
+class RentPeriodsOut(BaseModel):
+    periods: list["RentPeriodOut"]
+    checks: list[RentCheck] = []
+
+
 class RentPeriodOut(BaseModel):
     id: int
     contract_id: int
@@ -551,14 +566,14 @@ def _correct_current_rent(contract_id: int, rent, nkv, start_date, owner: int) -
     """, (rent, nkv, current.id, owner))
 
 
-@router.get("/{contract_id}/rents", response_model=list[RentPeriodOut])
+@router.get("/{contract_id}/rents", response_model=RentPeriodsOut)
 def list_rent_periods(contract_id: int, owner: int = Depends(require_auth)):
     """Every price this tenancy has been charged at, oldest first."""
     _assert_own(contract_id, owner)
-    return _rent_periods(contract_id, owner)
+    return RentPeriodsOut(periods=_rent_periods(contract_id, owner))
 
 
-@router.post("/{contract_id}/rents", response_model=list[RentPeriodOut], status_code=201)
+@router.post("/{contract_id}/rents", response_model=RentPeriodsOut, status_code=201)
 def add_rent_period(contract_id: int, body: RentPeriodIn,
                     owner: int = Depends(require_auth)):
     """Record what the rent becomes, and from when.
@@ -588,6 +603,9 @@ def add_rent_period(contract_id: int, body: RentPeriodIn,
     # already agreed: raising the rent does not silently turn the rent warm,
     # which would move the Kaltmiete, every €/m² derived from it and the
     # Umlagen line of the Anlage V. Pass 0 to say there is no share.
+    before = rent_periods.RentSchedule(
+        [(p.valid_from, p.rent, p.nebenkosten_vorauszahlung)
+         for p in _rent_periods(contract_id, owner)])
     nkv = body.nebenkosten_vorauszahlung
     if nkv is None:
         current = next((p for p in _rent_periods(contract_id, owner) if p.current), None)
@@ -601,10 +619,15 @@ def add_rent_period(contract_id: int, body: RentPeriodIn,
         VALUES (?,?,?,?,?,?,?)
     """, (contract_id, body.valid_from, body.rent, nkv,
           body.kind, body.note or None, owner))
-    return _rent_periods(contract_id, owner)
+    # Measured against the prices as they were *before* this one, which is
+    # what §558 compares: the rent three years ago and the date of the last
+    # increase.
+    checks = rent_periods.check_increase(before, body.valid_from, body.rent, body.kind)
+    return RentPeriodsOut(periods=_rent_periods(contract_id, owner),
+                          checks=[RentCheck(**c) for c in checks])
 
 
-@router.put("/{contract_id}/rents/{period_id}", response_model=list[RentPeriodOut])
+@router.put("/{contract_id}/rents/{period_id}", response_model=RentPeriodsOut)
 def update_rent_period(contract_id: int, period_id: int, body: RentPeriodIn,
                        owner: int = Depends(require_auth)):
     """Correct a price that was entered wrongly."""
@@ -621,10 +644,10 @@ def update_rent_period(contract_id: int, period_id: int, body: RentPeriodIn,
         WHERE id=? AND owner_id=?
     """, (body.valid_from, body.rent, body.nebenkosten_vorauszahlung, body.kind,
           body.note or None, period_id, owner))
-    return _rent_periods(contract_id, owner)
+    return RentPeriodsOut(periods=_rent_periods(contract_id, owner))
 
 
-@router.delete("/{contract_id}/rents/{period_id}", response_model=list[RentPeriodOut])
+@router.delete("/{contract_id}/rents/{period_id}", response_model=RentPeriodsOut)
 def delete_rent_period(contract_id: int, period_id: int,
                        owner: int = Depends(require_auth)):
     """Remove a price that should not have been recorded.
@@ -640,4 +663,4 @@ def delete_rent_period(contract_id: int, period_id: int,
         raise HTTPException(409, "This is the only price on file for the tenancy. "
                                  "Edit it instead of removing it.")
     execute("DELETE FROM contract_rents WHERE id=? AND owner_id=?", (period_id, owner))
-    return _rent_periods(contract_id, owner)
+    return RentPeriodsOut(periods=_rent_periods(contract_id, owner))

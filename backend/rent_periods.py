@@ -210,3 +210,98 @@ def year_total(schedule, start_date, end_date, year: int):
     months = months_in_year(start_date, end_date, year)
     total = sum((rent_for_month(schedule, m) for m in months), _ZERO)
     return len(months), total
+
+
+# ── §558 BGB: what an ordinary rent increase has to satisfy ─────────────────
+#
+# These are checks, not refusals. Every one of them has lawful exceptions —
+# a modernisation surcharge under §559 is not bound by the Kappungsgrenze, an
+# Indexmiete follows the index on its own schedule, a Staffel is agreed once
+# and owed in full — and a tool that blocked the entry would simply be wrong
+# about somebody's tenancy. Saying what looks off, with the paragraph, leaves
+# the judgement where it belongs.
+
+# The cap on how far rent may rise within three years. 20 % generally; 15 %
+# where a Land has made a Kappungsgrenzenverordnung, which Berlin and most
+# larger cities have. Which applies depends on the municipality, so the
+# warning names both rather than pretending to know.
+KAPPUNGSGRENZE_GENERAL = Decimal("0.20")
+KAPPUNGSGRENZE_TIGHT = Decimal("0.15")
+
+# §558 Abs. 1: the rent must have been unchanged for twelve months when the
+# demand is made, and the new rent is owed at the earliest fifteen months
+# after the last increase took effect.
+WARTEFRIST_MONTHS = 15
+
+
+def _months_between(earlier: str, later: str) -> int:
+    from datetime import date as _d
+    a, b = _d.fromisoformat(str(earlier)[:10]), _d.fromisoformat(str(later)[:10])
+    return (b.year - a.year) * 12 + (b.month - a.month)
+
+
+def check_increase(schedule: "RentSchedule", valid_from: str, new_rent,
+                   kind: str = "agreed") -> list[dict]:
+    """What looks off about this increase, under §558.
+
+    Only an ordinary increase is measured: the other kinds answer to their own
+    paragraphs. Each finding carries the paragraph it rests on, so the landlord
+    can check it rather than take the tool's word.
+    """
+    if kind != "agreed" or not schedule or not schedule.periods:
+        return []
+    new = _dec(new_rent)
+    findings = []
+
+    previous = schedule._at(valid_from) or schedule.periods[0]
+    prev_from, prev_rent, _ = previous
+
+    # Waiting period: fifteen months since the last increase took effect.
+    if prev_from and len(schedule) > 1:
+        months = _months_between(prev_from, valid_from)
+        if months < WARTEFRIST_MONTHS:
+            findings.append({
+                "code": "wartefrist",
+                "paragraph": "§558 Abs. 1 BGB",
+                "message": (f"The last increase took effect on {prev_from}, "
+                            f"{months} months before this one. An ordinary "
+                            f"increase is owed at the earliest {WARTEFRIST_MONTHS} "
+                            f"months after the previous one."),
+            })
+
+    # Kappungsgrenze: measured against the rent three years before this date.
+    from datetime import date as _d
+    d = _d.fromisoformat(str(valid_from)[:10])
+    three_years_ago = d.replace(year=d.year - 3).isoformat()
+    base = schedule.on(three_years_ago) or schedule.first()
+    if base > 0:
+        rise = (new - base) / base
+        if rise > KAPPUNGSGRENZE_TIGHT:
+            limit = (KAPPUNGSGRENZE_GENERAL if rise > KAPPUNGSGRENZE_GENERAL
+                     else KAPPUNGSGRENZE_TIGHT)
+            findings.append({
+                "code": "kappungsgrenze",
+                "paragraph": "§558 Abs. 3 BGB",
+                "over_general": rise > KAPPUNGSGRENZE_GENERAL,
+                "message": (
+                    f"That is {rise * 100:.1f} % above the {base:.2f} € charged "
+                    f"three years ago. The Kappungsgrenze allows 20 % over three "
+                    f"years, and 15 % where the Land has made a "
+                    f"Kappungsgrenzenverordnung — Berlin has."
+                    if rise > KAPPUNGSGRENZE_GENERAL else
+                    f"That is {rise * 100:.1f} % above the {base:.2f} € charged "
+                    f"three years ago. Within the general 20 % Kappungsgrenze, but "
+                    f"over the 15 % that applies where the Land has made a "
+                    f"Kappungsgrenzenverordnung — Berlin has."),
+            })
+
+    # A reduction is lawful but is not what §558 is for, and is more often a typo.
+    if new < prev_rent:
+        findings.append({
+            "code": "reduction",
+            "paragraph": "",
+            "message": (f"This is lower than the {prev_rent:.2f} € in force. "
+                        f"Recorded as entered — §558 covers increases, so a "
+                        f"reduction is an agreement of its own."),
+        })
+    return findings

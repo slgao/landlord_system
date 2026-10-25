@@ -15,7 +15,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "@/lib/api";
-import { Contract, RentPeriod } from "@/lib/types";
+import { Contract, RentCheck, RentPeriod } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,11 +56,14 @@ export function RentHistoryDialog({ contract, onClose }: {
     kind: "agreed" as RentPeriod["kind"], note: "",
   });
 
-  const { data: periods = [], isLoading } = useQuery<RentPeriod[]>({
+  const [checks, setChecks] = useState<RentCheck[]>([]);
+
+  const { data, isLoading } = useQuery<{ periods: RentPeriod[]; checks: RentCheck[] }>({
     queryKey: ["contract-rents", contract?.id],
     queryFn: () => api.get(`/api/contracts/${contract!.id}/rents`).then((r) => r.data),
     enabled: !!contract,
   });
+  const periods = data?.periods ?? [];
 
   // Every figure that reads a rent moves with this, so they all refresh.
   function invalidate() {
@@ -80,8 +83,11 @@ export function RentHistoryDialog({ contract, onClose }: {
       kind: form.kind,
       note: form.note.trim() || null,
     }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       invalidate();
+      // Reported, never refused: each of these rules has lawful exceptions,
+      // and the entry is already on file.
+      setChecks(res.data.checks ?? []);
       toast.success("Recorded — the months before it keep the old rent");
       setForm((f) => ({ ...f, note: "" }));
     },
@@ -213,6 +219,24 @@ export function RentHistoryDialog({ contract, onClose }: {
                 Record
               </Button>
             </div>
+
+            {checks.length > 0 && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                  Worth a second look
+                </p>
+                {checks.map((c) => (
+                  <p key={c.code} className="text-xs text-amber-900 dark:text-amber-200">
+                    {c.paragraph && <b>{c.paragraph}: </b>}{c.message}
+                  </p>
+                ))}
+                <p className="text-xs text-muted-foreground">
+                  The price is recorded either way — a modernisation surcharge,
+                  an agreed Staffel or an index adjustment each answer to their
+                  own paragraph.
+                </p>
+              </div>
+            )}
 
             {upcoming.length > 0 && (
               <p className="text-xs text-muted-foreground">

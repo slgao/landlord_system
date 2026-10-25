@@ -883,6 +883,16 @@ export interface FlatInsights {
 // is raised under §558, stepped under a Staffelmiete, tracked to the index
 // under an Indexmiete. Each is a period, so the months before a change keep
 // the price that was actually owed.
+// Something about a recorded increase worth a second look — never a refusal:
+// §559 modernisation, §557a Staffel and §557b index each answer to their own
+// paragraph, so the judgement stays with the landlord.
+export interface RentCheck {
+  code: string;
+  paragraph: string;
+  message: string;
+  over_general: boolean;
+}
+
 export interface RentPeriod {
   id: number;
   contract_id: number;

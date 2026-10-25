@@ -22,18 +22,29 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
-import { Pencil, Trash2, Plus, TrendingUp, History } from "lucide-react";
+import { Pencil, Trash2, Plus, TrendingUp, History, CalendarClock } from "lucide-react";
 import { todayISO } from "@/lib/utils";
 
 const FREQ = ["monthly", "quarterly", "annually", "one-time"];
 
-// A cost counts today when today lies inside its period. The reports have
-// always read the dates this way; the totals here used to add every row, so a
-// cost with a price history showed as both prices at once.
+// Where a price sits relative to a date: already over, in force, or agreed
+// but not started yet. The reports have always read the dates this way.
+//
+// The third case is the one this page used to get wrong. It knew only "active"
+// and "not active", so a Hausgeld increase entered with a start date in the
+// future — the normal way to record one the Verwalter has announced — was
+// dimmed, labelled "earlier price" and counted under "+1 past", while the
+// amount it replaces went on showing as the only price there was.
+type Phase = "past" | "current" | "upcoming";
+
+function phase(fc: FlatCost, on = todayISO()): Phase {
+  if (fc.valid_from && fc.valid_from > on) return "upcoming";
+  if (fc.valid_to && fc.valid_to < on) return "past";
+  return "current";
+}
+
 function isActive(fc: FlatCost, on = todayISO()): boolean {
-  if (fc.valid_from && fc.valid_from > on) return false;
-  if (fc.valid_to && fc.valid_to < on) return false;
-  return true;
+  return phase(fc, on) === "current";
 }
 
 function periodLabel(fc: FlatCost): string {
@@ -55,6 +66,20 @@ function monthlyEquivalent(fc: FlatCost): number {
     case "one-time": return 0; // not part of the recurring monthly figure
     default: return fc.amount;
   }
+}
+
+/** The monthly equivalent of these costs as of `on`. */
+function monthlyOn(costs: FlatCost[], on: string): number {
+  return costs.filter((fc) => isActive(fc, on))
+    .reduce((s, fc) => s + monthlyEquivalent(fc), 0);
+}
+
+/** The next date one of these costs changes price, if any is still to come. */
+function nextChange(costs: FlatCost[], on = todayISO()): string | null {
+  const dates = costs.filter((fc) => phase(fc, on) === "upcoming")
+    .map((fc) => fc.valid_from!)
+    .sort();
+  return dates[0] ?? null;
 }
 
 export default function FlatCostsPage() {
@@ -138,6 +163,10 @@ export default function FlatCostsPage() {
   const grandMonthly = flatCosts
     .filter((fc) => isActive(fc))
     .reduce((s, fc) => s + monthlyEquivalent(fc), 0);
+  // A recorded increase that has not started yet is invisible in a total for
+  // today, which is right — and is also exactly why entering one looked like
+  // nothing had happened. The date it starts, and what it comes to then.
+  const grandNextChange = nextChange(flatCosts);
 
   return (
     <div className="max-w-4xl space-y-4">
@@ -157,7 +186,14 @@ export default function FlatCostsPage() {
         <span className="text-sm text-muted-foreground">
           Total recurring cost today (monthly equivalent)
         </span>
-        <span className="text-xl font-semibold">€ {grandMonthly.toFixed(2)}</span>
+        <span className="text-right">
+          <span className="text-xl font-semibold">€ {grandMonthly.toFixed(2)}</span>
+          {grandNextChange && (
+            <span className="block text-xs text-muted-foreground">
+              € {monthlyOn(flatCosts, grandNextChange).toFixed(2)} from {grandNextChange}
+            </span>
+          )}
+        </span>
       </Card>
 
       {isLoading ? (
@@ -174,6 +210,9 @@ export default function FlatCostsPage() {
                 const costs = costsByApartment(apt.id);
                 const active = costs.filter((fc) => isActive(fc));
                 const monthly = active.reduce((s, fc) => s + monthlyEquivalent(fc), 0);
+                const upcoming = costs.filter((fc) => phase(fc) === "upcoming");
+                const pastCount = costs.length - active.length - upcoming.length;
+                const changeDate = nextChange(costs);
                 return (
                   <GroupCard
                     key={apt.id}
@@ -183,12 +222,25 @@ export default function FlatCostsPage() {
                     summary={
                       <>
                         <Badge variant="secondary">{active.length} cost{active.length !== 1 ? "s" : ""}</Badge>
-                        {costs.length > active.length && (
+                        {pastCount > 0 && (
                           <Badge variant="secondary" className="text-[10px]" title="Earlier prices, kept for past years">
-                            +{costs.length - active.length} past
+                            +{pastCount} past
+                          </Badge>
+                        )}
+                        {upcoming.length > 0 && (
+                          <Badge variant="secondary" className="text-[10px]
+                            bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/20"
+                            title={`Already recorded, in force from ${changeDate}`}>
+                            {upcoming.length} upcoming
                           </Badge>
                         )}
                         {monthly > 0 && <span className="text-sm font-medium">€ {monthly.toFixed(2)}/mo</span>}
+                        {changeDate && (
+                          <span className="text-xs text-muted-foreground"
+                            title="What this flat costs once the recorded change takes effect">
+                            → € {monthlyOn(costs, changeDate).toFixed(2)}/mo from {changeDate}
+                          </span>
+                        )}
                       </>
                     }
                   >
@@ -213,7 +265,8 @@ export default function FlatCostsPage() {
                           </TableHeader>
                           <TableBody>
                             {costs.map((fc) => {
-                              const past = !isActive(fc);
+                              const ph = phase(fc);
+                              const past = ph === "past";
                               return (
                               <TableRow key={fc.id} className={past ? "opacity-60" : ""}>
                                 <TableCell className="font-medium">
@@ -221,6 +274,12 @@ export default function FlatCostsPage() {
                                   {past && (
                                     <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
                                       <History className="size-3 mr-1" /> earlier price
+                                    </Badge>
+                                  )}
+                                  {ph === "upcoming" && (
+                                    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0
+                                      bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/20">
+                                      <CalendarClock className="size-3 mr-1" /> from {fc.valid_from}
                                     </Badge>
                                   )}
                                 </TableCell>

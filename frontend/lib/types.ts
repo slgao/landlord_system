@@ -209,6 +209,11 @@ export interface KautionOverviewRow {
   balance: number;
   returned_total: number;
   still_held: number;
+  // §551 Abs. 1 BGB: a deposit may be at most three Kaltmieten, measured
+  // against the rent the tenancy began at. Null when no rent is on file to
+  // measure against; kaution_over_cap is the excess, or null when within.
+  kaution_cap?: number | null;
+  kaution_over_cap?: number | null;
 }
 
 export interface Payment {

@@ -406,7 +406,14 @@ def kaution_overview(owner: int):
                c.kaution_paid_date, c.kaution_returned_date, c.kaution_returned_amount,
                COALESCE((SELECT SUM(amount) FROM kaution_deductions WHERE contract_id=c.id), 0),
                COALESCE((SELECT SUM(amount) FROM kaution_payments WHERE contract_id=c.id), 0),
-               COALESCE((SELECT SUM(amount) FROM kaution_returns WHERE contract_id=c.id), 0)
+               COALESCE((SELECT SUM(amount) FROM kaution_returns WHERE contract_id=c.id), 0),
+               -- The Kaltmiete the tenancy started at: §551 caps the deposit at
+               -- three of those, and it is the rent at signing that the cap is
+               -- measured against, not whatever the rent has since become.
+               (SELECT r.rent FROM contract_rents r WHERE r.contract_id = c.id
+                ORDER BY r.valid_from ASC LIMIT 1),
+               (SELECT r.nebenkosten_vorauszahlung FROM contract_rents r
+                WHERE r.contract_id = c.id ORDER BY r.valid_from ASC LIMIT 1)
         FROM contracts c
         JOIN tenants t ON t.id=c.tenant_id
         JOIN apartments a ON a.id=c.apartment_id
@@ -435,8 +442,26 @@ def kaution_overview(owner: int):
             "returned_total": round(float(r[11]) if r[11] else 0.0, 2),
             # What is still with the landlord: owed back, less what has gone back.
             "still_held": round(k_amt - deducted - (float(r[11]) if r[11] else 0.0), 2),
+            **_kaution_cap_note(k_amt, r[12], r[13]),
         })
     return result
+
+
+def _kaution_cap_note(agreed: float, first_rent, first_nkv) -> dict:
+    """What §551 Abs. 1 BGB allows, and whether this deposit exceeds it.
+
+    Three Kaltmieten — the rent without the Nebenkosten prepayment. A deposit
+    agreed above the cap is not void; the excess is simply not owed and the
+    tenant can reclaim it at any time, which is worth knowing before they ask
+    rather than after. Without a Kaltmiete on file there is nothing to measure
+    against, and saying nothing is better than guessing.
+    """
+    if first_rent is None:
+        return {"kaution_cap": None, "kaution_over_cap": None}
+    cold = rent_periods.cold_rent(first_rent, first_nkv or 0)
+    cap = float(rent_periods.kaution_cap(cold))
+    over = round(agreed - cap, 2)
+    return {"kaution_cap": cap, "kaution_over_cap": over if over > 0.005 else None}
 
 
 @router.delete("/{contract_id}", status_code=204)

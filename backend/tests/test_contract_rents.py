@@ -241,3 +241,38 @@ def test_a_carried_share_larger_than_the_new_rent_is_refused(store):
     with pytest.raises(HTTPException) as e:
         cr.add_rent_period(1, _in("2026-07-01", 500.0), owner=1)
     assert e.value.status_code == 422
+
+
+# ── §551: what a deposit may be ──────────────────────────────────────────────
+
+def test_a_deposit_within_three_cold_rents_passes_unremarked():
+    note = cr._kaution_cap_note(2460.0, 1050.0, 230.0)      # 3 × 820
+    assert note["kaution_cap"] == 2460.0
+    assert note["kaution_over_cap"] is None
+
+
+def test_a_deposit_above_the_cap_says_by_how_much():
+    note = cr._kaution_cap_note(3000.0, 1050.0, 230.0)
+    assert note["kaution_cap"] == 2460.0
+    assert note["kaution_over_cap"] == 540.0
+
+
+def test_the_cap_uses_the_cold_rent_not_the_warm_one():
+    # Measuring against the warm rent would allow 3.150 € — a fifth too much,
+    # and the tenant can reclaim the difference at any time.
+    assert cr._kaution_cap_note(3000.0, 1050.0, 230.0)["kaution_cap"] == 2460.0
+    assert cr._kaution_cap_note(3000.0, 1050.0, None)["kaution_cap"] == 3150.0
+
+
+def test_the_cap_is_measured_against_the_rent_at_signing():
+    # §551 measures the deposit against the rent when the tenancy began: a
+    # later increase does not retroactively permit a larger deposit. The
+    # overview therefore reads the tenancy's first period, not its current one.
+    from inspect import getsource
+    src = getsource(cr.kaution_overview)
+    assert "ORDER BY r.valid_from ASC LIMIT 1" in src
+
+
+def test_nothing_is_claimed_without_a_rent_on_file():
+    note = cr._kaution_cap_note(2000.0, None, None)
+    assert note == {"kaution_cap": None, "kaution_over_cap": None}

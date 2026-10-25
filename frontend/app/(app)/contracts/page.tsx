@@ -773,27 +773,39 @@ export default function ContractsPage() {
                     <TableRow key={r.contract_id} className="cursor-pointer" onClick={() => openContractById(r.contract_id)}>
                       <TableCell className="font-medium">{r.tenant_name}</TableCell>
                       <TableCell className="text-muted-foreground">{r.apartment_name}<br /><span className="text-xs">{r.property_name}</span></TableCell>
-                      <TableCell className="text-right font-mono">{r.kaution_amount.toFixed(2)} {r.kaution_currency}</TableCell>
+                      <TableCell className="text-right font-mono">
+                        {money(r.kaution_amount)}
+                        {/* §551 Abs. 1 BGB: at most three Kaltmieten, measured
+                            against the rent the tenancy began at. The excess is
+                            not owed and the tenant can reclaim it at any time —
+                            better known before they ask. */}
+                        {r.kaution_over_cap != null && (
+                          <span className="block text-xs text-amber-700 dark:text-amber-400 font-sans"
+                            title={`§551 BGB allows three Kaltmieten — ${money(r.kaution_cap ?? 0)}. The excess is not owed.`}>
+                            {money(r.kaution_over_cap)} over the §551 cap
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right font-mono">
                         {(r.paid ?? 0) > 0 ? (
                           <>
-                            <span className="text-primary">{r.paid.toFixed(2)}</span>
-                            {(r.outstanding ?? 0) > 0.001 && <span className="text-amber-400 text-xs block">−{r.outstanding.toFixed(2)} offen</span>}
+                            <span className="text-primary">{money(r.paid)}</span>
+                            {(r.outstanding ?? 0) > 0.001 && <span className="text-amber-400 text-xs block">−{money(r.outstanding)} offen</span>}
                           </>
                         ) : (
                           <span className="text-muted-foreground text-xs">{r.kaution_paid_date || "—"}</span>
                         )}
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{r.deducted.toFixed(2)}</TableCell>
-                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-primary" : "text-destructive"}`}>{r.balance.toFixed(2)}</TableCell>
+                      <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{money(r.deducted)}</TableCell>
+                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-primary" : "text-destructive"}`}>{money(r.balance)}</TableCell>
                       <TableCell className="text-muted-foreground">
                         {r.kaution_returned_date ? (
-                          <span className="text-primary text-xs">{r.kaution_returned_amount?.toFixed(2)} on {r.kaution_returned_date}</span>
+                          <span className="text-primary text-xs">{money(r.kaution_returned_amount ?? 0)} on {fmtD(r.kaution_returned_date)}</span>
                         ) : (r.returned_total ?? 0) > 0 ? (
                           // Part-released: show what went back and what is left.
                           <span className="text-amber-700 dark:text-amber-400 text-xs">
-                            {r.returned_total.toFixed(2)} returned<br />
-                            <span className="text-muted-foreground">{r.still_held.toFixed(2)} still held</span>
+                            {money(r.returned_total)} returned<br />
+                            <span className="text-muted-foreground">{money(r.still_held)} still held</span>
                           </span>
                         ) : "—"}
                       </TableCell>

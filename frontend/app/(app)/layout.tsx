@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { isAuthenticated } from "@/lib/api";
 import { Sidebar } from "@/components/nav";
+import { CommandSearch } from "@/components/command-search";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -23,6 +24,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         Skip to content
       </a>
       <Sidebar />
+      <CommandSearch />
       {/* pt-14 on mobile clears the fixed top bar */}
       <main id="main" tabIndex={-1}
         className="flex-1 min-w-0 md:overflow-y-auto p-4 md:p-6 pt-[4.5rem] md:pt-6">

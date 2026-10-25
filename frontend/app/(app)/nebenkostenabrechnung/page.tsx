@@ -1741,12 +1741,19 @@ export default function NebenkostenabrechnungPage() {
           Fix it in the section above — the tenant&apos;s period has to sit inside the billing period.
         </p>
       )}
+      {/* Checking the figures comes before producing the letter, so Calculate
+          is the solid button until there is a preview to look at. Both have
+          always been disabled without a contract; only the PDF *looked*
+          ready, which is the wrong thing for the more consequential action to
+          look like. */}
       <div className="flex gap-3 flex-wrap">
-        <Button onClick={calculate} disabled={!selected || calculating || periodProblems.length > 0} variant="outline">
+        <Button onClick={calculate} disabled={!selected || calculating || periodProblems.length > 0}
+          variant={calcResult ? "outline" : "default"}>
           <Calculator className="size-4 mr-1" />
           {calculating ? "Calculating…" : "Calculate Preview"}
         </Button>
         <Button onClick={generatePdf}
+          variant={calcResult ? "default" : "outline"}
           disabled={!selected || generating || periodProblems.length > 0
             || (!useStrom && !useGas && !useWater && !useWarmwater && !useHeizung && !useBK && !useExtra)}>
           <FileDown className="size-4 mr-1" />

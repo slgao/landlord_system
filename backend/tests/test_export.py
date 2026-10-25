@@ -88,3 +88,30 @@ def test_a_computed_column_keeps_its_alias(monkeypatch):
     row = export.collect(owner=1)["nk_settlements"][0]
     assert row["has_pdf"] is True
     assert row["id"] == 7
+
+
+def test_the_summary_is_one_statement_not_one_per_table():
+    # Twenty-nine COUNT(*)s is about a second of waiting against a database
+    # 38 ms away, to print a single line.
+    sql = export._count_sql(["properties", "tenants"])
+    assert sql.count("SELECT") == 3            # the outer one plus two subqueries
+    assert sql.startswith("SELECT (SELECT COUNT(*) FROM properties WHERE owner_id=?)")
+    assert sql.count("?") == 2
+
+
+def test_the_summary_still_answers_when_a_table_is_missing(monkeypatch):
+    seen = []
+
+    def flaky(sql, params=()):
+        seen.append(sql)
+        if "gas_meters" in sql and sql.count("SELECT") > 2:
+            raise RuntimeError('relation "gas_meters" does not exist')
+        if "gas_meters" in sql:
+            raise RuntimeError("still missing")
+        return [tuple(0 for _ in range(sql.count("SELECT") - 1))] if sql.count("SELECT") > 2 else [(0,)]
+
+    monkeypatch.setattr(export, "fetch", flaky)
+    out = export.export_summary(owner=1)
+    assert "gas_meters" not in out["tables"]
+    assert out["rows"] == 0
+    assert len(seen) == 1 + len(export.TABLES)   # the one-shot try, then the fallback

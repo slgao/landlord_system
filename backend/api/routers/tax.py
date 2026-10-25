@@ -295,12 +295,16 @@ def _merge_schedules(schedules: list[list[dict]]) -> list[dict]:
     if not schedules:
         return []
     years = sorted({r["year"] for s in schedules for r in s})
+    # Each schedule keyed by year once, rather than scanned from the top for
+    # every year of the merged range: with a forty-year loan that was sixteen
+    # hundred comparisons per loan where forty lookups do.
+    by_year = [{r["year"]: r for r in sched} for sched in schedules]
     out = []
     for y in years:
         acc = {"year": y, "interest": 0.0, "tilgung": 0.0, "payment": 0.0,
                "balance_end": 0.0, "interest_cum": 0.0, "tilgung_cum": 0.0}
-        for sched in schedules:
-            row = next((r for r in sched if r["year"] == y), None)
+        for sched, index in zip(schedules, by_year):
+            row = index.get(y)
             if row is not None:
                 for k in ("interest", "tilgung", "payment", "balance_end",
                           "interest_cum", "tilgung_cum"):

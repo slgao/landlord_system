@@ -273,3 +273,27 @@ def test_a_reduction_is_recorded_but_remarked_on():
 def test_nothing_is_claimed_about_a_tenancy_with_no_prices():
     from rent_periods import check_increase
     assert check_increase(RentSchedule([]), "2026-07-01", 1200) == []
+
+
+# ── three years earlier, on a day that may not exist ─────────────────────────
+
+def test_three_years_before_an_ordinary_day():
+    from rent_periods import years_before
+    assert years_before("2026-07-01", 3) == "2023-07-01"
+
+
+def test_three_years_before_a_leap_day_lands_on_the_28th():
+    # date.replace(year=…) raises here, which turned an increase dated
+    # 29 February into a 500. §188 Abs. 3 BGB reckons it the same way: the
+    # corresponding day, or the last day of the month when there is none.
+    from rent_periods import years_before
+    assert years_before("2028-02-29", 3) == "2025-02-28"
+    assert years_before("2028-02-29", 4) == "2024-02-29"      # 2024 is a leap year
+
+
+def test_an_increase_dated_on_a_leap_day_is_checked_like_any_other():
+    from rent_periods import check_increase
+    s = RentSchedule([("2024-01-01", 1000)])
+    assert check_increase(s, "2028-02-29", 1100) == []        # within the cap
+    assert any(f["code"] == "kappungsgrenze"
+               for f in check_increase(s, "2028-02-29", 1400))

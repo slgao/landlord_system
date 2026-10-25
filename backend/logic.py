@@ -26,9 +26,22 @@ def _month_first(d):
 
 
 def _add_months(first_of_month, delta):
-    """Shift a day-1 date by `delta` whole months (delta may be negative)."""
+    """Shift a day-1 date by `delta` whole months (delta may be negative).
+
+    Saturating at the ends of the calendar rather than raising. A contract
+    settled to 9999-12-31 — which the API accepts, and which says "everything
+    up to here is paid" — made this compute year 10000 and take the whole
+    Payment Reminders page down with it, for every tenancy, because one row
+    had an extreme date. Saturated, the window simply starts after the last
+    month to check and that contract contributes nothing, which is what a
+    tenancy settled to the end of time means.
+    """
     idx = first_of_month.year * 12 + (first_of_month.month - 1) + delta
     y, m = divmod(idx, 12)
+    if y > _date.max.year:
+        return _date(_date.max.year, 12, 1)
+    if y < _date.min.year:
+        return _date(_date.min.year, 1, 1)
     return _date(y, m + 1, 1)
 
 
@@ -344,7 +357,11 @@ def detect_overdue(default_months_back=12, owner=None):
     loaded = fetch_bundle([
         json_part("contracts", """
             SELECT c.id, t.name, t.email, a.name, c.start_date, c.end_date,
-                   p.name, COALESCE(c.currency, 'EUR'), c.rent_settled_until
+                   p.name, COALESCE(c.currency, 'EUR'), c.rent_settled_until,
+                   -- Carried along because this query already joins the flat:
+                   -- the dashboard needs arrears per property, and asking for
+                   -- it afterwards cost a round trip of its own.
+                   a.property_id
             FROM contracts c
             JOIN tenants t ON c.tenant_id = t.id
             JOIN apartments a ON c.apartment_id = a.id
@@ -409,7 +426,8 @@ def detect_overdue(default_months_back=12, owner=None):
 
     results = []
     for row in contracts:
-        cid, t_name, t_email, apt_name, start_str, end_str, prop_name, currency, settled = row
+        (cid, t_name, t_email, apt_name, start_str, end_str, prop_name, currency,
+         settled, property_id) = row
         schedule = schedules.get(cid, RentSchedule())
         # The API now refuses malformed dates, but a row that predates that
         # check must not take the whole reminders page down with it.
@@ -470,6 +488,7 @@ def detect_overdue(default_months_back=12, owner=None):
         months_due = _math.ceil(float(amount_due) / rent_f) if rent_f > 0 else len(months)
         results.append({
             "contract_id":       cid,
+            "property_id":       property_id,
             "tenant":            t_name,
             "email":             t_email or "",
             "apartment":         apt_name,

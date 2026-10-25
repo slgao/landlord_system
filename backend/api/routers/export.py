@@ -128,15 +128,34 @@ def export_everything(owner: int = Depends(require_auth)):
         headers={"Content-Disposition": f'attachment; filename="dachly-export-{stamp}.json"'})
 
 
+def _count_sql(tables) -> str:
+    """One statement that counts them all.
+
+    A loop of COUNT(*) is twenty-nine statements for a single line of text —
+    about a second of waiting against a database 38 ms away, to say "7 rows".
+    As scalar subqueries it is one round trip, and each still costs the same
+    index scan it did before.
+    """
+    parts = ", ".join(f"(SELECT COUNT(*) FROM {t} WHERE owner_id=?)" for t in tables)
+    return f"SELECT {parts}"
+
+
 @router.get("/summary")
 def export_summary(owner: int = Depends(require_auth)):
     """How many rows the export would hold, per table — so the page can say
     what is about to be downloaded instead of just offering a button."""
-    counts = {}
-    for table in TABLES:
-        try:
-            counts[table] = int(fetch(f"SELECT COUNT(*) FROM {table} WHERE owner_id=?",
-                                      (owner,))[0][0])
-        except Exception:
-            continue
+    tables = list(TABLES)
+    try:
+        row = fetch(_count_sql(tables), tuple(owner for _ in tables))[0]
+        counts = {t: int(n) for t, n in zip(tables, row)}
+    except Exception:
+        # A deployment missing a table takes the whole statement down with it,
+        # so fall back to asking one at a time and skipping what is absent.
+        counts = {}
+        for table in tables:
+            try:
+                counts[table] = int(fetch(
+                    f"SELECT COUNT(*) FROM {table} WHERE owner_id=?", (owner,))[0][0])
+            except Exception:
+                continue
     return {"tables": counts, "rows": sum(counts.values())}

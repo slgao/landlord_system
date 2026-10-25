@@ -234,6 +234,23 @@ KAPPUNGSGRENZE_TIGHT = Decimal("0.15")
 WARTEFRIST_MONTHS = 15
 
 
+def years_before(iso_date: str, years: int) -> str:
+    """The same day, so many years earlier — and the last day of the month
+    where that day does not exist.
+
+    An increase dated 29 February has no counterpart three years back, and
+    date.replace(year=…) raises there rather than rounding. §188 Abs. 3 BGB
+    settles it the same way this does: a period measured in years ends on the
+    corresponding day, or on the last day of the month when there is none.
+    """
+    from calendar import monthrange
+    from datetime import date as _d
+    d = _d.fromisoformat(str(iso_date)[:10])
+    year = d.year - years
+    day = min(d.day, monthrange(year, d.month)[1])
+    return _d(year, d.month, day).isoformat()
+
+
 def _months_between(earlier: str, later: str) -> int:
     from datetime import date as _d
     a, b = _d.fromisoformat(str(earlier)[:10]), _d.fromisoformat(str(later)[:10])
@@ -270,9 +287,7 @@ def check_increase(schedule: "RentSchedule", valid_from: str, new_rent,
             })
 
     # Kappungsgrenze: measured against the rent three years before this date.
-    from datetime import date as _d
-    d = _d.fromisoformat(str(valid_from)[:10])
-    three_years_ago = d.replace(year=d.year - 3).isoformat()
+    three_years_ago = years_before(valid_from, 3)
     base = schedule.on(three_years_ago) or schedule.first()
     if base > 0:
         rise = (new - base) / base

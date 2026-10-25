@@ -32,6 +32,12 @@ def store(monkeypatch):
         if q.startswith("SELECT start_date, end_date FROM contracts"):
             c = contracts.get(params[0])
             return [(c["start_date"], c["end_date"])] if c else []
+        if q.startswith("SELECT id, valid_from FROM contract_rents"):
+            cid, owner = params
+            rows = sorted((r for r in rents.values()
+                           if r["contract_id"] == cid and r["owner_id"] == owner),
+                          key=lambda r: r["valid_from"])
+            return [(rows[0]["id"], rows[0]["valid_from"])] if rows else []
         if q.startswith("SELECT id, contract_id, valid_from, rent"):
             cid, owner = params
             return [(r["id"], r["contract_id"], r["valid_from"], r["rent"],
@@ -63,6 +69,10 @@ def store(monkeypatch):
                 cid, vf, rent, nkv, owner = params
                 kind, note = "initial", None
             add_period(cid, vf, rent, nkv, kind, note, owner)
+            return
+        if q.startswith("UPDATE contract_rents SET valid_from=? WHERE id=?"):
+            vf, rid, owner = params
+            rents[rid]["valid_from"] = vf
             return
         if q.startswith("UPDATE contract_rents SET valid_from=?"):
             vf, rent, nkv, kind, note, rid, owner = params
@@ -306,3 +316,43 @@ def test_the_checks_look_at_the_prices_as_they_were_before_this_one(store):
     # the increase with itself and never flag anything.
     out = cr.add_rent_period(1, _in("2026-07-01", 1500.0), owner=1)
     assert any(c.code == "kappungsgrenze" for c in out.checks)
+
+
+# ── correcting when the tenancy began ────────────────────────────────────────
+
+def test_moving_the_start_date_moves_the_price_it_was_signed_at(store):
+    # A start date is corrected often enough — a typo, a handover that slipped
+    # a week. Leaving the first price behind strands it before the tenancy,
+    # and then no new price can be recorded before that date either.
+    cr._realign_first_period(1, "2024-05-01", "2024-06-01", owner=1)
+    assert [p.valid_from for p in _p(cr.list_rent_periods(1, owner=1))] == ["2024-06-01"]
+
+
+def test_a_later_increase_does_not_move_with_the_start(store):
+    _p(cr.add_rent_period(1, _in("2026-07-01", 1150.0), owner=1))
+    cr._realign_first_period(1, "2024-05-01", "2024-06-01", owner=1)
+    assert [p.valid_from for p in _p(cr.list_rent_periods(1, owner=1))] \
+        == ["2024-06-01", "2026-07-01"]
+
+
+def test_a_price_that_was_not_the_signing_one_stays_put(store):
+    # The first period starts on its own date, not the tenancy's: somebody
+    # dated it deliberately, so it is not this function's to move.
+    store.rents.clear()
+    store.add(valid_from="2024-09-01", rent=1050.0)
+    cr._realign_first_period(1, "2024-05-01", "2024-06-01", owner=1)
+    assert [p.valid_from for p in _p(cr.list_rent_periods(1, owner=1))] == ["2024-09-01"]
+
+
+def test_nothing_moves_onto_a_date_another_price_already_holds(store):
+    _p(cr.add_rent_period(1, _in("2024-06-01", 1100.0), owner=1))
+    cr._realign_first_period(1, "2024-05-01", "2024-06-01", owner=1)
+    assert [p.valid_from for p in _p(cr.list_rent_periods(1, owner=1))] \
+        == ["2024-05-01", "2024-06-01"]
+
+
+def test_an_unchanged_start_changes_nothing(store):
+    cr._realign_first_period(1, "2024-05-01", "2024-05-01", owner=1)
+    cr._realign_first_period(1, None, "2024-06-01", owner=1)
+    cr._realign_first_period(1, "None", "2024-06-01", owner=1)
+    assert [p.valid_from for p in _p(cr.list_rent_periods(1, owner=1))] == ["2024-05-01"]

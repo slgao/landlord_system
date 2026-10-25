@@ -197,6 +197,11 @@ def create_contract(body: ContractIn, owner: int = Depends(require_auth)):
 @router.put("/{contract_id}", response_model=ContractOut)
 def update_contract(contract_id: int, body: ContractIn, owner: int = Depends(require_auth)):
     _assert_own(contract_id, owner)
+    # Read before writing: moving the tenancy's start has to move the price it
+    # was signed at with it (see _realign_first_period below).
+    was = fetch("SELECT start_date FROM contracts WHERE id=? AND owner_id=?",
+                (contract_id, owner))
+    old_start = was[0][0] if was else None
     if not fetch("SELECT id FROM tenants WHERE id=? AND owner_id=?", (body.tenant_id, owner)):
         raise HTTPException(status_code=404, detail="Tenant not found")
     if not fetch("SELECT id FROM apartments WHERE id=? AND owner_id=?", (body.apartment_id, owner)):
@@ -222,6 +227,7 @@ def update_contract(contract_id: int, body: ContractIn, owner: int = Depends(req
     # increase. So the rent here rewrites the period in force today — the
     # typo it was entered with — and a raise goes through POST /rents, which
     # leaves the earlier months at the price that was actually owed.
+    _realign_first_period(contract_id, old_start, body.start_date, owner)
     _correct_current_rent(contract_id, body.rent, body.nebenkosten_vorauszahlung,
                           body.start_date, owner)
     return _row(_get(contract_id, owner))
@@ -546,6 +552,40 @@ def _rent_periods(contract_id: int, owner: int) -> list[RentPeriodOut]:
     if current is not None:
         current.current = True
     return out
+
+
+def _realign_first_period(contract_id: int, old_start, new_start, owner: int) -> None:
+    """Move the price a tenancy was signed at when its start date is corrected.
+
+    Correcting a start date is ordinary — a typo, or a handover that slipped a
+    week. Leaving the first price on the old date strands it before the
+    tenancy, and then no new price can be recorded before that date either,
+    because a price may not start before the tenancy does. So the period that
+    began when the tenancy did moves with it.
+
+    Only that one. A later increase was agreed for its own date and has
+    nothing to do with when the tenancy began.
+    """
+    old_start = _clean_date(old_start)
+    new_start = _clean_date(new_start)
+    if not old_start or not new_start or old_start == new_start:
+        return
+    first = fetch("SELECT id, valid_from FROM contract_rents "
+                  "WHERE contract_id=? AND owner_id=? ORDER BY valid_from LIMIT 1",
+                  (contract_id, owner))
+    if not first or _clean_date(first[0][1]) != old_start:
+        return                      # not the signing price: leave it alone
+    clash = fetch("SELECT id FROM contract_rents WHERE contract_id=? AND valid_from=? "
+                  "AND id<>? AND owner_id=?",
+                  (contract_id, new_start, first[0][0], owner))
+    if clash:
+        return                      # a price already starts there; nothing to move
+    execute("UPDATE contract_rents SET valid_from=? WHERE id=? AND owner_id=?",
+            (new_start, first[0][0], owner))
+
+
+def _clean_date(v):
+    return None if v is None or str(v) in ("None", "") else str(v)
 
 
 def _correct_current_rent(contract_id: int, rent, nkv, start_date, owner: int) -> None:

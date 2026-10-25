@@ -58,7 +58,11 @@ def _install_fetch(monkeypatch, contracts, payments, deposit=(), rents=None):
         return {
             # The contract row no longer carries a rent: the price of a month
             # comes from the periods below.
-            "contracts": [(c[0], c[1], c[2], c[3], c[5], c[6], c[7], c[8], c[9])
+            # (id, tenant, email, apartment, start, end, property, currency,
+            # settled, property_id) — the flat's property comes along because
+            # the query already joins it, and the dashboard needs arrears per
+            # property without a round trip of its own.
+            "contracts": [(c[0], c[1], c[2], c[3], c[5], c[6], c[7], c[8], c[9], 1)
                           for c in contracts],
             "paid": ([(c, ym, 0, str(amt)) for c, ym, amt in payments]
                      + [(c, ym, 1, str(amt)) for c, ym, amt in deposit]),
@@ -186,3 +190,45 @@ def test_partial_deposit_offset_is_shown_apart(monkeypatch):
     assert r["paid_total"] == 500.0
     assert r["paid_from_deposit"] == 500.0
     assert r["amount_due"] == 1600.0
+
+
+def test_each_row_says_which_property_the_arrears_belong_to(monkeypatch):
+    """The dashboard needs arrears per property.
+
+    It used to ask for the mapping afterwards, in a query of its own. This
+    query already joins the flat, so it answers that too — one round trip
+    instead of two, and no second place where a contract is matched to a flat.
+    """
+    cur = _cur_first()
+    _install_fetch(monkeypatch, [_contract(start="2020-01-01")], [])
+    res = logic.detect_overdue(default_months_back=2)
+    assert res and res[0]["property_id"] == 1
+
+
+# ── one row with an extreme date must not take the page down ────────────────
+
+def test_a_contract_settled_to_the_end_of_time_is_simply_settled(monkeypatch):
+    """`rent_settled_until = 9999-12-31` is a date the API accepts, and it
+    says every month up to then is paid. Computing the window start from it
+    overflowed the calendar and 500ed the whole page — for every tenancy, not
+    just that one."""
+    _install_fetch(monkeypatch, [_contract(settled="9999-12-31")], [])
+    assert logic.detect_overdue(default_months_back=12) == []
+
+
+def test_the_month_arithmetic_saturates_instead_of_raising():
+    from datetime import date
+    assert logic._add_months(date(9999, 12, 1), 1) == date(9999, 12, 1)
+    assert logic._add_months(date(1, 1, 1), -1) == date(1, 1, 1)
+    # and still shifts normally in between
+    assert logic._add_months(date(2026, 1, 1), 13) == date(2027, 2, 1)
+    assert logic._add_months(date(2026, 1, 1), -1) == date(2025, 12, 1)
+
+
+def test_one_extreme_row_does_not_hide_the_others(monkeypatch):
+    # The point of the fix: the tenancy that is genuinely behind still shows.
+    cur = _cur_first()
+    behind = (2, "Bob", "b@x.de", "Apt 2", 700, "2020-01-01", None, "Haus A", "EUR", None)
+    _install_fetch(monkeypatch, [_contract(settled="9999-12-31"), behind], [])
+    res = logic.detect_overdue(default_months_back=3)
+    assert [r["contract_id"] for r in res] == [2]

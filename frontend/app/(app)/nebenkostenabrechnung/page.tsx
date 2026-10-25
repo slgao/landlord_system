@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner";
 import { Plus, Trash2, Calculator, FileDown, Save, Upload, ReceiptText } from "lucide-react";
 import { SettlementDialog, SettlementDraft, resultLabel } from "@/components/nk-settlements";
+import { money, num } from "@/lib/fmt";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -524,7 +525,7 @@ function TariffSplit({ b, anchors, onChange }: {
               <p>
                 <b>{i + 1}.</b> {fmtPeriod(s.bill_start, s.bill_end)} · {billDays(s.bill_start, s.bill_end)} Tage ·{" "}
                 {s.start_kwh.toFixed(2)} → {s.end_kwh.toFixed(2)} kWh ({(s.end_kwh - s.start_kwh).toFixed(2)} kWh) ·{" "}
-                {s.arbeitspreis.toFixed(4)} €/kWh · {s.grundpreis_monthly.toFixed(2)} €/Mon
+                {num(s.arbeitspreis, 4)} €/kWh · {num(s.grundpreis_monthly, 2)} €/Mon
               </p>
               {/* Each internal boundary is the end of exactly one segment, so this
                   prints the provenance of every derived reading exactly once. */}
@@ -547,15 +548,15 @@ function CalcPreview({ label, result }: { label: string; result: any }) {
     <div className="rounded-md bg-primary/10 border border-primary/20 p-3 text-sm space-y-1">
       <p className="font-medium text-primary text-xs uppercase tracking-wide">{label} — Calculation Preview</p>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-        {result.cost_flat != null && <span>Gesamt: <b>€ {result.cost_flat?.toFixed(2)}</b></span>}
+        {result.cost_flat != null && <span>Gesamt: <b>{money(result.cost_flat)}</b></span>}
         {result.verbrauch_m3 != null && <span>Verbrauch: <b>{result.verbrauch_m3} m³</b></span>}
         {result.verbrauch != null && <span>Verbrauch: <b>{result.verbrauch} kWh</b></span>}
         {result.verbrauch_kwh != null && <span>kWh: <b>{result.verbrauch_kwh}</b></span>}
-        {result.cost_tenant != null && <span>Ihr Anteil: <b>€ {result.cost_tenant?.toFixed(2)}</b></span>}
-        {result.prepay != null && <span>Vorauszahlung: <b>€ {result.prepay?.toFixed(2)}</b></span>}
+        {result.cost_tenant != null && <span>Ihr Anteil: <b>{money(result.cost_tenant)}</b></span>}
+        {result.prepay != null && <span>Vorauszahlung: <b>{money(result.prepay)}</b></span>}
         {result.nach != null && (
           <span className={result.nach > 0 ? "text-destructive font-bold" : "text-primary font-bold"}>
-            Nachzahlung: € {result.nach?.toFixed(2)}
+            Nachzahlung: {money(result.nach)}
           </span>
         )}
       </div>
@@ -754,7 +755,7 @@ export default function NebenkostenabrechnungPage() {
       is_estimate: true,
     }]);
     if (rate && days) {
-      toast.success(`Estimated ${cost.toFixed(2)} € for ${days} days at the previous period's rate`);
+      toast.success(`Estimated ${money(cost)} for ${days} days at the previous period's rate`);
     }
   }
 
@@ -1666,10 +1667,10 @@ export default function NebenkostenabrechnungPage() {
                 <div className="rounded-md bg-primary/10 border border-primary/20 p-3 text-sm space-y-1">
                   <p className="font-medium text-primary text-xs uppercase tracking-wide">Betriebskosten — Preview</p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                    <span>Period cost: <b>€ {r.period_cost?.toFixed(2)}</b></span>
-                    <span>Limit: <b>€ {r.limit_period?.toFixed(2)}</b></span>
+                    <span>Period cost: <b>{money(r.period_cost)}</b></span>
+                    <span>Limit: <b>{money(r.limit_period)}</b></span>
                     <span className={r.nach > 0 ? "text-destructive font-bold" : "text-primary font-bold"}>
-                      Nachzahlung: € {r.nach?.toFixed(2)}
+                      Nachzahlung: {money(r.nach)}
                     </span>
                   </div>
                 </div>

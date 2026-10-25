@@ -25,6 +25,7 @@ import { ConfirmButton } from "@/components/confirm-button";
 import { Trash2, Calendar } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { eur, fmtDate, invalidateSettlementViews, resultLabel } from "@/components/nk-settlements";
+import { money, date as fmtD } from "@/lib/fmt";
 
 const FOREIGN_CURRENCIES = ["CNY", "USD", "GBP"];
 const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "$", GBP: "£" };
@@ -193,13 +194,13 @@ export default function RentTrackingPage() {
               {hasMonthSettlements && (
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">NK settlements (net)</p>
-                  <p className="text-2xl font-semibold text-muted-foreground">€ {monthSettlements.toFixed(2)}</p>
+                  <p className="text-2xl font-semibold text-muted-foreground">{money(monthSettlements)}</p>
                 </div>
               )}
             </div>
           )}
           {monthPayments.length > 0 && (
-            <Table>
+            <Table className="stack-sm">
               <TableHeader>
                 <TableRow>
                   <TableHead>Date</TableHead>
@@ -212,15 +213,15 @@ export default function RentTrackingPage() {
               <TableBody>
                 {monthPayments.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell className="text-muted-foreground">{p.payment_date}</TableCell>
-                    <TableCell className="font-medium">{p.tenant_name}</TableCell>
-                    <TableCell className="text-muted-foreground">{p.apartment_name}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      {p.amount.toFixed(2)} EUR<KindTag p={p} />
+                    <TableCell data-label="Date" className="text-muted-foreground">{fmtD(p.payment_date)}</TableCell>
+                    <TableCell data-label="Tenant" className="font-medium">{p.tenant_name}</TableCell>
+                    <TableCell data-label="Apartment" className="text-muted-foreground">{p.apartment_name}</TableCell>
+                    <TableCell data-label="Amount" className="text-right font-mono">
+                      {money(p.amount)}<KindTag p={p} />
                       {foreignNote(p) && <span className="block text-xs text-muted-foreground">({foreignNote(p)})</span>}
                     </TableCell>
                     <TableCell>
-                      <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${p.amount.toFixed(2)} EUR payment from ${p.payment_date}?`}>
+                      <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${money(p.amount)} payment from ${fmtDate(p.payment_date)}?`}>
                         <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
                           <Trash2 className="size-4" />
                         </Button>
@@ -239,7 +240,7 @@ export default function RentTrackingPage() {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium">All Payments</CardTitle>
         </CardHeader>
-        <Table>
+        <Table className="stack-sm">
           <TableHeader>
             <TableRow>
               <TableHead>Date</TableHead>
@@ -257,15 +258,15 @@ export default function RentTrackingPage() {
             ) : (
               allPayments.slice(0, 200).map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell className="text-muted-foreground">{p.payment_date}</TableCell>
-                  <TableCell className="font-medium">{p.tenant_name}</TableCell>
-                  <TableCell className="text-muted-foreground">{p.apartment_name}</TableCell>
-                  <TableCell className="text-right font-mono">
-                    {p.amount.toFixed(2)} EUR<KindTag p={p} />
+                  <TableCell data-label="Date" className="text-muted-foreground">{fmtD(p.payment_date)}</TableCell>
+                  <TableCell data-label="Tenant" className="font-medium">{p.tenant_name}</TableCell>
+                  <TableCell data-label="Apartment" className="text-muted-foreground">{p.apartment_name}</TableCell>
+                  <TableCell data-label="Amount" className="text-right font-mono">
+                    {money(p.amount)}<KindTag p={p} />
                     {foreignNote(p) && <span className="block text-xs text-muted-foreground">({foreignNote(p)})</span>}
                   </TableCell>
                   <TableCell>
-                    <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${p.amount.toFixed(2)} EUR payment from ${p.payment_date}?`}>
+                    <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${money(p.amount)} payment from ${fmtDate(p.payment_date)}?`}>
                       <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
                         <Trash2 className="size-4" />
                       </Button>

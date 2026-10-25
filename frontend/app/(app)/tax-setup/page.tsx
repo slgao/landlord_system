@@ -18,6 +18,7 @@ import {
 import { ConfirmButton } from "@/components/confirm-button";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, FileDown, Pencil, Check, X } from "lucide-react";
+import { date as fmtD } from "@/lib/fmt";
 
 // Mirrors tax_logic.DEFAULT_FOLLOW_UP_RATE_PCT — the rate the projections fall
 // back to when a loan records a Zinsbindung but no follow-up rate.
@@ -90,20 +91,24 @@ function ProfileRow({ p }: { p: TaxProfile }) {
         </Button>
       </TableCell>
       <TableCell className="font-medium">{p.property_name}</TableCell>
-      <TableCell><Input type="date" className="h-8 w-36" value={f.purchase_date}
+      <TableCell><Input type="date" className="h-8 w-36" aria-label={`Purchase date — ${p.property_name}`} value={f.purchase_date}
         onChange={(e) => setF({ ...f, purchase_date: e.target.value })} /></TableCell>
       <TableCell><Input type="number" step="1000" placeholder="Price €" className="h-8 w-28 font-mono"
+        aria-label={`Purchase price — ${p.property_name}`}
         value={f.purchase_price} onChange={(e) => setF({ ...f, purchase_price: e.target.value })} /></TableCell>
       {/* Grunderwerbsteuer, Notar, Grundbuch, Makler. Without it the equity a
           flat was bought with reads as zero — a loan that covered them can
           exceed the purchase price on its own. */}
       <TableCell><Input type="number" step="500" placeholder="Nebenk. €"
         className="h-8 w-28 font-mono"
+        aria-label={`Kaufnebenkosten — ${p.property_name}`}
         title="Kaufnebenkosten: Grunderwerbsteuer, Notar, Grundbuch, Makler. In Berlin roughly 8–12 % of the price."
         value={f.purchase_costs} onChange={(e) => setF({ ...f, purchase_costs: e.target.value })} /></TableCell>
       <TableCell><Input type="number" step="1" placeholder="%" className="h-8 w-16 font-mono"
+        aria-label={`Building share in percent — ${p.property_name}`}
         value={f.building_share_pct} onChange={(e) => setF({ ...f, building_share_pct: e.target.value })} /></TableCell>
       <TableCell><Input type="number" step="0.5" className="h-8 w-16 font-mono"
+        aria-label={`AfA rate in percent — ${p.property_name}`}
         value={f.afa_rate_pct} onChange={(e) => setF({ ...f, afa_rate_pct: e.target.value })} /></TableCell>
       <TableCell className="text-right font-mono text-muted-foreground">
         {afaPreview != null ? `${eur(afaPreview)}/yr` : "—"}
@@ -177,7 +182,7 @@ function MortgageRow({ m, onDelete }: { m: Mortgage & { property_name: string };
         <TableCell className="text-right font-mono">{m.interest_rate_pct}</TableCell>
         <TableCell className="text-right font-mono">{m.tilgung_rate_pct}</TableCell>
         <TableCell className="text-muted-foreground">{m.start_date}</TableCell>
-        <TableCell className={m.fixed_until ? "text-muted-foreground" : "text-amber-500"}>
+        <TableCell className={m.fixed_until ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}>
           {m.fixed_until || "not set"}
         </TableCell>
         <TableCell className="text-right font-mono text-muted-foreground">
@@ -199,8 +204,13 @@ function MortgageRow({ m, onDelete }: { m: Mortgage & { property_name: string };
     );
   }
 
+  const LABELS: Record<string, string> = {
+    principal: "Loan amount", interest_rate_pct: "Sollzins in percent",
+    tilgung_rate_pct: "Tilgung in percent", follow_up_rate_pct: "Follow-up rate in percent",
+  };
   const num = (k: keyof typeof f, w: string, step = "0.01") => (
     <Input type="number" step={step} className={`h-8 ${w} font-mono`} value={f[k]}
+      aria-label={`${LABELS[k as string] ?? String(k)} — ${m.property_name}`}
       onChange={(e) => setF({ ...f, [k]: e.target.value })} />
   );
   const valid = f.principal && f.interest_rate_pct && f.tilgung_rate_pct && f.start_date;
@@ -210,6 +220,7 @@ function MortgageRow({ m, onDelete }: { m: Mortgage & { property_name: string };
       <TableCell className="text-muted-foreground">{m.property_name}</TableCell>
       <TableCell>
         <Input className="h-8 w-24" value={f.label}
+          aria-label={`Bank or label — ${m.property_name}`}
           onChange={(e) => setF({ ...f, label: e.target.value })} />
       </TableCell>
       <TableCell className="text-right">{num("principal", "w-28", "100")}</TableCell>
@@ -217,14 +228,17 @@ function MortgageRow({ m, onDelete }: { m: Mortgage & { property_name: string };
       <TableCell className="text-right">{num("tilgung_rate_pct", "w-20")}</TableCell>
       <TableCell>
         <Input type="date" className="h-8 w-36" value={f.start_date}
+          aria-label={`First payment — ${m.property_name}`}
           onChange={(e) => setF({ ...f, start_date: e.target.value })} />
       </TableCell>
       <TableCell>
         <Input type="date" className="h-8 w-36" value={f.fixed_until}
+          aria-label={`Zinsbindung until — ${m.property_name}`}
           onChange={(e) => setF({ ...f, fixed_until: e.target.value })} />
       </TableCell>
       <TableCell className="text-right">
         <Input type="number" step="0.01" className="h-8 w-20 font-mono"
+          aria-label={`Follow-up rate in percent — ${m.property_name}`}
           placeholder={String(DEFAULT_FOLLOW_UP_RATE)} value={f.follow_up_rate_pct}
           onChange={(e) => setF({ ...f, follow_up_rate_pct: e.target.value })} />
       </TableCell>
@@ -377,7 +391,7 @@ function NkRow({ c }: { c: NkSplit }) {
     <TableRow className={c.end_date ? "opacity-50" : ""}>
       <TableCell className="text-muted-foreground">{c.property_name}</TableCell>
       <TableCell className="font-medium">{c.tenant_name}</TableCell>
-      <TableCell className="text-muted-foreground">{c.apartment_name}{c.end_date ? ` (ended ${c.end_date})` : ""}</TableCell>
+      <TableCell className="text-muted-foreground">{c.apartment_name}{c.end_date ? ` (ended ${fmtD(c.end_date)})` : ""}</TableCell>
       <TableCell className="text-right font-mono">{eur(c.rent)}</TableCell>
       <TableCell>
         <Input type="number" step="1" placeholder="NK €/mo" className="h-8 w-24 font-mono"
@@ -422,7 +436,7 @@ function NkSection() {
           Enter the monthly NK portion of each contract&apos;s rent — Kaltmiete is derived. Mark a
           Pauschale / Warmmiete as such: it is still reported as Umlagen, but no yearly
           Nebenkostenabrechnung is owed, so no deadline is tracked for it.
-          {missing > 0 && <span className="text-amber-500"> {missing} active contract{missing !== 1 ? "s" : ""} still missing the NK portion.</span>}
+          {missing > 0 && <span className="text-amber-700 dark:text-amber-400"> {missing} active contract{missing !== 1 ? "s" : ""} still missing the NK portion.</span>}
         </p>
         <Table>
           <TableHeader><TableRow>

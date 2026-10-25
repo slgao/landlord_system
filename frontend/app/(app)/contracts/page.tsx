@@ -30,6 +30,7 @@ import { ConfirmButton } from "@/components/confirm-button";
 import { SearchInput } from "@/components/search-input";
 import { HandoverCard } from "@/components/handover";
 import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X, TrendingUp } from "lucide-react";
+import { money, date as fmtD } from "@/lib/fmt";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
 
@@ -350,7 +351,7 @@ export default function ContractsPage() {
             </Button>
           </PageHeader>
           <Card>
-            <Table>
+            <Table className="stack-sm">
               <TableHeader>
                 <TableRow>
                   <TableHead>Tenant</TableHead>
@@ -371,15 +372,15 @@ export default function ContractsPage() {
                 ) : (
                   visibleContracts.map((c) => (
                     <TableRow key={c.id} className="cursor-pointer" onClick={() => openDetail(c)}>
-                      <TableCell className="font-medium">{c.tenant_name}</TableCell>
-                      <TableCell className="text-muted-foreground">{c.apartment_name}<br /><span className="text-xs">{c.property_name}</span></TableCell>
-                      <TableCell>
-                        {c.rent.toFixed(2)} {c.currency}
+                      <TableCell data-label="Tenant" className="font-medium">{c.tenant_name}</TableCell>
+                      <TableCell data-label="Apartment" className="text-muted-foreground">{c.apartment_name}<br /><span className="text-xs">{c.property_name}</span></TableCell>
+                      <TableCell data-label="Rent">
+                        {money(c.rent)}
                         {/* What the tenant transfers is not what the flat earns
                             when utilities ride along inside it. */}
                         {coldRent(c) != null && (
                           <span className="block text-xs text-muted-foreground">
-                            kalt {coldRent(c)!.toFixed(2)}
+                            kalt {money(coldRent(c)!)}
                           </span>
                         )}
                         {c.nk_mode === "flat" && (
@@ -388,8 +389,8 @@ export default function ContractsPage() {
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">{c.start_date}<br />{c.end_date || "open"}</TableCell>
-                      <TableCell>
+                      <TableCell data-label="Period" className="text-muted-foreground text-sm">{fmtD(c.start_date)}<br />{c.end_date ? fmtD(c.end_date) : "open"}</TableCell>
+                      <TableCell data-label="Status">
                         <Badge className={contractStatusColor(c)}>{contractStatusLabel(c)}</Badge>
                         {contractStatus(c) === "upcoming" && (
                           <p className="text-xs text-muted-foreground mt-1">{startsInLabel(c.start_date)}</p>
@@ -423,7 +424,7 @@ export default function ContractsPage() {
                             title="Delete contract?"
                             message={`Delete the contract for ${c.tenant_name}? This permanently removes its payments, co-tenants, and Kaution deductions.`}
                           >
-                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
+                            <Button variant="ghost" size="icon" aria-label={`Delete the contract of ${c.tenant_name}`} className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
                           </ConfirmButton>
                         </div>
                       </TableCell>
@@ -492,7 +493,7 @@ export default function ContractsPage() {
                           </TableRow>
                         ) : (
                           <TableRow key={p.id}>
-                            <TableCell className="text-muted-foreground">{p.date}</TableCell>
+                            <TableCell className="text-muted-foreground">{fmtD(p.date)}</TableCell>
                             <TableCell className="text-muted-foreground text-xs">{p.note || "—"}</TableCell>
                             <TableCell className="text-right font-mono">{p.amount.toFixed(2)}</TableCell>
                             <TableCell className="flex gap-1">
@@ -534,14 +535,14 @@ export default function ContractsPage() {
                   </div>
                   <div className="flex justify-between border-t border-border pt-1.5 font-semibold">
                     <span>Still held</span>
-                    <span className={`font-mono tabular-nums ${stillHeld <= 0.005 ? "text-muted-foreground" : "text-amber-500"}`}>
+                    <span className={`font-mono tabular-nums ${stillHeld <= 0.005 ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}`}>
                       {stillHeld.toFixed(2)} {selectedContract?.kaution_currency}
                     </span>
                   </div>
                   {fullySettled ? (
                     <p className="text-xs text-primary">Deposit fully settled — nothing left to return.</p>
                   ) : totalReturned > 0 ? (
-                    <p className="text-xs text-amber-500">
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
                       Part of the deposit has been returned. The rest is still held — release it below
                       once the handover and the Nebenkostenabrechnung are settled.
                     </p>
@@ -569,7 +570,7 @@ export default function ContractsPage() {
                         </TableRow>
                       ) : (
                         <TableRow key={d.id}>
-                          <TableCell className="text-muted-foreground">{d.date}</TableCell>
+                          <TableCell className="text-muted-foreground">{fmtD(d.date)}</TableCell>
                           <TableCell>
                             {d.category}
                             {d.reference_type === "nk_settlement" && (
@@ -790,7 +791,7 @@ export default function ContractsPage() {
                           <span className="text-primary text-xs">{r.kaution_returned_amount?.toFixed(2)} on {r.kaution_returned_date}</span>
                         ) : (r.returned_total ?? 0) > 0 ? (
                           // Part-released: show what went back and what is left.
-                          <span className="text-amber-500 text-xs">
+                          <span className="text-amber-700 dark:text-amber-400 text-xs">
                             {r.returned_total.toFixed(2)} returned<br />
                             <span className="text-muted-foreground">{r.still_held.toFixed(2)} still held</span>
                           </span>
@@ -904,7 +905,7 @@ export default function ContractsPage() {
                     <span className="text-destructive">Cold rent cannot exceed the total rent.</span>
                   ) : (
                     <>Utilities inside the rent:{" "}
-                      <b>{(form.rent - Number(form.kaltmiete)).toFixed(2)} €</b>/month</>
+                      <b>{money(form.rent - Number(form.kaltmiete))}</b>/month</>
                   )}
                 </p>
               </div>

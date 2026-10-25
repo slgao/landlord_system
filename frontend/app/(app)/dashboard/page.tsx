@@ -6,6 +6,7 @@ import { DashboardStats, ContractAlert, NKDashboard, FlatInsights } from "@/lib/
 import Link from "next/link";
 import { eur, fmtDate, resultLabel } from "@/components/nk-settlements";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SetupChecklist } from "@/components/setup-checklist";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, DoorOpen, TrendingUp, Wallet } from "lucide-react";
 import {
@@ -42,10 +43,17 @@ function StatCard({ title, value, icon: Icon, note, tone, href, label }: {
       <CardContent className="flex items-center justify-between p-5">
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground uppercase tracking-wide">{title}</p>
-          <p className={`text-2xl font-semibold mt-0.5 tabular-nums ${
+          <p className={`text-2xl font-semibold mt-0.5 tabular-nums whitespace-nowrap ${
             tone === "good" ? "text-emerald-600 dark:text-emerald-400"
             : tone === "bad" ? "text-destructive" : ""}`}>{value}</p>
-          {note && <p className="text-xs text-muted-foreground mt-0.5 truncate">{note}</p>}
+          {/* Wrapped, not truncated: the note is the sentence that explains
+              the figure, and "408 € is Tilgu…" explains nothing. Two lines at
+              most, so the four cards keep a common height. */}
+          {note && (
+            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2 text-pretty">
+              {note}
+            </p>
+          )}
         </div>
         <div className="size-10 shrink-0 rounded-lg bg-primary/10 flex items-center justify-center">
           <Icon className="size-5 text-primary" />
@@ -134,9 +142,25 @@ export default function DashboardPage() {
     });
   })();
 
+  // An account with no tenancy has no cashflow, no yield and nothing let, and
+  // four dashes say less than one list of what to do first.
+  const empty = !!stats && stats.properties === 0;
+  const setupDone = !!stats && stats.contracts > 0 && allFlats.length > 0
+    && (ins?.flats?.some((f) => f.rent_monthly > 0) ?? false);
+
   return (
     <div className="space-y-6 max-w-5xl">
       <h1 className="text-xl font-semibold">Dashboard</h1>
+
+      {stats && !setupDone && (
+        <SetupChecklist state={{
+          properties: stats.properties,
+          apartments: stats.apartments,
+          tenants: stats.tenants,
+          contracts: stats.contracts,
+          payments: allFlats.reduce((t, f) => t + (f.rent_monthly > 0 ? 1 : 0), 0),
+        }} />
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -159,7 +183,7 @@ export default function DashboardPage() {
           tone={vacant.length ? "bad" : undefined}
           note={vacant.length
             ? `${vacant.map((f) => f.property_name).join(", ")} — ${eur0(vacantCost)}/mo`
-            : "every room let"}
+            : rooms > 0 ? "every room let" : "no flats recorded yet"}
         />
         {/* Four unrelated jobs add up to this one number, and each is done on a
             different page, so every part of the breakdown links to where that

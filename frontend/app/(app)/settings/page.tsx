@@ -79,20 +79,30 @@ export default function SettingsPage() {
     onError: (e) => toast.error(errorMessage(e, "Failed to save SMTP settings")),
   });
 
+  // The label is tied to its field by id. Without that the two are only near
+  // each other on screen: a screen reader announces the input as unlabelled,
+  // and clicking the label does not focus it.
   function field(key: keyof Config, label: string, placeholder = "") {
+    const id = `cfg-${String(key)}`;
     return (
       <div className="space-y-1.5">
-        <Label>{label}</Label>
-        <Input value={form[key] || ""} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))} placeholder={placeholder} />
+        <Label htmlFor={id}>{label}</Label>
+        <Input id={id} name={String(key)} value={form[key] || ""}
+          onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+          placeholder={placeholder} />
       </div>
     );
   }
 
   function smtpField(key: keyof typeof smtp, label: string, type = "text", placeholder = "") {
+    const id = `smtp-${String(key)}`;
     return (
       <div className="space-y-1.5">
-        <Label>{label}</Label>
-        <Input type={type} value={smtp[key] || ""} onChange={(e) => setSmtp((f) => ({ ...f, [key]: e.target.value }))} placeholder={placeholder} />
+        <Label htmlFor={id}>{label}</Label>
+        <Input id={id} name={String(key)} type={type} value={smtp[key] || ""}
+          onChange={(e) => setSmtp((f) => ({ ...f, [key]: e.target.value }))}
+          placeholder={placeholder}
+          autoComplete={type === "password" ? "new-password" : undefined} />
       </div>
     );
   }

@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
 import { Pencil, Trash2, Plus, TrendingUp, History, CalendarClock } from "lucide-react";
 import { todayISO } from "@/lib/utils";
+import { money, date as fmtD } from "@/lib/fmt";
 
 const FREQ = ["monthly", "quarterly", "annually", "one-time"];
 
@@ -49,9 +50,9 @@ function isActive(fc: FlatCost, on = todayISO()): boolean {
 
 function periodLabel(fc: FlatCost): string {
   if (!fc.valid_from && !fc.valid_to) return "always";
-  if (fc.valid_from && !fc.valid_to) return `from ${fc.valid_from}`;
-  if (!fc.valid_from && fc.valid_to) return `until ${fc.valid_to}`;
-  return `${fc.valid_from} → ${fc.valid_to}`;
+  if (fc.valid_from && !fc.valid_to) return `ab ${fmtD(fc.valid_from)}`;
+  if (!fc.valid_from && fc.valid_to) return `bis ${fmtD(fc.valid_to)}`;
+  return `${fmtD(fc.valid_from)} → ${fmtD(fc.valid_to)}`;
 }
 const EMPTY = { apartment_id: 0, cost_type: "", amount: 0, frequency: "monthly", valid_from: "", valid_to: "" };
 
@@ -187,10 +188,10 @@ export default function FlatCostsPage() {
           Total recurring cost today (monthly equivalent)
         </span>
         <span className="text-right">
-          <span className="text-xl font-semibold">€ {grandMonthly.toFixed(2)}</span>
+          <span className="text-xl font-semibold">{money(grandMonthly)}</span>
           {grandNextChange && (
             <span className="block text-xs text-muted-foreground">
-              € {monthlyOn(flatCosts, grandNextChange).toFixed(2)} from {grandNextChange}
+              {money(monthlyOn(flatCosts, grandNextChange))} ab {fmtD(grandNextChange)}
             </span>
           )}
         </span>
@@ -234,11 +235,11 @@ export default function FlatCostsPage() {
                             {upcoming.length} upcoming
                           </Badge>
                         )}
-                        {monthly > 0 && <span className="text-sm font-medium">€ {monthly.toFixed(2)}/mo</span>}
+                        {monthly > 0 && <span className="text-sm font-medium">{money(monthly)}/mo</span>}
                         {changeDate && (
                           <span className="text-xs text-muted-foreground"
                             title="What this flat costs once the recorded change takes effect">
-                            → € {monthlyOn(costs, changeDate).toFixed(2)}/mo from {changeDate}
+                            → {money(monthlyOn(costs, changeDate))}/mo ab {fmtD(changeDate)}
                           </span>
                         )}
                       </>
@@ -279,11 +280,11 @@ export default function FlatCostsPage() {
                                   {ph === "upcoming" && (
                                     <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0
                                       bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/20">
-                                      <CalendarClock className="size-3 mr-1" /> from {fc.valid_from}
+                                      <CalendarClock className="size-3 mr-1" /> ab {fmtD(fc.valid_from)}
                                     </Badge>
                                   )}
                                 </TableCell>
-                                <TableCell className="text-right font-mono">{fc.amount.toFixed(2)} €</TableCell>
+                                <TableCell className="text-right font-mono">{money(fc.amount)}</TableCell>
                                 <TableCell className="text-muted-foreground capitalize">{fc.frequency}</TableCell>
                                 <TableCell className="text-muted-foreground text-xs">{periodLabel(fc)}</TableCell>
                                 <TableCell>
@@ -294,9 +295,9 @@ export default function FlatCostsPage() {
                                         <TrendingUp className="size-4" />
                                       </Button>
                                     )}
-                                    <Button variant="ghost" size="icon" onClick={() => openEdit(fc)}><Pencil className="size-4" /></Button>
-                                    <ConfirmButton onConfirm={() => remove.mutate(fc.id)} title="Delete cost?" message={`Delete "${fc.cost_type}" (${fc.amount.toFixed(2)} €)?`}>
-                                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
+                                    <Button variant="ghost" size="icon" aria-label={`Edit ${fc.cost_type}`} onClick={() => openEdit(fc)}><Pencil className="size-4" /></Button>
+                                    <ConfirmButton onConfirm={() => remove.mutate(fc.id)} title="Delete cost?" message={`Delete "${fc.cost_type}" (${money(fc.amount)})?`}>
+                                      <Button variant="ghost" size="icon" aria-label={`Delete ${fc.cost_type}`} className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
                                     </ConfirmButton>
                                   </div>
                                 </TableCell>
@@ -328,7 +329,7 @@ export default function FlatCostsPage() {
               <p className="text-sm text-muted-foreground">
                 {changing.cost_type} · {changing.apartment_name}
                 <br />
-                currently {changing.amount.toFixed(2)} € {changing.frequency}, {periodLabel(changing)}
+                currently {money(changing.amount)} {changing.frequency}, {periodLabel(changing)}
               </p>
               <div className="space-y-1.5">
                 <Label htmlFor="fc-amount">New amount (€)</Label>

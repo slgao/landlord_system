@@ -148,7 +148,7 @@ export default function PropertiesPage() {
       </p>
 
       <Card>
-        <Table>
+        <Table className="stack-sm">
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
@@ -175,11 +175,11 @@ export default function PropertiesPage() {
             ) : (
               properties.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell className="font-medium">{p.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{p.building_name || "—"}</TableCell>
-                  <TableCell className="text-muted-foreground">{p.we_label || "—"}</TableCell>
-                  <TableCell className="text-muted-foreground font-mono">{p.mea ?? "—"}</TableCell>
-                  <TableCell className="text-right font-mono">
+                  <TableCell data-label="Name" className="font-medium">{p.name}</TableCell>
+                  <TableCell data-label="Building" className="text-muted-foreground">{p.building_name || "—"}</TableCell>
+                  <TableCell data-label="WE" className="text-muted-foreground">{p.we_label || "—"}</TableCell>
+                  <TableCell data-label="MEA" className="text-muted-foreground font-mono">{p.mea ?? "—"}</TableCell>
+                  <TableCell data-label="Market value" className="text-right font-mono">
                     {p.market_value != null ? (
                       <>
                         {p.market_value.toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} €

@@ -125,7 +125,7 @@ export default function ApartmentsPage() {
       </PageHeader>
 
       <Card>
-        <Table>
+        <Table className="stack-sm">
           <TableHeader>
             <TableRow>
               <TableHead>Property</TableHead>
@@ -148,13 +148,13 @@ export default function ApartmentsPage() {
             ) : (
               apartments.map((a) => (
                 <TableRow key={a.id}>
-                  <TableCell className="text-muted-foreground">{a.property_name}</TableCell>
-                  <TableCell className="font-medium">{a.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{a.flat || "—"}</TableCell>
-                  <TableCell className="text-right font-mono text-muted-foreground">
+                  <TableCell data-label="Property" className="text-muted-foreground">{a.property_name}</TableCell>
+                  <TableCell data-label="Apartment" className="font-medium">{a.name}</TableCell>
+                  <TableCell data-label="Flat/Unit" className="text-muted-foreground">{a.flat || "—"}</TableCell>
+                  <TableCell data-label="m²" className="text-right font-mono text-muted-foreground">
                     {a.size_sqm != null ? a.size_sqm.toFixed(1) : "—"}
                   </TableCell>
-                  <TableCell className="text-right font-mono">
+                  <TableCell data-label="Kalt / m²" className="text-right font-mono">
                     {(() => {
                       const r = perSqm(a);
                       if (!r) return <span className="text-muted-foreground">—</span>;

@@ -191,7 +191,15 @@ def _list_apartments(landlord_id: int) -> dict:
 def _get_contract(landlord_id: int, apartment_id: int) -> dict:
     require_scope(landlord_id)
     rows = db.fetch(
-        """SELECT t.name, c.rent, c.kaution_amount, c.start_date, c.end_date,
+        """SELECT t.name,
+                  COALESCE((SELECT r.rent FROM contract_rents r
+                            WHERE r.contract_id = c.id
+                              AND (r.valid_from = '' OR r.valid_from <= CURRENT_DATE::TEXT)
+                            ORDER BY r.valid_from DESC LIMIT 1),
+                           (SELECT r.rent FROM contract_rents r
+                            WHERE r.contract_id = c.id
+                            ORDER BY r.valid_from ASC LIMIT 1), 0),
+                  c.kaution_amount, c.start_date, c.end_date,
                   c.nebenkosten_vorauszahlung, COALESCE(c.currency, 'EUR')
            FROM contracts c
            JOIN apartments a ON a.id = c.apartment_id

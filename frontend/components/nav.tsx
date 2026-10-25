@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { logout } from "@/lib/api";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { CommandSearchTrigger } from "@/components/command-search";
 import {
   LayoutDashboard, Building2, Home, Users, FileText,
   CreditCard, DollarSign, Gauge, BarChart3, Bell,
@@ -82,6 +83,7 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
     <>
+      <CommandSearchTrigger />
       <nav className="flex-1 overflow-y-auto py-3 px-2">
         {NAV.map((section) => (
           <div key={section.group} className="mb-4">

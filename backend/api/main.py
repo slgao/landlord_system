@@ -25,6 +25,7 @@ from api.routers import (
     nk_settlements,
     valuation,
     insights,
+    export,
 )
 
 
@@ -162,6 +163,7 @@ app.include_router(tax.router,              prefix="/api", dependencies=_auth)
 app.include_router(assistant.router,        prefix="/api", dependencies=_auth)
 app.include_router(valuation.router,        prefix="/api", dependencies=_auth)
 app.include_router(insights.router,         prefix="/api", dependencies=_auth)
+app.include_router(export.router,           prefix="/api", dependencies=_auth)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────

@@ -234,7 +234,7 @@ function LoanTable({ p }: { p: AmortProperty }) {
                       </span>
                     </>
                   ) : (
-                    <span className="text-amber-500" title="No Zinsbindung on file — the current rate is projected to payoff">
+                    <span className="text-amber-700 dark:text-amber-400" title="No Zinsbindung on file — the current rate is projected to payoff">
                       not set
                     </span>
                   )}

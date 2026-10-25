@@ -209,6 +209,11 @@ export interface KautionOverviewRow {
   balance: number;
   returned_total: number;
   still_held: number;
+  // §551 Abs. 1 BGB: a deposit may be at most three Kaltmieten, measured
+  // against the rent the tenancy began at. Null when no rent is on file to
+  // measure against; kaution_over_cap is the excess, or null when within.
+  kaution_cap?: number | null;
+  kaution_over_cap?: number | null;
 }
 
 export interface Payment {
@@ -872,4 +877,31 @@ export interface FlatInsights {
     value_gain: number | null;
     costs_missing: boolean;
   } | null;
+}
+
+// One agreed price of a tenancy. The rent of a tenancy is not one number: it
+// is raised under §558, stepped under a Staffelmiete, tracked to the index
+// under an Indexmiete. Each is a period, so the months before a change keep
+// the price that was actually owed.
+// Something about a recorded increase worth a second look — never a refusal:
+// §559 modernisation, §557a Staffel and §557b index each answer to their own
+// paragraph, so the judgement stays with the landlord.
+export interface RentCheck {
+  code: string;
+  paragraph: string;
+  message: string;
+  over_general: boolean;
+}
+
+export interface RentPeriod {
+  id: number;
+  contract_id: number;
+  valid_from: string;
+  rent: number;
+  nebenkosten_vorauszahlung?: number | null;
+  cold_rent: number;
+  kind: "initial" | "agreed" | "staffel" | "index" | "modernisation";
+  kind_label: string;
+  note?: string | null;
+  current: boolean;
 }

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { Download } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -79,22 +80,59 @@ export default function SettingsPage() {
     onError: (e) => toast.error(errorMessage(e, "Failed to save SMTP settings")),
   });
 
+  // The label is tied to its field by id. Without that the two are only near
+  // each other on screen: a screen reader announces the input as unlabelled,
+  // and clicking the label does not focus it.
   function field(key: keyof Config, label: string, placeholder = "") {
+    const id = `cfg-${String(key)}`;
     return (
       <div className="space-y-1.5">
-        <Label>{label}</Label>
-        <Input value={form[key] || ""} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))} placeholder={placeholder} />
+        <Label htmlFor={id}>{label}</Label>
+        <Input id={id} name={String(key)} value={form[key] || ""}
+          onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+          placeholder={placeholder} />
       </div>
     );
   }
 
   function smtpField(key: keyof typeof smtp, label: string, type = "text", placeholder = "") {
+    const id = `smtp-${String(key)}`;
     return (
       <div className="space-y-1.5">
-        <Label>{label}</Label>
-        <Input type={type} value={smtp[key] || ""} onChange={(e) => setSmtp((f) => ({ ...f, [key]: e.target.value }))} placeholder={placeholder} />
+        <Label htmlFor={id}>{label}</Label>
+        <Input id={id} name={String(key)} type={type} value={smtp[key] || ""}
+          onChange={(e) => setSmtp((f) => ({ ...f, [key]: e.target.value }))}
+          placeholder={placeholder}
+          autoComplete={type === "password" ? "new-password" : undefined} />
       </div>
     );
+  }
+
+  const { data: summary } = useQuery<{ tables: Record<string, number>; rows: number }>({
+    queryKey: ["export-summary"],
+    queryFn: () => api.get("/api/export/summary").then((r) => r.data),
+  });
+  const [exporting, setExporting] = useState(false);
+
+  async function downloadExport() {
+    setExporting(true);
+    try {
+      // A blob, not a link to the endpoint: the file needs the Authorization
+      // header, which a plain <a href> cannot carry.
+      const res = await api.get("/api/export/", { responseType: "blob" });
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `dachly-export-${stamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Downloaded");
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not prepare the export"));
+    } finally {
+      setExporting(false);
+    }
   }
 
   // Fetched as a blob and shown from an object URL, so the <img> needs no
@@ -165,6 +203,38 @@ export default function SettingsPage() {
               <img src={sigUrl} alt="Saved signature" className="max-h-16" />
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Export */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Your data</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Everything you have entered, as one JSON file: properties, flats,
+            tenancies and every agreed rent, payments, costs, Kaution movements,
+            meter readings and the tax figures. §147 AO wants the records behind
+            a return readable for ten years, which is longer than any one
+            application lasts.
+          </p>
+          {summary && (
+            <p className="text-xs text-muted-foreground tabular-nums">
+              {summary.rows.toLocaleString("de-DE")} rows across{" "}
+              {Object.values(summary.tables).filter((n) => n > 0).length} tables.
+            </p>
+          )}
+          <Button variant="outline" size="sm" onClick={downloadExport}
+            disabled={exporting}>
+            <Download className="size-4 mr-1" />
+            {exporting ? "Preparing…" : "Download everything"}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Stored PDFs are not included — each has its own download, and the
+            rows that have one say so. These settings are left out too, because
+            the SMTP password is encrypted with a key the file does not carry.
+          </p>
         </CardContent>
       </Card>
     </div>

@@ -23,6 +23,7 @@ import {
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
 import { Pencil, Trash2 } from "lucide-react";
+import { money } from "@/lib/fmt";
 
 const EMPTY = { property_id: 0, name: "", flat: "", size_sqm: "" };
 
@@ -159,9 +160,9 @@ export default function ApartmentsPage() {
                       if (!r) return <span className="text-muted-foreground">—</span>;
                       return (
                         <>
-                          {r.value.toFixed(2)} €
+                          {money(r.value)}
                           {!r.cold && (
-                            <span className="block text-[10px] text-amber-500 font-sans"
+                            <span className="block text-[10px] text-amber-700 dark:text-amber-400 font-sans"
                               title="No cold-rent split on this contract, so this is the warm rent per m² — not comparable with a Mietspiegel figure.">
                               warm
                             </span>

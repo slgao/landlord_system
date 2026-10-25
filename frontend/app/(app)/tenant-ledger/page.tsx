@@ -15,6 +15,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { money, date as fmtD } from "@/lib/fmt";
 
 export default function TenantLedgerPage() {
   const [tenantId, setTenantId] = useState<string>("");
@@ -100,7 +101,7 @@ export default function TenantLedgerPage() {
               <Card>
                 <CardContent className="p-4">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Kept from Kaution</p>
-                  <p className="text-2xl font-semibold mt-1">€ {depositTotal.toFixed(2)}</p>
+                  <p className="text-2xl font-semibold mt-1">{money(depositTotal)}</p>
                 </CardContent>
               </Card>
             )}
@@ -127,8 +128,8 @@ export default function TenantLedgerPage() {
                     <TableRow key={c.id}>
                       <TableCell>{c.apartment_name}<br /><span className="text-xs text-muted-foreground">{c.property_name}</span></TableCell>
                       <TableCell>{c.rent.toFixed(2)} {c.currency}</TableCell>
-                      <TableCell className="text-muted-foreground">{c.start_date}</TableCell>
-                      <TableCell className="text-muted-foreground">{c.end_date || "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">{fmtD(c.start_date)}</TableCell>
+                      <TableCell className="text-muted-foreground">{c.end_date ? fmtD(c.end_date) : "—"}</TableCell>
                       <TableCell>
                         <Badge className={contractStatusColor(c)}>{contractStatusLabel(c)}</Badge>
                       </TableCell>
@@ -162,7 +163,7 @@ export default function TenantLedgerPage() {
                         <TableCell className="text-muted-foreground">{h.date}</TableCell>
                         <TableCell>{h.apartment}</TableCell>
                         <TableCell className="font-mono">
-                          {h.amount.toFixed(2)} EUR
+                          {money(h.amount)}
                           {h.tag && (
                             <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{h.tag}</Badge>
                           )}

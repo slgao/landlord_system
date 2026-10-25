@@ -15,6 +15,7 @@ import math as _math
 from datetime import date as _date
 from decimal import Decimal
 from db import fetch, fetch_bundle, json_part
+from rent_periods import RentSchedule, schedules_from_rows
 
 _ZERO = Decimal("0")
 
@@ -342,7 +343,7 @@ def detect_overdue(default_months_back=12, owner=None):
     from kaution_rules import NK_REF_TYPE, RENT_CATEGORIES
     loaded = fetch_bundle([
         json_part("contracts", """
-            SELECT c.id, t.name, t.email, a.name, c.rent::text, c.start_date, c.end_date,
+            SELECT c.id, t.name, t.email, a.name, c.start_date, c.end_date,
                    p.name, COALESCE(c.currency, 'EUR'), c.rent_settled_until
             FROM contracts c
             JOIN tenants t ON c.tenant_id = t.id
@@ -372,15 +373,24 @@ def detect_overdue(default_months_back=12, owner=None):
               AND d.date <= ?
             GROUP BY d.contract_id, substr(d.date, 1, 7)
         """, (owner, str(today), owner, *RENT_CATEGORIES, NK_REF_TYPE, str(today))),
+        # Every agreed price of every tenancy, in the same round trip. A
+        # month is owed the rent in force when it began, so an increase
+        # changes the months after it and leaves the earlier ones alone.
+        ("rents", """
+            SELECT json_build_array(contract_id, valid_from, rent::text,
+                                    nebenkosten_vorauszahlung::text)
+            FROM contract_rents WHERE owner_id = ? ORDER BY valid_from
+         """, (owner,)),
     ])
-    contracts = [(*r[:4], Decimal(r[4]), *r[5:]) for r in loaded["contracts"]]
+    schedules = schedules_from_rows(loaded["rents"])
+    contracts = list(loaded["contracts"])
     if not contracts:
         return []
 
     # Resolve each contract's window start (month-1 date).
     starts = {}
     for row in contracts:
-        cid, settled = row[0], row[9]
+        cid, settled = row[0], row[8]
         s = None
         if settled and str(settled) != "None":
             try:
@@ -399,7 +409,8 @@ def detect_overdue(default_months_back=12, owner=None):
 
     results = []
     for row in contracts:
-        cid, t_name, t_email, apt_name, rent, start_str, end_str, prop_name, currency, settled = row
+        cid, t_name, t_email, apt_name, start_str, end_str, prop_name, currency, settled = row
+        schedule = schedules.get(cid, RentSchedule())
         # The API now refuses malformed dates, but a row that predates that
         # check must not take the whole reminders page down with it.
         try:
@@ -420,7 +431,11 @@ def detect_overdue(default_months_back=12, owner=None):
         if not months:
             continue
 
-        expected_total = rent * len(months)
+        # Priced month by month: a tenancy that was raised mid-window owes the
+        # old rent for the months before the increase and the new one after.
+        rent_by_month = {m: schedule.for_month(m.strftime("%Y-%m-%d"))
+                         for m in months}
+        expected_total = sum(rent_by_month.values(), _ZERO)
 
         # Total paid across the window, INCLUDING the current (incomplete) month
         # so pre-payments and catch-up payments count as credit.
@@ -442,15 +457,16 @@ def detect_overdue(default_months_back=12, owner=None):
         running = _ZERO
         for mm in months:
             pm = paid_by.get((cid, mm.strftime("%Y-%m")), _ZERO)
-            running += pm - rent
+            rent_mm = rent_by_month[mm]
+            running += pm - rent_mm
             month_rows.append({
                 "month":         mm.strftime("%B %Y"),
-                "expected":      float(rent),
+                "expected":      float(rent_mm),
                 "paid":          float(pm),
                 "balance_after": float(round(running, 2)),
             })
 
-        rent_f = float(rent)
+        rent_f = float(schedule.on(str(today)) or rent_by_month[months[-1]])
         months_due = _math.ceil(float(amount_due) / rent_f) if rent_f > 0 else len(months)
         results.append({
             "contract_id":       cid,

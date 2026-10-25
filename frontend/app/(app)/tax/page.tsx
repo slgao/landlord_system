@@ -345,7 +345,7 @@ export default function TaxReportPage() {
                             <div className="flex justify-between font-medium"><span>Einnahmen gesamt</span><span className="font-mono">{eur(b.income.final)}</span></div>
                           </div>
                         ) : (
-                          <div className="text-xs text-amber-500 flex items-center justify-between gap-2">
+                          <div className="text-xs text-amber-700 dark:text-amber-400 flex items-center justify-between gap-2">
                             <span>
                               Kaltmiete/Umlagen split unavailable — set the NK-Vorauszahlung per
                               contract in Tax Setup, or enter the Kaltmiete manually:
@@ -397,7 +397,7 @@ export default function TaxReportPage() {
                           <span className="text-muted-foreground">
                             AfA (building depreciation)
                             {wk.afa.source === "override" && <Badge variant="default" className="text-[10px] ml-2">manual</Badge>}
-                            {wk.afa.source === "incomplete" && <span className="text-amber-500 ml-2 text-xs">purchase data missing — set up in Tax Setup or enter manually</span>}
+                            {wk.afa.source === "incomplete" && <span className="text-amber-700 dark:text-amber-400 ml-2 text-xs">purchase data missing — set up in Tax Setup or enter manually</span>}
                           </span>
                           <OverrideField propertyId={b.property_id} year={year} field="afa"
                             value={wk.afa.afa} overridden={wk.afa.source === "override"}

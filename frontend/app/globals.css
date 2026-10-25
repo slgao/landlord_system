@@ -132,3 +132,46 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+/* A table that becomes a list of cards on a phone.
+ *
+ * Twelve of the app's pages squeezed a table into 390 px, where every cell
+ * wrapped over two or three lines and the last column scrolled out of sight
+ * entirely — on Contracts, that column was the tenancy's status. A phone is
+ * where a landlord checks whether the rent arrived, so the list has to read
+ * there.
+ *
+ * Each cell carries data-label with its column's name; below md the header
+ * row is hidden and each cell shows that name beside its value. A cell with
+ * no label (the actions column) simply spans the card.
+ */
+@media (max-width: 767px) {
+  .stack-sm thead { display: none; }
+  .stack-sm tbody { display: block; }
+  .stack-sm tr {
+    display: block;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    margin-bottom: 0.5rem;
+    padding: 0.25rem 0;
+  }
+  .stack-sm td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    border: 0;
+    padding: 0.35rem 0.75rem;
+    text-align: right;
+  }
+  .stack-sm td[data-label]::before {
+    content: attr(data-label);
+    color: hsl(var(--muted-foreground));
+    font-size: 0.75rem;
+    text-align: left;
+    flex: none;
+  }
+  /* The actions column keeps its own alignment and needs no label. */
+  .stack-sm td:not([data-label]) { justify-content: flex-end; }
+  .stack-sm td:empty { display: none; }
+}

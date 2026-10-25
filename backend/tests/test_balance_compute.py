@@ -167,11 +167,13 @@ def _books(monkeypatch, costs=(), expenses=(), payments=()):
 
     def fake_bundle(parts):
         got = {name for name, _, _ in parts}
-        assert got == {"properties", "contracts", "costs", "mortgages",
+        assert got == {"properties", "contracts", "rents", "costs", "mortgages",
                        "rent", "one_off", "settlements"}, got
         return {
             "properties": [[1, "Haus A"]],
             "contracts": [],
+            # No tenancies in these fixtures, so no agreed prices either.
+            "rents": [],
             "costs": [[c[0], "Hausgeld", c[1], c[2], c[3], c[4]] for c in costs],
             "mortgages": [],
             "rent": money({"rent", "deposit_rent"}),

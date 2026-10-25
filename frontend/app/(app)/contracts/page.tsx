@@ -10,6 +10,7 @@ import { contractStatus, contractStatusLabel, contractStatusColor, startsInLabel
 import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow, NkMode } from "@/lib/types";
 import { KAUTION_CATS, KAUTION_CAT_HINT, isRentFromDeposit } from "@/lib/kaution";
 import { PageHeader } from "@/components/page-header";
+import { RentHistoryDialog } from "@/components/rent-history";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +29,8 @@ import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
 import { SearchInput } from "@/components/search-input";
 import { HandoverCard } from "@/components/handover";
-import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X } from "lucide-react";
+import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X, TrendingUp } from "lucide-react";
+import { money, date as fmtD } from "@/lib/fmt";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
 
@@ -282,6 +284,9 @@ export default function ContractsPage() {
     setRenewForm({ mode: "extend", end_date: "", start_date: nextStart, rent: selectedContract.rent });
     setRenewOpen(true);
   }
+  // The tenancy's agreed prices, opened from the row.
+  const [rentHistoryFor, setRentHistoryFor] = useState<Contract | null>(null);
+
   function openEdit(c: Contract) {
     setEditing(c);
     setForm({ tenant_id: c.tenant_id, apartment_id: c.apartment_id, rent: c.rent, currency: c.currency,
@@ -346,7 +351,7 @@ export default function ContractsPage() {
             </Button>
           </PageHeader>
           <Card>
-            <Table>
+            <Table className="stack-sm">
               <TableHeader>
                 <TableRow>
                   <TableHead>Tenant</TableHead>
@@ -367,15 +372,15 @@ export default function ContractsPage() {
                 ) : (
                   visibleContracts.map((c) => (
                     <TableRow key={c.id} className="cursor-pointer" onClick={() => openDetail(c)}>
-                      <TableCell className="font-medium">{c.tenant_name}</TableCell>
-                      <TableCell className="text-muted-foreground">{c.apartment_name}<br /><span className="text-xs">{c.property_name}</span></TableCell>
-                      <TableCell>
-                        {c.rent.toFixed(2)} {c.currency}
+                      <TableCell data-label="Tenant" className="font-medium">{c.tenant_name}</TableCell>
+                      <TableCell data-label="Apartment" className="text-muted-foreground">{c.apartment_name}<br /><span className="text-xs">{c.property_name}</span></TableCell>
+                      <TableCell data-label="Rent">
+                        {money(c.rent)}
                         {/* What the tenant transfers is not what the flat earns
                             when utilities ride along inside it. */}
                         {coldRent(c) != null && (
                           <span className="block text-xs text-muted-foreground">
-                            kalt {coldRent(c)!.toFixed(2)}
+                            kalt {money(coldRent(c)!)}
                           </span>
                         )}
                         {c.nk_mode === "flat" && (
@@ -384,8 +389,8 @@ export default function ContractsPage() {
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">{c.start_date}<br />{c.end_date || "open"}</TableCell>
-                      <TableCell>
+                      <TableCell data-label="Period" className="text-muted-foreground text-sm">{fmtD(c.start_date)}<br />{c.end_date ? fmtD(c.end_date) : "open"}</TableCell>
+                      <TableCell data-label="Status">
                         <Badge className={contractStatusColor(c)}>{contractStatusLabel(c)}</Badge>
                         {contractStatus(c) === "upcoming" && (
                           <p className="text-xs text-muted-foreground mt-1">{startsInLabel(c.start_date)}</p>
@@ -393,7 +398,13 @@ export default function ContractsPage() {
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1 justify-end">
-                          <Button variant="ghost" size="icon" onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
+                          <Button variant="ghost" size="icon"
+                            title="Rent history — record an increase from a date"
+                            aria-label={`Rent history for ${c.tenant_name}`}
+                            onClick={() => setRentHistoryFor(c)}>
+                            <TrendingUp className="size-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" aria-label={`Edit the contract of ${c.tenant_name}`} onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
                           {!c.terminated && (
                             <Button variant="ghost" size="icon" title="Terminate" onClick={() => {
                               setTerminateTarget(c);
@@ -413,7 +424,7 @@ export default function ContractsPage() {
                             title="Delete contract?"
                             message={`Delete the contract for ${c.tenant_name}? This permanently removes its payments, co-tenants, and Kaution deductions.`}
                           >
-                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
+                            <Button variant="ghost" size="icon" aria-label={`Delete the contract of ${c.tenant_name}`} className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
                           </ConfirmButton>
                         </div>
                       </TableCell>
@@ -422,7 +433,9 @@ export default function ContractsPage() {
                 )}
               </TableBody>
             </Table>
-            {query && visibleContracts.length > 0 && (
+            <RentHistoryDialog contract={rentHistoryFor} onClose={() => setRentHistoryFor(null)} />
+
+      {query && visibleContracts.length > 0 && (
               <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
                 {visibleContracts.length} of {contracts.length} contracts
               </p>
@@ -480,7 +493,7 @@ export default function ContractsPage() {
                           </TableRow>
                         ) : (
                           <TableRow key={p.id}>
-                            <TableCell className="text-muted-foreground">{p.date}</TableCell>
+                            <TableCell className="text-muted-foreground">{fmtD(p.date)}</TableCell>
                             <TableCell className="text-muted-foreground text-xs">{p.note || "—"}</TableCell>
                             <TableCell className="text-right font-mono">{p.amount.toFixed(2)}</TableCell>
                             <TableCell className="flex gap-1">
@@ -522,14 +535,14 @@ export default function ContractsPage() {
                   </div>
                   <div className="flex justify-between border-t border-border pt-1.5 font-semibold">
                     <span>Still held</span>
-                    <span className={`font-mono tabular-nums ${stillHeld <= 0.005 ? "text-muted-foreground" : "text-amber-500"}`}>
+                    <span className={`font-mono tabular-nums ${stillHeld <= 0.005 ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}`}>
                       {stillHeld.toFixed(2)} {selectedContract?.kaution_currency}
                     </span>
                   </div>
                   {fullySettled ? (
                     <p className="text-xs text-primary">Deposit fully settled — nothing left to return.</p>
                   ) : totalReturned > 0 ? (
-                    <p className="text-xs text-amber-500">
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
                       Part of the deposit has been returned. The rest is still held — release it below
                       once the handover and the Nebenkostenabrechnung are settled.
                     </p>
@@ -557,7 +570,7 @@ export default function ContractsPage() {
                         </TableRow>
                       ) : (
                         <TableRow key={d.id}>
-                          <TableCell className="text-muted-foreground">{d.date}</TableCell>
+                          <TableCell className="text-muted-foreground">{fmtD(d.date)}</TableCell>
                           <TableCell>
                             {d.category}
                             {d.reference_type === "nk_settlement" && (
@@ -760,27 +773,39 @@ export default function ContractsPage() {
                     <TableRow key={r.contract_id} className="cursor-pointer" onClick={() => openContractById(r.contract_id)}>
                       <TableCell className="font-medium">{r.tenant_name}</TableCell>
                       <TableCell className="text-muted-foreground">{r.apartment_name}<br /><span className="text-xs">{r.property_name}</span></TableCell>
-                      <TableCell className="text-right font-mono">{r.kaution_amount.toFixed(2)} {r.kaution_currency}</TableCell>
+                      <TableCell className="text-right font-mono">
+                        {money(r.kaution_amount)}
+                        {/* §551 Abs. 1 BGB: at most three Kaltmieten, measured
+                            against the rent the tenancy began at. The excess is
+                            not owed and the tenant can reclaim it at any time —
+                            better known before they ask. */}
+                        {r.kaution_over_cap != null && (
+                          <span className="block text-xs text-amber-700 dark:text-amber-400 font-sans"
+                            title={`§551 BGB allows three Kaltmieten — ${money(r.kaution_cap ?? 0)}. The excess is not owed.`}>
+                            {money(r.kaution_over_cap)} over the §551 cap
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right font-mono">
                         {(r.paid ?? 0) > 0 ? (
                           <>
-                            <span className="text-primary">{r.paid.toFixed(2)}</span>
-                            {(r.outstanding ?? 0) > 0.001 && <span className="text-amber-400 text-xs block">−{r.outstanding.toFixed(2)} offen</span>}
+                            <span className="text-primary">{money(r.paid)}</span>
+                            {(r.outstanding ?? 0) > 0.001 && <span className="text-amber-400 text-xs block">−{money(r.outstanding)} offen</span>}
                           </>
                         ) : (
                           <span className="text-muted-foreground text-xs">{r.kaution_paid_date || "—"}</span>
                         )}
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{r.deducted.toFixed(2)}</TableCell>
-                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-primary" : "text-destructive"}`}>{r.balance.toFixed(2)}</TableCell>
+                      <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{money(r.deducted)}</TableCell>
+                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-primary" : "text-destructive"}`}>{money(r.balance)}</TableCell>
                       <TableCell className="text-muted-foreground">
                         {r.kaution_returned_date ? (
-                          <span className="text-primary text-xs">{r.kaution_returned_amount?.toFixed(2)} on {r.kaution_returned_date}</span>
+                          <span className="text-primary text-xs">{money(r.kaution_returned_amount ?? 0)} on {fmtD(r.kaution_returned_date)}</span>
                         ) : (r.returned_total ?? 0) > 0 ? (
                           // Part-released: show what went back and what is left.
-                          <span className="text-amber-500 text-xs">
-                            {r.returned_total.toFixed(2)} returned<br />
-                            <span className="text-muted-foreground">{r.still_held.toFixed(2)} still held</span>
+                          <span className="text-amber-700 dark:text-amber-400 text-xs">
+                            {money(r.returned_total)} returned<br />
+                            <span className="text-muted-foreground">{money(r.still_held)} still held</span>
                           </span>
                         ) : "—"}
                       </TableCell>
@@ -892,7 +917,7 @@ export default function ContractsPage() {
                     <span className="text-destructive">Cold rent cannot exceed the total rent.</span>
                   ) : (
                     <>Utilities inside the rent:{" "}
-                      <b>{(form.rent - Number(form.kaltmiete)).toFixed(2)} €</b>/month</>
+                      <b>{money(form.rent - Number(form.kaltmiete))}</b>/month</>
                   )}
                 </p>
               </div>

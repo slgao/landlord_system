@@ -115,6 +115,10 @@ export default function PropertiesPage() {
     setOpen(true);
   }
 
+  // An edit must never hide a field that already has something in it.
+  const hasValuationData = !!(form.living_sqm || form.comparable_per_sqm
+    || form.plot_sqm || form.market_value || form.valuation_note);
+
   function openEdit(p: Property) {
     setEditing(p);
     setForm({
@@ -276,30 +280,6 @@ export default function PropertiesPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Market value (€)</Label>
-                <Input
-                  type="number" step="1000" min="0"
-                  value={form.market_value}
-                  onChange={(e) => setForm((f) => ({ ...f, market_value: e.target.value }))}
-                  placeholder="e.g. 210000"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Equity is this less the debt. Only the purchase price is otherwise on file.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Valued on</Label>
-                <Input
-                  type="date"
-                  value={form.market_value_date}
-                  onChange={(e) => setForm((f) => ({ ...f, market_value_date: e.target.value }))}
-                />
-                <p className="text-xs text-muted-foreground">When the estimate was made.</p>
-              </div>
-            </div>
-
             {/* Whether the flat is yours at all. A managed flat is tracked
                 like any other, but its worth is not your asset — so this
                 decides whether the rest of this block means anything. */}
@@ -320,10 +300,44 @@ export default function PropertiesPage() {
             </div>
 
             {form.owned && (
-            <>
-            {/* What the valuation needs. The land value comes free from
-                Berlin's open data; these two are the parts only the owner
-                knows, and without them there is no figure to compute. */}
+            <details className="rounded-lg border border-border" open={hasValuationData}>
+              {/* Twelve fields for a first property is a wall. The four that
+                  identify the flat stay in front; what the valuation needs
+                  waits behind this, open already when there is something in
+                  it so an edit never hides a filled-in field. */}
+              <summary className="cursor-pointer select-none p-3 text-sm font-medium">
+                Valuation data
+                <span className="ml-2 font-normal text-muted-foreground text-xs">
+                  Wohnfläche, comparable €/m², market value — needed for the
+                  portfolio value and the LTV
+                </span>
+              </summary>
+              <div className="space-y-3 border-t border-border p-3">
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="p-mv">Market value (€)</Label>
+                <Input
+                  type="number" step="1000" min="0"
+                  id="p-mv" value={form.market_value}
+                  onChange={(e) => setForm((f) => ({ ...f, market_value: e.target.value }))}
+                  placeholder="e.g. 210000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Equity is this less the debt. Only the purchase price is otherwise on file.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="p-mvd">Valued on</Label>
+                <Input
+                  type="date"
+                  id="p-mvd" value={form.market_value_date}
+                  onChange={(e) => setForm((f) => ({ ...f, market_value_date: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">When the estimate was made.</p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="p-living">Living area (m²)</Label>
@@ -372,17 +386,28 @@ export default function PropertiesPage() {
               />
             </div>
 
-            </>
+              </div>
+            </details>
             )}
 
-            <div className="space-y-1.5">
-              <Label>Address (legacy / per-WE, optional)</Label>
-              <Input
-                value={form.address}
-                onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
-                placeholder="Full address (usually inherited from the building)"
-              />
-            </div>
+            {/* The building carries the address; this is the per-WE override,
+                for the rare flat whose address differs from its building's. */}
+            <details className="rounded-lg border border-border" open={!!form.address}>
+              <summary className="cursor-pointer select-none p-3 text-sm font-medium">
+                Own address
+                <span className="ml-2 font-normal text-muted-foreground text-xs">
+                  only when it differs from the building&apos;s
+                </span>
+              </summary>
+              <div className="border-t border-border p-3 space-y-1.5">
+                <Label htmlFor="p-addr">Address</Label>
+                <Input
+                  id="p-addr" value={form.address}
+                  onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+                  placeholder="Full address (usually inherited from the building)"
+                />
+              </div>
+            </details>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>

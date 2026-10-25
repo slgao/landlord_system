@@ -159,7 +159,10 @@
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: 1rem;
+    /* A cell that holds more than one thing — a name, a badge and an address —
+       wraps below its label rather than squeezing the name onto two lines. */
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
     border: 0;
     padding: 0.35rem 0.75rem;
     text-align: right;

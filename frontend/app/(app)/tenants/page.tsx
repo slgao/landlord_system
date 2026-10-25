@@ -130,7 +130,7 @@ export default function TenantsPage() {
       </Card>
 
       <Card>
-        <Table>
+        <Table className="stack-sm">
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
@@ -154,7 +154,7 @@ export default function TenantsPage() {
             ) : (
               visible.map((t) => (
                 <TableRow key={t.id}>
-                  <TableCell className="font-medium">
+                  <TableCell data-label="Name" className="font-medium">
                     {t.name}
                     {(t.active_contracts ?? 0) > 0 && (
                       <Badge className="ml-2 bg-primary/15 text-primary border-primary/20"
@@ -170,11 +170,11 @@ export default function TenantsPage() {
                       </span>
                     ))}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{t.email || "—"}</TableCell>
-                  <TableCell className="text-muted-foreground">
+                  <TableCell data-label="Email" className="text-muted-foreground">{t.email || "—"}</TableCell>
+                  <TableCell data-label="Phone" className="text-muted-foreground">
                     {t.phone ? <a href={`tel:${t.phone}`} className="hover:underline">{t.phone}</a> : "—"}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{genderLabel(t.gender)}</TableCell>
+                  <TableCell data-label="Salutation" className="text-muted-foreground">{genderLabel(t.gender)}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(t)}>

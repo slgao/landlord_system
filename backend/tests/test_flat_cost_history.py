@@ -144,3 +144,55 @@ def test_editing_a_row_does_not_clash_with_itself(store):
     out = fc.update_flat_cost(cid, fc.FlatCostIn(apartment_id=1, cost_type="Hausgeld",
                                                  amount=356.0, valid_from="2024-01-01"), owner=1)
     assert out.id == cid
+
+
+# ── a price change recorded before it takes effect ───────────────────────────
+
+def test_an_increase_announced_for_next_year_does_not_change_this_year(store):
+    """The normal way a Hausgeld increase arrives: the Verwalter announces it
+    in autumn, for January. Recording it must not change what the flat costs
+    today, and must change it on the day it starts.
+
+    The Flat Costs page used to make this look like nothing had happened — the
+    future row was dimmed and labelled "earlier price" while the amount it
+    replaces went on showing as the only price there was — which is what sent
+    me looking at the dates the reports actually use.
+    """
+    from decimal import Decimal
+    from flat_economics import recurring_costs
+
+    cid = store.add(amount=310.0, valid_from="2026-01-01")
+    out = fc.new_amount(cid, fc.NewAmountIn(amount=348.5, from_date="2027-01-01"), owner=1)
+
+    assert out.previous.valid_to == "2026-12-31"
+    assert out.current.valid_from == "2027-01-01" and out.current.valid_to is None
+
+    windows = [(r["amount"], r["frequency"], r["valid_from"], r["valid_to"])
+               for r in store.rows.values()]
+    # Today: the old price, alone — the two periods never overlap, so the
+    # reports cannot add them together.
+    assert recurring_costs(windows, "2026-10-25") == Decimal("310.00")
+    assert recurring_costs(windows, "2026-12-31") == Decimal("310.00")
+    # And from the day it starts, the new one, also alone.
+    assert recurring_costs(windows, "2027-01-01") == Decimal("348.50")
+    assert recurring_costs(windows, "2030-06-15") == Decimal("348.50")
+
+
+def test_a_second_increase_can_be_recorded_on_top_of_a_future_one(store):
+    # Two announcements before either takes effect: the page keeps the "new
+    # amount" action on an upcoming price for exactly this.
+    cid = store.add(amount=310.0, valid_from="2026-01-01")
+    first = fc.new_amount(cid, fc.NewAmountIn(amount=348.5, from_date="2027-01-01"), owner=1)
+    second = fc.new_amount(first.current.id,
+                           fc.NewAmountIn(amount=352.0, from_date="2028-01-01"), owner=1)
+    assert second.previous.valid_from == "2027-01-01"
+    assert second.previous.valid_to == "2027-12-31"
+    assert second.current.valid_from == "2028-01-01"
+
+    from decimal import Decimal
+    from flat_economics import recurring_costs
+    windows = [(r["amount"], r["frequency"], r["valid_from"], r["valid_to"])
+               for r in store.rows.values()]
+    for day, expected in (("2026-10-25", "310.00"), ("2027-06-01", "348.50"),
+                          ("2028-01-01", "352.00")):
+        assert recurring_costs(windows, day) == Decimal(expected)

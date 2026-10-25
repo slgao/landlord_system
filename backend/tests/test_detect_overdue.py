@@ -35,22 +35,34 @@ def _month_end(first):
     return first.replace(day=calendar.monthrange(first.year, first.month)[1])
 
 
-def _install_fetch(monkeypatch, contracts, payments, deposit=()):
+def _install_fetch(monkeypatch, contracts, payments, deposit=(), rents=None):
     """`payments` and `deposit` rows are (contract_id, 'YYYY-MM', amount): rent
     paid, and rent kept from the Kaution. The loader returns both in one
     UNION, tagged 0 / 1.
+
+    `rents` is the agreed prices, as (contract_id, valid_from, rent) rows. Left
+    out, each contract gets one price from its own tuple, running from the day
+    the tenancy started — which is what a tenancy whose rent never changed
+    looks like, and keeps these tests saying what they always said.
 
     Money crosses the bundle as TEXT (json_build_array would hand back floats,
     and rent arithmetic must stay Decimal), so the fake stringifies it exactly
     as `::text` does. `fetch` is left failing so an unbundled query added later
     shows up as a test failure rather than a silent extra round trip."""
+    periods = (list(rents) if rents is not None
+               else [(c[0], c[5], c[4]) for c in contracts])
+
     def fake_bundle(parts):
         names = [n for n, _, _ in parts]
-        assert names == ["contracts", "paid"], f"unexpected bundle: {names}"
+        assert names == ["contracts", "paid", "rents"], f"unexpected bundle: {names}"
         return {
-            "contracts": [(*c[:4], str(c[4]), *c[5:]) for c in contracts],
+            # The contract row no longer carries a rent: the price of a month
+            # comes from the periods below.
+            "contracts": [(c[0], c[1], c[2], c[3], c[5], c[6], c[7], c[8], c[9])
+                          for c in contracts],
             "paid": ([(c, ym, 0, str(amt)) for c, ym, amt in payments]
                      + [(c, ym, 1, str(amt)) for c, ym, amt in deposit]),
+            "rents": [(cid, vf, str(amount), None) for cid, vf, amount in periods],
         }
 
     def fail_fetch(query, params=()):

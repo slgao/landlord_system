@@ -15,6 +15,8 @@ from functools import lru_cache
 from decimal import Decimal
 from db import fetch, fetch_bundle
 from cost_types import is_mortgage_cost
+from rent_periods import (RentSchedule, load_schedules, rent_for_month,
+                          schedules_from_rows)
 from tax_logic import monthly_equivalent
 
 _ZERO = Decimal("0")
@@ -112,7 +114,9 @@ def _blank(v) -> bool:
 def expected_rent(contracts, m_start: str, m_end: str) -> Decimal:
     """Expected rent for one property in the month [m_start, m_end].
 
-    `contracts` is an iterable of (apartment_id, rent, start_date, end_date, id).
+    `contracts` is an iterable of (apartment_id, rent, start_date, end_date, id),
+    where `rent` is a RentSchedule — or a plain amount, which then applies to
+    every month, as a single `contracts.rent` once did.
     For each apartment, take the rent of the most-recently-started contract that
     is active in the month, then sum across apartments. This avoids
     double-counting when two contracts overlap on the *same* apartment (e.g. a
@@ -130,7 +134,10 @@ def expected_rent(contracts, m_start: str, m_end: str) -> Decimal:
         rank = (str(cs), cid)
         cur = best.get(apt)
         if cur is None or rank > cur[0]:
-            best[apt] = (rank, rent)
+            # `rent` is this tenancy's schedule of agreed prices; the one in
+            # force when the month began is the month's rent, so a §558
+            # increase changes this month and leaves the last one alone.
+            best[apt] = (rank, rent_for_month(rent, m_start))
     return sum((r for _, r in best.values()), _ZERO)
 
 
@@ -157,14 +164,16 @@ def month_costs(cost_rows, m_start: str, m_end: str, y: int, m: int) -> Decimal:
 
 
 def _load_contracts(owner) -> dict:
+    schedules = load_schedules(owner)
     out: dict = {}
-    for pid, apt, rent, cs, ce, cid in fetch("""
-        SELECT a.property_id, c.apartment_id, c.rent, c.start_date, c.end_date, c.id
+    for pid, apt, cs, ce, cid in fetch("""
+        SELECT a.property_id, c.apartment_id, c.start_date, c.end_date, c.id
         FROM contracts c
         JOIN apartments a ON c.apartment_id = a.id
         WHERE c.owner_id = ?
     """, (owner,)):
-        out.setdefault(pid, []).append((apt, rent, cs, ce, cid))
+        out.setdefault(pid, []).append(
+            (apt, schedules.get(cid, RentSchedule()), cs, ce, cid))
     return out
 
 
@@ -364,10 +373,16 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
         ("properties", "SELECT json_build_array(id, name) FROM properties "
                        "WHERE owner_id=? ORDER BY name", (owner,)),
         ("contracts", """
-            SELECT json_build_array(a.property_id, c.apartment_id, c.rent::text,
+            SELECT json_build_array(a.property_id, c.apartment_id,
                                     c.start_date, c.end_date, c.id)
             FROM contracts c JOIN apartments a ON c.apartment_id = a.id
             WHERE c.owner_id = ?""", (owner,)),
+        # The agreed prices of every tenancy, in the same round trip. Rent is
+        # resolved per month from these, never from one figure on the contract.
+        ("rents", """
+            SELECT json_build_array(r.contract_id, r.valid_from, r.rent::text,
+                                    r.nebenkosten_vorauszahlung::text)
+            FROM contract_rents r WHERE r.owner_id = ? ORDER BY r.valid_from""", (owner,)),
         ("costs", """
             SELECT json_build_array(a.property_id, fc.cost_type, fc.amount::text,
                                     fc.frequency, fc.valid_from, fc.valid_to)
@@ -420,8 +435,10 @@ def _compute_snapshot(year: int, owner=None, include_one_off: bool = False):
 
     properties = [tuple(r) for r in loaded["properties"]]
     contracts: dict = {}
-    for pid, apt, rent, cs, ce, cid in loaded["contracts"]:
-        contracts.setdefault(pid, []).append((apt, _dec(rent), cs, ce, cid))
+    schedules = schedules_from_rows(loaded["rents"])
+    for pid, apt, cs, ce, cid in loaded["contracts"]:
+        contracts.setdefault(pid, []).append(
+            (apt, schedules.get(cid, RentSchedule()), cs, ce, cid))
     # Running costs and the mortgage are kept apart: the mortgage is the one
     # cost that may also be on file as a loan, and only one of the two records
     # may be counted (see cost_types.resolve_instalment).

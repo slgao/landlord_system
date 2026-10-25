@@ -17,7 +17,9 @@ from typing import Literal, Optional
 from db import fetch, fetch_bundle, json_part, execute, execute_returning, insert
 from auth import require_auth
 from api.schemas.common import IsoDate, OptIsoDate
+import rent_periods
 import tax_logic
+from rent_periods import RentSchedule
 
 from kaution_rules import NK_CATEGORY, NK_REF_TYPE, RENT_CATEGORIES
 
@@ -673,13 +675,29 @@ def list_nk_splits(owner: int = Depends(require_auth)):
     """Contracts with their monthly NK-Vorauszahlung portion, for the
     Kaltmiete/Umlagen income split. Ended contracts still matter for past
     tax years, so all contracts are returned."""
+    # Rent and the NK share are the tenancy's current agreed price — the same
+    # resolution the contracts list uses, since the contract itself no longer
+    # carries a rent.
     rows = fetch("""
-        SELECT c.id, t.name, a.name, a.property_id, p.name, c.rent,
-               c.nebenkosten_vorauszahlung, c.start_date, c.end_date, c.nk_mode
+        SELECT c.id, t.name, a.name, a.property_id, p.name,
+               COALESCE(cur.rent, upcoming.rent, 0),
+               COALESCE(cur.nebenkosten_vorauszahlung, upcoming.nebenkosten_vorauszahlung),
+               c.start_date, c.end_date, c.nk_mode
         FROM contracts c
         JOIN tenants t ON t.id = c.tenant_id
         JOIN apartments a ON a.id = c.apartment_id
         JOIN properties p ON p.id = a.property_id
+        LEFT JOIN LATERAL (
+            SELECT r.rent, r.nebenkosten_vorauszahlung FROM contract_rents r
+            WHERE r.contract_id = c.id
+              AND (r.valid_from = '' OR r.valid_from <= CURRENT_DATE::TEXT)
+            ORDER BY r.valid_from DESC LIMIT 1
+        ) cur ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT r.rent, r.nebenkosten_vorauszahlung FROM contract_rents r
+            WHERE r.contract_id = c.id
+            ORDER BY r.valid_from ASC LIMIT 1
+        ) upcoming ON TRUE
         WHERE c.owner_id = ?
         ORDER BY p.name, t.name
     """, (owner,))
@@ -698,9 +716,19 @@ def list_nk_splits(owner: int = Depends(require_auth)):
 def set_nk_split(contract_id: int, body: NkSplitIn, owner: int = Depends(require_auth)):
     if not fetch("SELECT id FROM contracts WHERE id=? AND owner_id=?", (contract_id, owner)):
         raise HTTPException(status_code=404, detail="Contract not found")
-    execute("UPDATE contracts SET nebenkosten_vorauszahlung=?, "
-            "nk_mode=COALESCE(?, nk_mode) WHERE id=? AND owner_id=?",
-            (body.nebenkosten_vorauszahlung, body.nk_mode, contract_id, owner))
+    execute("UPDATE contracts SET nk_mode=COALESCE(?, nk_mode) WHERE id=? AND owner_id=?",
+            (body.nk_mode, contract_id, owner))
+    # The Nebenkosten share belongs to the price it was agreed with, so this
+    # writes the period in force rather than the contract. Earlier periods keep
+    # the share they were charged at, which is what the Anlage V needs: the
+    # Umlagen line of a filed year must not move because this year's
+    # prepayment was raised.
+    from api.routers.contracts import _rent_periods
+    current = next((p for p in _rent_periods(contract_id, owner) if p.current), None)
+    if current is not None:
+        execute("UPDATE contract_rents SET nebenkosten_vorauszahlung=? "
+                "WHERE id=? AND owner_id=?",
+                (body.nebenkosten_vorauszahlung, current.id, owner))
     return {"contract_id": contract_id,
             "nebenkosten_vorauszahlung": body.nebenkosten_vorauszahlung,
             "nk_mode": body.nk_mode}
@@ -800,12 +828,18 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
             ) m""", (str(year), owner, str(year), owner, NK_CATEGORY, NK_REF_TYPE,
                      str(year), owner, *RENT_CATEGORIES, NK_REF_TYPE)),
         ("contracts", """
-            SELECT json_build_array(a.property_id, t.name, c.rent, c.start_date, c.end_date,
+            SELECT json_build_array(a.property_id, t.name, c.id, c.start_date, c.end_date,
                                     c.nebenkosten_vorauszahlung)
             FROM contracts c
             JOIN apartments a ON a.id = c.apartment_id
             JOIN tenants t ON t.id = c.tenant_id
             WHERE c.owner_id = ?""", (owner,)),
+        # The agreed prices, so a year in which the rent was raised reports
+        # what was owed month by month rather than twelve times one figure.
+        ("rents", """
+            SELECT json_build_array(contract_id, valid_from, rent::text,
+                                    nebenkosten_vorauszahlung::text)
+            FROM contract_rents WHERE owner_id = ? ORDER BY valid_from""", (owner,)),
         ("flat", """
             SELECT json_build_array(a.property_id, fc.cost_type, fc.amount, fc.valid_from,
                                     fc.valid_to, COALESCE(fc.frequency, 'monthly'))
@@ -850,6 +884,7 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
     contracts: dict[int, list] = {}
     for r in loaded["contracts"]:
         contracts.setdefault(r[0], []).append(r)
+    rent_schedules = rent_periods.schedules_from_rows(loaded["rents"])
 
     flat: dict[int, list] = {}
     for r in loaded["flat"]:
@@ -875,12 +910,14 @@ def build_report(year: int, owner: int) -> tuple[list[dict], list[str]]:
         # portion set — otherwise a data gap would masquerade as "Umlagen 0".
         active_contracts = 0
         nk_missing = 0
-        for _, tenant, rent, cs, ce, nk in contracts.get(pid, []):
-            months = tax_logic.contract_months_in_year(cs, _clean(ce), year)
-            if months > 0 and rent:
+        for _, tenant, cid, cs, ce, nk in contracts.get(pid, []):
+            schedule = rent_schedules.get(cid, RentSchedule())
+            months, total = rent_periods.year_total(schedule, cs, _clean(ce), year)
+            rent = schedule.for_month(f"{year}-12-01") or schedule.first()
+            if months > 0 and total:
                 active_contracts += 1
                 est_rows.append({"tenant": tenant, "months": months,
-                                 "rent": float(rent), "total": round(float(rent) * months, 2)})
+                                 "rent": float(rent), "total": round(float(total), 2)})
                 if nk is None:
                     nk_missing += 1
                 else:

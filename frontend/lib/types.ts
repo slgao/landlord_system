@@ -873,3 +873,20 @@ export interface FlatInsights {
     costs_missing: boolean;
   } | null;
 }
+
+// One agreed price of a tenancy. The rent of a tenancy is not one number: it
+// is raised under §558, stepped under a Staffelmiete, tracked to the index
+// under an Indexmiete. Each is a period, so the months before a change keep
+// the price that was actually owed.
+export interface RentPeriod {
+  id: number;
+  contract_id: number;
+  valid_from: string;
+  rent: number;
+  nebenkosten_vorauszahlung?: number | null;
+  cold_rent: number;
+  kind: "initial" | "agreed" | "staffel" | "index" | "modernisation";
+  kind_label: string;
+  note?: string | null;
+  current: boolean;
+}

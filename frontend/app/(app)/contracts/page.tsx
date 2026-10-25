@@ -10,6 +10,7 @@ import { contractStatus, contractStatusLabel, contractStatusColor, startsInLabel
 import { Contract, Tenant, Apartment, CoTenant, KautionDeduction, KautionPayment, KautionReturn, KautionOverviewRow, NkMode } from "@/lib/types";
 import { KAUTION_CATS, KAUTION_CAT_HINT, isRentFromDeposit } from "@/lib/kaution";
 import { PageHeader } from "@/components/page-header";
+import { RentHistoryDialog } from "@/components/rent-history";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +29,7 @@ import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
 import { SearchInput } from "@/components/search-input";
 import { HandoverCard } from "@/components/handover";
-import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X } from "lucide-react";
+import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X, TrendingUp } from "lucide-react";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
 
@@ -282,6 +283,9 @@ export default function ContractsPage() {
     setRenewForm({ mode: "extend", end_date: "", start_date: nextStart, rent: selectedContract.rent });
     setRenewOpen(true);
   }
+  // The tenancy's agreed prices, opened from the row.
+  const [rentHistoryFor, setRentHistoryFor] = useState<Contract | null>(null);
+
   function openEdit(c: Contract) {
     setEditing(c);
     setForm({ tenant_id: c.tenant_id, apartment_id: c.apartment_id, rent: c.rent, currency: c.currency,
@@ -393,7 +397,13 @@ export default function ContractsPage() {
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1 justify-end">
-                          <Button variant="ghost" size="icon" onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
+                          <Button variant="ghost" size="icon"
+                            title="Rent history — record an increase from a date"
+                            aria-label={`Rent history for ${c.tenant_name}`}
+                            onClick={() => setRentHistoryFor(c)}>
+                            <TrendingUp className="size-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" aria-label={`Edit the contract of ${c.tenant_name}`} onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
                           {!c.terminated && (
                             <Button variant="ghost" size="icon" title="Terminate" onClick={() => {
                               setTerminateTarget(c);
@@ -422,7 +432,9 @@ export default function ContractsPage() {
                 )}
               </TableBody>
             </Table>
-            {query && visibleContracts.length > 0 && (
+            <RentHistoryDialog contract={rentHistoryFor} onClose={() => setRentHistoryFor(null)} />
+
+      {query && visibleContracts.length > 0 && (
               <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
                 {visibleContracts.length} of {contracts.length} contracts
               </p>

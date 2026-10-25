@@ -14,6 +14,7 @@ import tax_logic
 import valuation
 from auth import require_auth
 from db import fetch_bundle, json_part
+from rent_periods import RentSchedule, schedules_from_rows
 
 router = APIRouter(prefix="/insights", tags=["Insights"])
 
@@ -31,10 +32,17 @@ _PROPS_SQL = """
 """
 
 _CONTRACTS_SQL = """
-    SELECT a.property_id, c.apartment_id, c.rent::text, c.start_date, c.end_date,
+    SELECT a.property_id, c.apartment_id, c.start_date, c.end_date,
            COALESCE(c.terminated, 0), c.id
     FROM contracts c JOIN apartments a ON a.id = c.apartment_id
     WHERE c.owner_id=?
+"""
+
+# The agreed prices of every tenancy. What a flat earns is read from the price
+# in force on the day being asked about, not from one figure on the contract.
+_RENTS_SQL = """
+    SELECT contract_id, valid_from, rent::text, nebenkosten_vorauszahlung::text
+    FROM contract_rents WHERE owner_id=? ORDER BY valid_from
 """
 
 # cost_type comes along so the mortgage can be told apart from the running
@@ -85,15 +93,19 @@ def flat_insights(owner: int = Depends(require_auth)):
     loaded = fetch_bundle([
         json_part("props", _PROPS_SQL, (owner,)),
         json_part("contracts", _CONTRACTS_SQL, (owner,)),
+        json_part("rents", _RENTS_SQL, (owner,)),
         json_part("costs", _COSTS_SQL, (owner,)),
         json_part("rooms", _ROOMS_SQL, (owner,)),
         json_part("mortgages", _MORTGAGE_SQL, (owner,)),
         ("land", _LAND_SQL, (owner,)),
     ])
 
+    schedules = schedules_from_rows(loaded["rents"])
     by_prop_contracts: dict = {}
     for r in loaded["contracts"]:
-        by_prop_contracts.setdefault(r[0], []).append((r[1], r[2], r[3], r[4], r[5], r[6]))
+        # (apartment_id, rent schedule, start, end, terminated, contract_id)
+        by_prop_contracts.setdefault(r[0], []).append(
+            (r[1], schedules.get(r[5], RentSchedule()), r[2], r[3], r[4], r[5]))
     by_prop_costs: dict = {}
     for r in loaded["costs"]:
         by_prop_costs.setdefault(r[0], []).append((r[1], r[2], r[3], r[4], r[5]))

@@ -156,13 +156,16 @@ def _tax_books(monkeypatch, payments, nk=100.0):
     def fake_bundle(parts):
         got = {name for name, _, _ in parts}
         assert got == {"props", "profiles", "mortgages", "money", "contracts",
-                       "flat", "overrides", "expenses"}, got
+                       "rents", "flat", "overrides", "expenses"}, got
         return {
             "props": [[1, "Haus A", 1]],
             "profiles": [],
             "mortgages": [],
             "money": [[1, kind, total, cnt] for kind, total, cnt in payments],
-            "contracts": [[1, "Mieter", 1000.0, "2025-01-01", None, nk]],
+            # (property_id, tenant, contract_id, start, end, NK share) — the
+            # rent itself comes from the agreed prices below.
+            "contracts": [[1, "Mieter", 1, "2025-01-01", None, nk]],
+            "rents": [[1, "2025-01-01", "1000.00", None if nk is None else str(nk)]],
             "flat": [],
             "overrides": [],
             "expenses": [],

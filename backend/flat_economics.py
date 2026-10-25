@@ -23,6 +23,7 @@ from decimal import Decimal
 # balance sheet imports them from cost_types. One definition, two doors.
 from cost_types import (is_mortgage_cost, is_rent_to_owner,  # noqa: F401
                         mortgage_conflict, resolve_instalment)
+from rent_periods import rent_at
 from tax_logic import monthly_equivalent
 
 _ZERO = Decimal("0")
@@ -36,7 +37,9 @@ def _blank(v) -> bool:
 def contracted_rent(contracts, on_date: str):
     """Rent currently contracted for one flat, and which rooms are let.
 
-    `contracts` is [(apartment_id, rent, start_date, end_date, terminated, id)].
+    `contracts` is [(apartment_id, rent, start_date, end_date, terminated, id)],
+    where `rent` is that tenancy's RentSchedule — or a plain amount, which is
+    then the same on every day.
 
     One contract per apartment, the most recently started among those running
     on `on_date` — the same rule the balance sheet uses, and for the same
@@ -55,7 +58,7 @@ def contracted_rent(contracts, on_date: str):
             continue
         rank = (str(start), cid)
         if apt not in best or rank > best[apt][0]:
-            best[apt] = (rank, Decimal(str(rent)))
+            best[apt] = (rank, rent_at(rent, on_date))
     return sum((r for _, r in best.values()), _ZERO), {a: r for a, (_, r) in best.items()}
 
 

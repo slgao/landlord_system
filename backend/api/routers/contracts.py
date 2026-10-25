@@ -1,4 +1,10 @@
+from datetime import date as _date
+from typing import Literal, Optional as _Opt
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, model_validator
+
+import rent_periods
 from db import fetch, execute, execute_returning
 from auth import require_auth
 from api.schemas.contract import ContractIn, ContractOut
@@ -26,17 +32,35 @@ def _row(r) -> ContractOut:
     )
 
 
+# `rent` and the NK share are the tenancy's current agreed price, resolved
+# here rather than read from the contract: the contract holds no rent any more
+# (see the contract_rents migration). The two laterals are the same rule the
+# reports use — the price in force today, and for a tenancy that has not begun
+# yet, the price it starts at — in the same round trip as the contract itself.
 _SELECT = """
     SELECT c.id, c.tenant_id, t.name, c.apartment_id, a.name, p.name,
-           c.rent, COALESCE(c.currency,'EUR'),
+           COALESCE(cur.rent, upcoming.rent, 0), COALESCE(c.currency,'EUR'),
            c.start_date, c.end_date,
            c.kaution_amount, COALESCE(c.kaution_currency,'EUR'),
            c.kaution_paid_date, c.kaution_returned_date, c.kaution_returned_amount,
-           c.terminated, c.nebenkosten_vorauszahlung, c.nk_mode
+           c.terminated,
+           COALESCE(cur.nebenkosten_vorauszahlung, upcoming.nebenkosten_vorauszahlung),
+           c.nk_mode
     FROM contracts c
     JOIN tenants    t ON t.id = c.tenant_id
     JOIN apartments a ON a.id = c.apartment_id
     JOIN properties p ON p.id = a.property_id
+    LEFT JOIN LATERAL (
+        SELECT r.rent, r.nebenkosten_vorauszahlung FROM contract_rents r
+        WHERE r.contract_id = c.id
+          AND (r.valid_from = '' OR r.valid_from <= CURRENT_DATE::TEXT)
+        ORDER BY r.valid_from DESC LIMIT 1
+    ) cur ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT r.rent, r.nebenkosten_vorauszahlung FROM contract_rents r
+        WHERE r.contract_id = c.id
+        ORDER BY r.valid_from ASC LIMIT 1
+    ) upcoming ON TRUE
 """
 
 
@@ -159,6 +183,14 @@ def create_contract(body: ContractIn, owner: int = Depends(require_auth)):
           body.kaution_returned_date or None,
           body.kaution_returned_amount,
           int(body.terminated), body.nebenkosten_vorauszahlung, body.nk_mode, owner))[0][0]
+    # What the tenancy was signed at, from the day it starts. Every later
+    # price is another period beside it, so raising the rent next year leaves
+    # this one — and the months it covered — exactly as they are.
+    execute("""
+        INSERT INTO contract_rents
+          (contract_id, valid_from, rent, nebenkosten_vorauszahlung, kind, owner_id)
+        VALUES (?,?,?,?,'initial',?)
+    """, (new_id, body.start_date, body.rent, body.nebenkosten_vorauszahlung, owner))
     return _row(_get(new_id, owner))
 
 
@@ -175,17 +207,23 @@ def update_contract(contract_id: int, body: ContractIn, owner: int = Depends(req
     # them. The fields stay in ContractIn for API compatibility and are ignored.
     execute("""
         UPDATE contracts SET
-          tenant_id=?, apartment_id=?, rent=?, currency=?,
+          tenant_id=?, apartment_id=?, currency=?,
           start_date=?, end_date=?,
           kaution_amount=?, kaution_currency=?, kaution_paid_date=?, terminated=?,
-          nebenkosten_vorauszahlung=?, nk_mode=?
+          nk_mode=?
         WHERE id=? AND owner_id=?
-    """, (body.tenant_id, body.apartment_id, body.rent, RENT_CURRENCY,
+    """, (body.tenant_id, body.apartment_id, RENT_CURRENCY,
           body.start_date, body.end_date or None,
           body.kaution_amount, body.kaution_currency,
           body.kaution_paid_date or None,
-          int(body.terminated), body.nebenkosten_vorauszahlung, body.nk_mode,
+          int(body.terminated), body.nk_mode,
           contract_id, owner))
+    # Editing a contract corrects what is on file; it does not record a rent
+    # increase. So the rent here rewrites the period in force today — the
+    # typo it was entered with — and a raise goes through POST /rents, which
+    # leaves the earlier months at the price that was actually owed.
+    _correct_current_rent(contract_id, body.rent, body.nebenkosten_vorauszahlung,
+                          body.start_date, owner)
     return _row(_get(contract_id, owner))
 
 
@@ -347,6 +385,13 @@ def renew_contract(contract_id: int, body: RenewIn, owner: int = Depends(require
               new_start, new_end,
               0, old[11] or "EUR", None,
               None, None, 0, old[16], old[17] or "prepayment", owner))[0][0]
+        # The new term's own first price. A new term is a new tenancy, so its
+        # prices start here; the old term keeps every period it was charged at.
+        execute("""
+            INSERT INTO contract_rents
+              (contract_id, valid_from, rent, nebenkosten_vorauszahlung, kind, owner_id)
+            VALUES (?,?,?,?,'initial',?)
+        """, (new_id, new_start, new_rent, old[16], owner))
         return _row(_get(new_id, owner))
 
     raise HTTPException(status_code=400, detail="mode must be 'extend' or 'new_term'")
@@ -399,3 +444,175 @@ def delete_contract(contract_id: int, owner: int = Depends(require_auth)):
     _assert_own(contract_id, owner)
     # Child rows (payments, kaution_*, co_tenants, reminders) cascade via FKs.
     execute("DELETE FROM contracts WHERE id=? AND owner_id=?", (contract_id, owner))
+
+
+# ── The agreed rent, period by period ────────────────────────────────────────
+
+class RentPeriodIn(BaseModel):
+    """A price and the day it starts applying."""
+    valid_from: IsoDate
+    rent: float = Field(ge=0)
+    nebenkosten_vorauszahlung: _Opt[float] = Field(default=None, ge=0)
+    kind: Literal["initial", "agreed", "staffel", "index", "modernisation"] = "agreed"
+    note: _Opt[str] = None
+
+    @model_validator(mode="after")
+    def _nk_inside_rent(self):
+        if (self.nebenkosten_vorauszahlung or 0) > self.rent:
+            raise ValueError("the Nebenkosten share cannot be larger than the rent")
+        return self
+
+
+class RentPeriodOut(BaseModel):
+    id: int
+    contract_id: int
+    valid_from: str
+    rent: float
+    nebenkosten_vorauszahlung: _Opt[float] = None
+    cold_rent: float
+    kind: str
+    kind_label: str
+    note: _Opt[str] = None
+    current: bool
+
+
+_RENTS_SELECT = """
+    SELECT id, contract_id, valid_from, rent, nebenkosten_vorauszahlung, kind, note
+    FROM contract_rents
+"""
+
+
+def _rent_row(r, today: str) -> RentPeriodOut:
+    nkv = float(r[4]) if r[4] is not None else None
+    return RentPeriodOut(
+        id=r[0], contract_id=r[1], valid_from=r[2] or "", rent=float(r[3]),
+        nebenkosten_vorauszahlung=nkv,
+        cold_rent=float(rent_periods.cold_rent(r[3], r[4] or 0)),
+        kind=r[5] or "agreed",
+        kind_label=rent_periods.KIND_LABELS.get(r[5] or "agreed", ""),
+        note=r[6], current=False,
+    )
+
+
+def _rent_periods(contract_id: int, owner: int) -> list[RentPeriodOut]:
+    rows = fetch(f"{_RENTS_SELECT} WHERE contract_id=? AND owner_id=? ORDER BY valid_from",
+                 (contract_id, owner))
+    today = _date.today().isoformat()
+    out = [_rent_row(r, today) for r in rows]
+    # Exactly one period is the one being charged now: the last that has
+    # started, or — for a tenancy that has not begun — the one it starts at.
+    started = [p for p in out if not p.valid_from or p.valid_from <= today]
+    current = started[-1] if started else (out[0] if out else None)
+    if current is not None:
+        current.current = True
+    return out
+
+
+def _correct_current_rent(contract_id: int, rent, nkv, start_date, owner: int) -> None:
+    """Rewrite the price in force today, or write the first one if a tenancy
+    somehow has none (a contract created before this table existed)."""
+    periods = _rent_periods(contract_id, owner)
+    current = next((p for p in periods if p.current), None)
+    if current is None:
+        execute("""
+            INSERT INTO contract_rents
+              (contract_id, valid_from, rent, nebenkosten_vorauszahlung, kind, owner_id)
+            VALUES (?,?,?,?,'initial',?)
+        """, (contract_id, start_date, rent, nkv, owner))
+        return
+    execute("""
+        UPDATE contract_rents SET rent=?, nebenkosten_vorauszahlung=?
+        WHERE id=? AND owner_id=?
+    """, (rent, nkv, current.id, owner))
+
+
+@router.get("/{contract_id}/rents", response_model=list[RentPeriodOut])
+def list_rent_periods(contract_id: int, owner: int = Depends(require_auth)):
+    """Every price this tenancy has been charged at, oldest first."""
+    _assert_own(contract_id, owner)
+    return _rent_periods(contract_id, owner)
+
+
+@router.post("/{contract_id}/rents", response_model=list[RentPeriodOut], status_code=201)
+def add_rent_period(contract_id: int, body: RentPeriodIn,
+                    owner: int = Depends(require_auth)):
+    """Record what the rent becomes, and from when.
+
+    The earlier price stays exactly as it is, and with it every month it
+    covered: this is how a §558 increase, a Staffel step or an Indexmiete
+    adjustment is entered without restating a year that has already been
+    filed. Dating it ahead is normal — an increase is owed from the beginning
+    of the third calendar month after the demand reaches the tenant, and a
+    Staffelmiete's steps are agreed years before they are charged.
+    """
+    _assert_own(contract_id, owner)
+    row = fetch("SELECT start_date, end_date FROM contracts WHERE id=? AND owner_id=?",
+                (contract_id, owner))[0]
+    start, end = row[0], row[1]
+    if start and str(start) not in ("None", "") and body.valid_from < str(start):
+        raise HTTPException(422, f"The tenancy starts on {start}; a price cannot "
+                                 f"apply before it.")
+    if end and str(end) not in ("None", "") and body.valid_from > str(end):
+        raise HTTPException(422, f"The tenancy ended on {end}; a price starting "
+                                 f"after that would never be charged.")
+    if fetch("SELECT id FROM contract_rents WHERE contract_id=? AND valid_from=? "
+             "AND owner_id=?", (contract_id, body.valid_from, owner)):
+        raise HTTPException(409, f"This tenancy already has a price starting on "
+                                 f"{body.valid_from}. Edit that one instead.")
+    # An increase that says nothing about the Nebenkosten keeps the share
+    # already agreed: raising the rent does not silently turn the rent warm,
+    # which would move the Kaltmiete, every €/m² derived from it and the
+    # Umlagen line of the Anlage V. Pass 0 to say there is no share.
+    nkv = body.nebenkosten_vorauszahlung
+    if nkv is None:
+        current = next((p for p in _rent_periods(contract_id, owner) if p.current), None)
+        nkv = current.nebenkosten_vorauszahlung if current else None
+        if nkv is not None and nkv > body.rent:
+            raise HTTPException(422, f"The Nebenkosten share carried over "
+                                     f"({nkv:.2f} €) is larger than the new rent.")
+    execute("""
+        INSERT INTO contract_rents
+          (contract_id, valid_from, rent, nebenkosten_vorauszahlung, kind, note, owner_id)
+        VALUES (?,?,?,?,?,?,?)
+    """, (contract_id, body.valid_from, body.rent, nkv,
+          body.kind, body.note or None, owner))
+    return _rent_periods(contract_id, owner)
+
+
+@router.put("/{contract_id}/rents/{period_id}", response_model=list[RentPeriodOut])
+def update_rent_period(contract_id: int, period_id: int, body: RentPeriodIn,
+                       owner: int = Depends(require_auth)):
+    """Correct a price that was entered wrongly."""
+    _assert_own(contract_id, owner)
+    if not fetch("SELECT id FROM contract_rents WHERE id=? AND contract_id=? AND owner_id=?",
+                 (period_id, contract_id, owner)):
+        raise HTTPException(404, "Rent period not found")
+    if fetch("SELECT id FROM contract_rents WHERE contract_id=? AND valid_from=? "
+             "AND id<>? AND owner_id=?", (contract_id, body.valid_from, period_id, owner)):
+        raise HTTPException(409, f"Another price already starts on {body.valid_from}.")
+    execute("""
+        UPDATE contract_rents
+        SET valid_from=?, rent=?, nebenkosten_vorauszahlung=?, kind=?, note=?
+        WHERE id=? AND owner_id=?
+    """, (body.valid_from, body.rent, body.nebenkosten_vorauszahlung, body.kind,
+          body.note or None, period_id, owner))
+    return _rent_periods(contract_id, owner)
+
+
+@router.delete("/{contract_id}/rents/{period_id}", response_model=list[RentPeriodOut])
+def delete_rent_period(contract_id: int, period_id: int,
+                       owner: int = Depends(require_auth)):
+    """Remove a price that should not have been recorded.
+
+    The last one cannot go: a tenancy with no price at all would be expected
+    to earn nothing, in every month it ever ran.
+    """
+    _assert_own(contract_id, owner)
+    periods = _rent_periods(contract_id, owner)
+    if not any(p.id == period_id for p in periods):
+        raise HTTPException(404, "Rent period not found")
+    if len(periods) == 1:
+        raise HTTPException(409, "This is the only price on file for the tenancy. "
+                                 "Edit it instead of removing it.")
+    execute("DELETE FROM contract_rents WHERE id=? AND owner_id=?", (period_id, owner))
+    return _rent_periods(contract_id, owner)

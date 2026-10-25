@@ -240,9 +240,11 @@ def flat_insights(owner: int = Depends(require_auth)):
 def _arrears_by_property(owner: int) -> dict:
     """Outstanding rent per property, from the reminders' own calculation.
 
-    Reusing detect_overdue costs one more round trip and is worth it: a second
-    implementation of the arrears rule would drift from the one the reminders
-    page acts on, and then two pages would disagree about who owes what.
+    Reusing detect_overdue rather than reimplementing the arrears rule: a
+    second implementation would drift from the one the reminders page acts on,
+    and then two pages would disagree about who owes what. It used to cost a
+    further round trip to map each contract to its flat; detect_overdue's own
+    query already joins the flat, so it answers that too now.
     """
     from logic import detect_overdue
     out: dict = {}
@@ -250,16 +252,10 @@ def _arrears_by_property(owner: int) -> dict:
         rows = detect_overdue(owner=owner)
     except Exception:
         return out                          # arrears are an extra, not the page
-    if not rows:
-        return out
-    from db import fetch
-    ids = [r["contract_id"] for r in rows]
-    placeholders = ",".join("?" for _ in ids)
-    prop_of = dict(fetch(
-        f"SELECT c.id, a.property_id FROM contracts c JOIN apartments a ON a.id=c.apartment_id "
-        f"WHERE c.id IN ({placeholders}) AND c.owner_id=?", (*ids, owner)))
     for r in rows:
-        pid = prop_of.get(r["contract_id"])
+        pid = r.get("property_id")
         if pid is not None:
-            out[pid] = out.get(pid, 0.0) + float(r["amount_due"])
+            out[pid] = out.get(pid, 0.0) + float(r.get("amount_due") or 0)
     return out
+
+

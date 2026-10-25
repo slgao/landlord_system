@@ -226,3 +226,51 @@ def test_a_flat_with_neither_is_still_unvalued(monkeypatch):
     r = tax_router.amortization(owner=1)
     assert r["properties"][0]["market_value"] is None
     assert r["totals"]["equity"] is None
+
+
+# ── merging several loans onto one timeline ──────────────────────────────────
+
+def _sched(start, years, **over):
+    row = {"interest": 1.0, "tilgung": 2.0, "payment": 3.0, "balance_end": 4.0,
+           "interest_cum": 5.0, "tilgung_cum": 6.0}
+    row.update(over)
+    return [{"year": y, **row} for y in range(start, start + years)]
+
+
+def test_two_loans_are_summed_year_by_year():
+    from api.routers.tax import _merge_schedules
+    out = _merge_schedules([_sched(2024, 3), _sched(2024, 3)])
+    assert [r["year"] for r in out] == [2024, 2025, 2026]
+    assert out[0]["interest"] == 2.0 and out[0]["tilgung"] == 4.0
+
+
+def test_a_loan_that_starts_later_contributes_nothing_before_it():
+    from api.routers.tax import _merge_schedules
+    out = _merge_schedules([_sched(2024, 3), _sched(2026, 2)])
+    assert out[0]["year"] == 2024 and out[0]["interest"] == 1.0   # only the first
+    assert out[2]["year"] == 2026 and out[2]["interest"] == 2.0   # both
+
+
+def test_a_paid_off_loan_keeps_its_totals_in_the_years_after():
+    # Otherwise "interest paid so far" drops back the year a loan ends.
+    from api.routers.tax import _merge_schedules
+    out = _merge_schedules([_sched(2024, 2), _sched(2024, 5)])
+    last = out[-1]
+    assert last["year"] == 2028
+    assert last["interest_cum"] == 10.0      # 5 from the live loan + 5 carried
+    assert last["interest"] == 1.0           # but it adds nothing to that year
+
+
+def test_the_merge_looks_each_year_up_rather_than_scanning():
+    # It used to scan every schedule from the top for every year of the range,
+    # which is quadratic in the length of a loan. Same answer, by lookup.
+    import inspect
+    from api.routers.tax import _merge_schedules
+    src = inspect.getsource(_merge_schedules)
+    assert "index.get(y)" in src
+    assert "next((r for r in sched" not in src
+
+
+def test_an_empty_list_merges_to_nothing():
+    from api.routers.tax import _merge_schedules
+    assert _merge_schedules([]) == []

@@ -26,6 +26,7 @@ import { Trash2, Calendar } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { eur, fmtDate, invalidateSettlementViews, resultLabel } from "@/components/nk-settlements";
 import { money, date as fmtD } from "@/lib/fmt";
+import { RentYearChart } from "@/components/rent-year-chart";
 
 const FOREIGN_CURRENCIES = ["CNY", "USD", "GBP"];
 const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "$", GBP: "£" };
@@ -34,7 +35,9 @@ const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "
 // currency, e.g. "(paid ¥5655)". Empty when the payment was made in EUR.
 function foreignNote(p: { orig_amount?: number | null; orig_currency?: string | null }) {
   if (!p.orig_currency || p.orig_amount == null) return "";
-  return `paid ${CURRENCY_SYMBOLS[p.orig_currency] || p.orig_currency}${p.orig_amount.toFixed(2)}`;
+  const amount = p.orig_amount.toLocaleString("de-DE",
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `paid ${amount}\u00A0${CURRENCY_SYMBOLS[p.orig_currency] || p.orig_currency}`;
 }
 
 // Marks money that moved because of a Nebenkostenabrechnung, so it is not
@@ -188,7 +191,10 @@ export default function RentTrackingPage() {
               {Object.entries(monthTotals).map(([curr, total]) => (
                 <div key={curr}>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Rent {curr}</p>
-                  <p className="text-2xl font-semibold">{CURRENCY_SYMBOLS[curr] || curr} {total.toFixed(2)}</p>
+                  <p className="text-2xl font-semibold">
+                    {curr === "EUR" ? money(total)
+                      : `${total.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u00A0${CURRENCY_SYMBOLS[curr] || curr}`}
+                  </p>
                 </div>
               ))}
               {hasMonthSettlements && (
@@ -234,6 +240,11 @@ export default function RentTrackingPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* The year behind the month above: what comes in per month, and the
+          average across it. Computed from the payments this page already
+          holds, so it costs no further request. */}
+      <RentYearChart payments={allPayments} />
 
       {/* All payments table */}
       <Card>

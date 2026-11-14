@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { eur, fmtDate, invalidateSettlementViews, resultLabel } from "@/components/nk-settlements";
 import { money, date as fmtD } from "@/lib/fmt";
 import { RentYearChart } from "@/components/rent-year-chart";
+import { CashflowYearChart } from "@/components/cashflow-year-chart";
 
 const FOREIGN_CURRENCIES = ["CNY", "USD", "GBP"];
 const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "$", GBP: "£" };
@@ -245,6 +246,11 @@ export default function RentTrackingPage() {
           average across it. Computed from the payments this page already
           holds, so it costs no further request. */}
       <RentYearChart payments={allPayments} />
+
+      {/* And what was left of it: the same months, less everything that went
+          out. Its arithmetic is the balance sheet's own, so the two pages can
+          never quote different figures. */}
+      <CashflowYearChart />
 
       {/* All payments table */}
       <Card>

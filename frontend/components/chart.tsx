@@ -77,6 +77,26 @@ export function ChartTooltip({ active, payload, label }: any) {
   );
 }
 
+/** Names a dashed reference line, in the card's header rather than in the
+ *  plot — inside the plot a label lands on whichever bar or point happens to
+ *  be tall there. The swatch draws the line's own dash pattern, so a chart
+ *  with two broken lines on it stays unambiguous. */
+export function AverageKey({ label, dash = "4 4", color }: {
+  label: string;
+  dash?: string;
+  color?: string;
+}) {
+  return (
+    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <svg width="18" height="2" aria-hidden="true" className="shrink-0">
+        <line x1="0" y1="1" x2="18" y2="1" strokeWidth="1.5" strokeDasharray={dash}
+          stroke={color ?? "hsl(var(--foreground))"} />
+      </svg>
+      {label}
+    </p>
+  );
+}
+
 export function ChartLegend({ payload }: any) {
   if (!payload?.length) return null;
   return (

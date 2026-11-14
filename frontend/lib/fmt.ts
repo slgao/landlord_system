@@ -19,13 +19,20 @@ const DE = "de-DE";
 // A narrow no-break space would be typographically nicer, but it goes missing
 // in a copied-and-pasted figure. The ordinary no-break space survives.
 const NBSP = " ";
+// A real minus sign: the width of a digit, so a column of figures stays
+// aligned, and it reads as a sign rather than as punctuation.
+const MINUS = "\u2212";
 
 /** `1.050,00 €` — money, always with its cents. */
 export function money(n: number | null | undefined, opts?: { cents?: boolean }): string {
   if (n == null || !Number.isFinite(n)) return "—";
   const digits = opts?.cents === false ? 0 : 2;
-  return `${n.toLocaleString(DE, { minimumFractionDigits: digits,
-                                   maximumFractionDigits: digits })}${NBSP}€`;
+  const body = n.toLocaleString(DE, { minimumFractionDigits: digits,
+                                      maximumFractionDigits: digits });
+  // A real minus sign rather than the hyphen toLocaleString hands back: it is
+  // the width of a digit, so a column of figures stays aligned, and it reads
+  // as a sign instead of as punctuation.
+  return `${body.replace(/^-/, MINUS)}${NBSP}€`;
 }
 
 /** `1.051 €` — a headline figure, where the cents are noise. */
@@ -36,7 +43,7 @@ export const money0 = (n: number | null | undefined) => money(n, { cents: false 
 export function signed(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   const body = money(Math.abs(n));
-  return n < 0 ? `−${body}` : `+${body}`;
+  return n < 0 ? `${MINUS}${body}` : `+${body}`;
 }
 
 /** `5,05 %` — a rate. */

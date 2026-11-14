@@ -1,3 +1,5 @@
+import { money } from "@/lib/fmt";
+
 // Shared chart styling primitives so the Dashboard and Balance Sheet charts
 // stay visually consistent: cohesive palette, currency formatting, and a
 // custom tooltip/legend whose swatches resolve a solid colour by series key
@@ -39,13 +41,20 @@ export const SERIES_COLOR: Record<string, string> = {
 export const swatch = (key: string, fallback?: string) =>
   SERIES_COLOR[key] ?? fallback ?? C.expected;
 
+// Chart figures follow the same conventions as the rest of the app (lib/fmt):
+// a dot for thousands, a comma for decimals, the symbol after the figure.
+// A tooltip reading €1,050.00 beside a table reading 1.050,00 € was the last
+// place the two spellings still met.
 export function fmt(n: number) {
-  return `€${(n ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return money(n);
 }
 
 export function fmtAxis(n: number) {
-  if (Math.abs(n) >= 1000) return `€${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k`;
-  return `€${n}`;
+  if (Math.abs(n) >= 1000) {
+    const k = n / 1000;
+    return `${k.toLocaleString("de-DE", { maximumFractionDigits: 1 })}k\u00A0€`;
+  }
+  return money(n, { cents: false });
 }
 
 export function ChartTooltip({ active, payload, label }: any) {

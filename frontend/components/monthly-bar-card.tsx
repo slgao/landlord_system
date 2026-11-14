@@ -20,7 +20,7 @@ import {
   Tooltip, XAxis, YAxis,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { C, ChartTooltip, fmtAxis } from "@/components/chart";
+import { AverageKey, C, ChartTooltip, fmtAxis } from "@/components/chart";
 
 export interface MonthPoint {
   month: string;
@@ -63,13 +63,9 @@ export function MonthlyBarCard({
               {nothingYet ? empty : subtitle}
             </p>
             {!nothingYet && average != null && (
-              <p className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1.5">
-                <svg width="18" height="2" aria-hidden="true" className="shrink-0">
-                  <line x1="0" y1="1" x2="18" y2="1" stroke="hsl(var(--foreground))"
-                    strokeWidth="1.5" strokeDasharray="4 4" />
-                </svg>
-                the average, across the months
-              </p>
+              <div className="mt-1.5">
+                <AverageKey label="the average, across the months" />
+              </div>
             )}
           </div>
           {/* Right-aligned beside the title, left-aligned under it once the

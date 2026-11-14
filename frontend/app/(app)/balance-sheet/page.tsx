@@ -20,7 +20,8 @@ import {
 import {
   Download, TrendingUp, TrendingDown, Wallet, Banknote, Receipt, Target, Landmark,
 } from "lucide-react";
-import { C, fmt, fmtAxis, ChartTooltip, ChartLegend } from "@/components/chart";
+import { AverageKey, C, fmt, fmtAxis, ChartTooltip, ChartLegend } from "@/components/chart";
+import { num } from "@/lib/fmt";
 
 const currentYear = new Date().getFullYear();
 const YEARS = Array.from({ length: 5 }, (_, i) => currentYear - i);
@@ -104,6 +105,14 @@ export default function BalanceSheetPage() {
   const curExpected = snapshot.reduce((s, p) => s + (p.expected || 0), 0);
   const curCosts = snapshot.reduce((s, p) => s + (p.costs || 0), 0);
   const curNet = curExpected - curCosts;
+
+  /** The mean of one series across the months a chart plots.
+   *
+   *  Across the months *shown*, which for the running year is January to
+   *  this month: the balance sheet stops at the current month, so there are
+   *  no empty months at the end to divide by. */
+  const meanOf = (rows: any[], key: string) =>
+    rows.length ? rows.reduce((t, r) => t + (r[key] || 0), 0) / rows.length : 0;
 
   // Build aggregate chart data across all properties.
   const allMonths = properties[0]?.monthly_rows?.map((r: any) => r["Month"]) || [];
@@ -290,6 +299,7 @@ export default function BalanceSheetPage() {
             <Card>
               <CardHeader className="pb-1">
                 <CardTitle className="text-sm font-medium">Income vs Target · {year}</CardTitle>
+                <AverageKey label={`⌀ ${fmt(meanOf(aggregateChartData, "Actual"))} received per month`} />
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={260}>
@@ -305,6 +315,12 @@ export default function BalanceSheetPage() {
                     <Bar dataKey="Actual" name="Actual" fill={C.actual} fillOpacity={0.9} maxBarSize={34} />
                     <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={1.5}
                       dot={false} activeDot={{ r: 3 }} />
+                    {/* What the months average to, so a thin month and a fat
+                        one are read against the year rather than each other.
+                        Named in the header: in the plot the label lands on
+                        whichever bar happens to be tall that month. */}
+                    <ReferenceLine y={meanOf(aggregateChartData, "Actual")} stroke={C.net}
+                      strokeWidth={1.5} strokeDasharray="4 4" ifOverflow="extendDomain" />
                   </ComposedChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -316,6 +332,11 @@ export default function BalanceSheetPage() {
             <Card>
               <CardHeader className="pb-1">
                 <CardTitle className="text-sm font-medium">Net Income Trend</CardTitle>
+                {/* Dotted, not dashed: the expected-net line on this chart is
+                    already dashed, and two broken lines of the same pattern
+                    would be two guesses at which is which. */}
+                <AverageKey dash="1 3"
+                  label={`⌀ ${fmt(meanOf(aggregateChartData, "Net"))} net per month`} />
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={200}>
@@ -332,6 +353,8 @@ export default function BalanceSheetPage() {
                       fill={C.actual} fillOpacity={0.06} dot={false} activeDot={{ r: 3 }} />
                     <Line type="monotone" dataKey="Expected net" name="Expected net" stroke={C.expected}
                       strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+                    <ReferenceLine y={meanOf(aggregateChartData, "Net")} stroke={C.net}
+                      strokeWidth={1.5} strokeDasharray="1 3" ifOverflow="extendDomain" />
                   </AreaChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -365,11 +388,15 @@ export default function BalanceSheetPage() {
                       <span>Debt remaining: <span className="text-destructive">{fmt(prop.debt_remaining)}</span></span>
                     )}
                   </div>
+                  <AverageKey label={`⌀ ${fmt(meanOf(chartData, "Actual"))} received per month`} />
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <ResponsiveContainer width="100%" height={170}>
                     <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 4, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                      {/* A solid hairline, as on the charts above: a dashed
+                          grid reads as a threshold, and this chart now has a
+                          real one drawn across it. */}
+                      <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.5} vertical={false} />
                       <XAxis dataKey="month" tickLine={false} axisLine={false}
                         tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                       <YAxis tickLine={false} axisLine={false} width={50} tickFormatter={fmtAxis}
@@ -378,6 +405,8 @@ export default function BalanceSheetPage() {
                       <Bar dataKey="Expected" name="Expected" fill={C.expected} fillOpacity={0.2}
                         stroke={C.expected} strokeOpacity={0.4} strokeDasharray="3 3" radius={[3, 3, 0, 0]} />
                       <Bar dataKey="Actual" name="Actual" fill={C.actual} fillOpacity={0.85} radius={[3, 3, 0, 0]} maxBarSize={36} />
+                      <ReferenceLine y={meanOf(chartData, "Actual")} stroke={C.net}
+                        strokeWidth={1.5} strokeDasharray="4 4" ifOverflow="extendDomain" />
                     </ComposedChart>
                   </ResponsiveContainer>
 
@@ -399,14 +428,17 @@ export default function BalanceSheetPage() {
                         return (
                           <TableRow key={i}>
                             <TableCell className="text-muted-foreground">{row["Month"]}</TableCell>
-                            <TableCell className="text-right font-mono">{row["Expected rent (€)"]?.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-mono">{row["Actual received (€)"]?.toFixed(2)}</TableCell>
-                            <TableCell className={`text-right font-mono ${variance < 0 ? "text-destructive" : variance > 0 ? "text-primary" : "text-muted-foreground"}`}>
-                              {variance >= 0 ? "+" : ""}{variance?.toFixed(2)}
+                            {/* The same spelling as the figures in the card's
+                                own header, two lines above: 1.029,00 rather
+                                than 1029.00. */}
+                            <TableCell className="text-right font-mono tabular-nums">{num(row["Expected rent (€)"])}</TableCell>
+                            <TableCell className="text-right font-mono tabular-nums">{num(row["Actual received (€)"])}</TableCell>
+                            <TableCell className={`text-right font-mono tabular-nums ${variance < 0 ? "text-destructive" : variance > 0 ? "text-primary" : "text-muted-foreground"}`}>
+                              {variance > 0 ? "+" : ""}{num(variance)}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-muted-foreground">{row["Costs (€)"]?.toFixed(2)}</TableCell>
-                            <TableCell className={`text-right font-mono font-medium ${netRow >= 0 ? "text-primary" : "text-destructive"}`}>
-                              {netRow?.toFixed(2)}
+                            <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{num(row["Costs (€)"])}</TableCell>
+                            <TableCell className={`text-right font-mono tabular-nums font-medium ${netRow >= 0 ? "text-primary" : "text-destructive"}`}>
+                              {num(netRow)}
                             </TableCell>
                           </TableRow>
                         );

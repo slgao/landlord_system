@@ -91,5 +91,6 @@ export function period(from?: string | null, to?: string | null): string {
 export function num(n: number | null | undefined, digits = 2): string {
   if (n == null || !Number.isFinite(n)) return "";
   return n.toLocaleString(DE, { minimumFractionDigits: digits,
-                                maximumFractionDigits: digits });
+                                maximumFractionDigits: digits })
+    .replace(/^-/, MINUS);
 }

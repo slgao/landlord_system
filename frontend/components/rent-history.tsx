@@ -158,7 +158,9 @@ export function RentHistoryDialog({ contract, onClose }: {
                       <ConfirmButton onConfirm={() => remove.mutate(p.id)}
                         title="Remove this price?"
                         message={`Remove ${eur(p.rent)} from ${p.valid_from}? The months it covered fall back to the price before it.`}>
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive shrink-0">
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive shrink-0"
+                          title="Remove this price"
+                          aria-label={`Remove the price from ${p.valid_from}`}>
                           <Trash2 className="size-4" />
                         </Button>
                       </ConfirmButton>

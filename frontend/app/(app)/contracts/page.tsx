@@ -409,7 +409,7 @@ export default function ContractsPage() {
                             onClick={() => setRentHistoryFor(c)}>
                             <TrendingUp className="size-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" aria-label={`Edit the contract of ${c.tenant_name}`} onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
+                          <Button variant="ghost" size="icon" title="Edit this contract" aria-label={`Edit the contract of ${c.tenant_name}`} onClick={() => openEdit(c)}><Pencil className="size-4" /></Button>
                           {!c.terminated && (
                             <Button variant="ghost" size="icon" title="Terminate" onClick={() => {
                               setTerminateTarget(c);
@@ -429,7 +429,7 @@ export default function ContractsPage() {
                             title="Delete contract?"
                             message={`Delete the contract for ${c.tenant_name}? This permanently removes its payments, co-tenants, and Kaution deductions.`}
                           >
-                            <Button variant="ghost" size="icon" aria-label={`Delete the contract of ${c.tenant_name}`} className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
+                            <Button variant="ghost" size="icon" title="Delete this contract" aria-label={`Delete the contract of ${c.tenant_name}`} className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
                           </ConfirmButton>
                         </div>
                       </TableCell>
@@ -492,8 +492,8 @@ export default function ContractsPage() {
                             <TableCell><Input className="h-7 text-xs" placeholder="Note" value={editPay.note} onChange={(e) => setEditPay({ ...editPay, note: e.target.value })} /></TableCell>
                             <TableCell className="text-right"><Input type="number" step="0.01" className="h-7 text-xs w-24 ml-auto" value={editPay.amount || ""} onChange={(e) => setEditPay({ ...editPay, amount: Number(e.target.value) })} /></TableCell>
                             <TableCell className="flex gap-1">
-                              <Button variant="ghost" size="icon" onClick={() => updatePayment.mutate(editPay)} disabled={!editPay.amount || updatePayment.isPending}><Check className="size-3 text-primary" /></Button>
-                              <Button variant="ghost" size="icon" onClick={() => setEditPay(null)}><X className="size-3" /></Button>
+                              <Button variant="ghost" size="icon" title="Save this instalment" aria-label="Save this instalment" onClick={() => updatePayment.mutate(editPay)} disabled={!editPay.amount || updatePayment.isPending}><Check className="size-3 text-primary" /></Button>
+                              <Button variant="ghost" size="icon" title="Cancel" aria-label="Cancel editing this instalment" onClick={() => setEditPay(null)}><X className="size-3" /></Button>
                             </TableCell>
                           </TableRow>
                         ) : (
@@ -502,8 +502,8 @@ export default function ContractsPage() {
                             <TableCell className="text-muted-foreground text-xs">{p.note || "—"}</TableCell>
                             <TableCell className="text-right font-mono">{kaution(p.amount)}</TableCell>
                             <TableCell className="flex gap-1">
-                              <Button variant="ghost" size="icon" onClick={() => setEditPay({ id: p.id, date: p.date, amount: p.amount, note: p.note || "" })}><Pencil className="size-3" /></Button>
-                              <ConfirmButton onConfirm={() => removePayment.mutate(p.id)} title="Delete installment?" message={`Delete the ${kaution(p.amount)} installment?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
+                              <Button variant="ghost" size="icon" title="Edit this instalment" aria-label={`Edit the instalment of ${kaution(p.amount)}`} onClick={() => setEditPay({ id: p.id, date: p.date, amount: p.amount, note: p.note || "" })}><Pencil className="size-3" /></Button>
+                              <ConfirmButton onConfirm={() => removePayment.mutate(p.id)} title="Delete installment?" message={`Delete the ${kaution(p.amount)} installment?`}><Button variant="ghost" size="icon" title="Delete this instalment" aria-label={`Delete the instalment of ${kaution(p.amount)}`}><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -569,8 +569,8 @@ export default function ContractsPage() {
                           <TableCell><Input className="h-7 text-xs" placeholder="Reason" value={editDed.reason} onChange={(e) => setEditDed({ ...editDed, reason: e.target.value })} /></TableCell>
                           <TableCell className="text-right"><Input type="number" step="0.01" className="h-7 text-xs w-24 ml-auto" value={editDed.amount || ""} onChange={(e) => setEditDed({ ...editDed, amount: Number(e.target.value) })} /></TableCell>
                           <TableCell className="flex gap-1">
-                            <Button variant="ghost" size="icon" onClick={() => updateDeduction.mutate(editDed)} disabled={!editDed.amount || updateDeduction.isPending}><Check className="size-3 text-primary" /></Button>
-                            <Button variant="ghost" size="icon" onClick={() => setEditDed(null)}><X className="size-3" /></Button>
+                            <Button variant="ghost" size="icon" title="Save this deduction" aria-label="Save this deduction" onClick={() => updateDeduction.mutate(editDed)} disabled={!editDed.amount || updateDeduction.isPending}><Check className="size-3 text-primary" /></Button>
+                            <Button variant="ghost" size="icon" title="Cancel" aria-label="Cancel editing this deduction" onClick={() => setEditDed(null)}><X className="size-3" /></Button>
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -592,8 +592,8 @@ export default function ContractsPage() {
                           <TableCell className="text-muted-foreground text-xs">{d.reason || "—"}</TableCell>
                           <TableCell className="text-right font-mono">{kaution(d.amount)}</TableCell>
                           <TableCell className="flex gap-1">
-                            <Button variant="ghost" size="icon" onClick={() => setEditDed({ id: d.id, date: d.date, amount: d.amount, category: d.category, reason: d.reason || "" })}><Pencil className="size-3" /></Button>
-                            <ConfirmButton onConfirm={() => removeDeduction.mutate(d.id)} title="Delete deduction?" message={`Delete the ${kaution(d.amount)} deduction (${d.category})?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
+                            <Button variant="ghost" size="icon" title="Edit this deduction" aria-label={`Edit the ${d.category} deduction`} onClick={() => setEditDed({ id: d.id, date: d.date, amount: d.amount, category: d.category, reason: d.reason || "" })}><Pencil className="size-3" /></Button>
+                            <ConfirmButton onConfirm={() => removeDeduction.mutate(d.id)} title="Delete deduction?" message={`Delete the ${kaution(d.amount)} deduction (${d.category})?`}><Button variant="ghost" size="icon" title="Delete this deduction" aria-label={`Delete the ${d.category} deduction`}><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -617,7 +617,8 @@ export default function ContractsPage() {
                               <TableCell className="text-right font-mono">{kaution(r.amount)}</TableCell>
                               <TableCell>
                                 <ConfirmButton onConfirm={() => removeReturn.mutate(r.id)} title="Delete repayment?" message={`Delete the ${kaution(r.amount)} repayment of ${fmtD(r.date)}?`}>
-                                  <Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button>
+                                  <Button variant="ghost" size="icon" title="Delete this repayment"
+                                    aria-label={`Delete the repayment of ${kaution(r.amount)}`}><Trash2 className="size-3 text-destructive" /></Button>
                                 </ConfirmButton>
                               </TableCell>
                             </TableRow>
@@ -710,7 +711,7 @@ export default function ContractsPage() {
                           <TableCell className="text-muted-foreground">{ct.gender}</TableCell>
                           <TableCell className="text-muted-foreground text-xs">{ct.email}</TableCell>
                           <TableCell><Badge variant={ct.in_contract ? "default" : "secondary"}>{ct.in_contract ? "In contract" : "Informal"}</Badge></TableCell>
-                          <TableCell><ConfirmButton onConfirm={() => removeCoTenant.mutate(ct.id)} title="Remove co-tenant?" message={`Remove ${ct.name} from this contract?`} confirmLabel="Remove"><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
+                          <TableCell><ConfirmButton onConfirm={() => removeCoTenant.mutate(ct.id)} title="Remove co-tenant?" message={`Remove ${ct.name} from this contract?`} confirmLabel="Remove"><Button variant="ghost" size="icon" title="Remove this co-tenant" aria-label={`Remove ${ct.name}`}><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

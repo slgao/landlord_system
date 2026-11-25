@@ -366,7 +366,7 @@ export default function NKSettlementsPage() {
                         message={s.paid !== 0
                           ? `Payments of ${eur(Math.abs(s.paid))} are booked against it. They stay in Rent Tracking as NK settlement payments, just no longer linked.`
                           : "The settlement and its stored PDF will be removed."}>
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label="Delete">
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" title="Delete this settlement" aria-label="Delete this settlement">
                           <Trash2 className="size-4" />
                         </Button>
                       </ConfirmButton>

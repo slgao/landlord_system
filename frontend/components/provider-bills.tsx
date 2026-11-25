@@ -372,7 +372,7 @@ export function BillsSection({ bills, candidates }: {
                     </Button>
                     <ConfirmButton onConfirm={() => remove.mutate(b.id)} title="Delete bill?"
                       message="It is an expense too: deleting it removes it from the tax report and the balance sheet, and from any settlement it is linked to.">
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label="Delete bill">
+                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" title="Delete this bill" aria-label="Delete this bill">
                         <Trash2 className="size-4" />
                       </Button>
                     </ConfirmButton>

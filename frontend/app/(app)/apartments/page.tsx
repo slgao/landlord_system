@@ -173,7 +173,9 @@ export default function ApartmentsPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(a)}>
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(a)}
+                        title="Edit this apartment"
+                        aria-label={`Edit ${a.name}`}>
                         <Pencil className="size-4" />
                       </Button>
                       <ConfirmButton
@@ -181,7 +183,9 @@ export default function ApartmentsPage() {
                         title="Delete apartment?"
                         message={`Delete "${a.name}"? Apartments with contracts can't be deleted.`}
                       >
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"
+                          title="Delete this apartment"
+                          aria-label={`Delete ${a.name}`}>
                           <Trash2 className="size-4" />
                         </Button>
                       </ConfirmButton>

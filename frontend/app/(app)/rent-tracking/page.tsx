@@ -228,7 +228,9 @@ export default function RentTrackingPage() {
                     </TableCell>
                     <TableCell>
                       <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${money(p.amount)} payment from ${fmtDate(p.payment_date)}?`}>
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"
+                          title="Delete this payment"
+                          aria-label={`Delete the payment of ${money(p.amount)}`}>
                           <Trash2 className="size-4" />
                         </Button>
                       </ConfirmButton>
@@ -294,7 +296,9 @@ export default function RentTrackingPage() {
                   </TableCell>
                   <TableCell>
                     <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${money(p.amount)} payment from ${fmtDate(p.payment_date)}?`}>
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"
+                        title="Delete this payment"
+                        aria-label={`Delete the payment of ${money(p.amount)}`}>
                         <Trash2 className="size-4" />
                       </Button>
                     </ConfirmButton>

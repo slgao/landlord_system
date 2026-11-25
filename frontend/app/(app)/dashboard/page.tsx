@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { DashboardStats, ContractAlert, NKDashboard, FlatInsights } from "@/lib/types";
@@ -10,13 +11,11 @@ import { SetupChecklist } from "@/components/setup-checklist";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, DoorOpen, TrendingUp, Wallet } from "lucide-react";
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend,
+  ComposedChart, Bar, Line, Scatter, XAxis, YAxis, CartesianGrid, Tooltip,
+  ReferenceLine, ResponsiveContainer,
 } from "recharts";
-import { C, fmtAxis, ChartTooltip, ChartLegend } from "@/components/chart";
-
-/** Whole euro — a headline figure does not need its cents. */
-const eur0 = (n: number) => `${n.toLocaleString("de-DE", { maximumFractionDigits: 0 })} €`;
+import { C, fmtAxis } from "@/components/chart";
+import { money, money0, signed } from "@/lib/fmt";
 
 const currentYear = new Date().getFullYear();
 const thisMonthKey = new Date().toLocaleString("en", { month: "short", year: "numeric" });
@@ -60,6 +59,99 @@ function StatCard({ title, value, icon: Icon, note, tone, href, label }: {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The cashflow chart's own parts
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The rent that was due, drawn as a mark across the month's bar.
+ *
+ *  A bullet-chart target: the bar is what arrived, the mark is what should
+ *  have. Reaching the mark means the month was paid in full, and falling
+ *  short shows the shortfall as a gap rather than as a difference the reader
+ *  has to compute between two adjacent bars. Recharts hands a Scatter point
+ *  its centre already placed on the category and on the value, which is what
+ *  keeps the mark over the bar it belongs to. */
+function TargetMark({ cx, cy, payload, half = 11 }: any) {
+  if (cx == null || cy == null || !payload?.Expected) return null;
+  // A month paid in full puts the mark inside its own bar, where ink on ink
+  // disappears; one that fell short puts it on the card. So the mark takes
+  // the colour that contrasts with whichever it landed on.
+  const inside = payload.Received >= payload.Expected;
+  return (
+    <line x1={cx - half} x2={cx + half} y1={cy} y2={cy}
+      stroke={inside ? "hsl(var(--background))" : "hsl(var(--foreground))"}
+      strokeOpacity={inside ? 0.85 : 0.6} strokeWidth={1.5} strokeDasharray="3 2" />
+  );
+}
+
+/** What the three marks mean, named beside the title.
+ *
+ *  Out here rather than in a legend strip under the plot: a legend sits where
+ *  the eye has already left, and Recharts orders it by series rather than by
+ *  how the chart is read. */
+function CashflowKey() {
+  const items: [string, React.ReactNode][] = [
+    ["rent received", <span key="a" className="inline-block size-2.5 rounded-[2px]"
+      style={{ background: C.actual }} />],
+    ["costs", <span key="b" className="inline-block size-2.5 rounded-[2px]"
+      style={{ background: C.costs, opacity: 0.85 }} />],
+    ["rent due", <svg key="c" width="16" height="8" aria-hidden>
+      <line x1="1" x2="15" y1="4" y2="4" stroke="currentColor" strokeOpacity={0.5}
+        strokeWidth="1.5" strokeDasharray="3 2" /></svg>],
+    ["what was left", <svg key="d" width="16" height="8" aria-hidden>
+      <line x1="1" x2="15" y1="4" y2="4" stroke="currentColor" strokeWidth="1.5" /></svg>],
+  ];
+  return (
+    <>
+      {items.map(([label, mark]) => (
+        <span key={label} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          {mark}{label}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** The month's figures, in the direction a reader thinks in.
+ *
+ *  Costs are held as negatives so they draw below the line; showing them that
+ *  way too would read as a refund, so the sign goes back here. */
+function CashflowTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  const short = d.Expected - d.Received;
+  const rows: [string, string, string][] = [
+    ["Rent due", money(d.Expected), "text-muted-foreground"],
+    ["Rent received", money(d.Received),
+      short > 0.5 ? "text-amber-700 dark:text-amber-400" : "text-primary"],
+    ["Costs", money(Math.abs(d.Costs)), "text-destructive"],
+  ];
+  return (
+    <div className="rounded-md border border-border bg-popover px-3 py-2 shadow-md">
+      <p className="text-xs font-medium mb-1.5">{d.fullMonth}</p>
+      <table className="text-xs">
+        <tbody>
+          {rows.map(([label, value, cls]) => (
+            <tr key={label}>
+              <td className="pr-4 text-muted-foreground">{label}</td>
+              <td className={`text-right font-mono tabular-nums ${cls}`}>{value}</td>
+            </tr>
+          ))}
+          <tr className="border-t border-border">
+            <td className="pr-4 pt-1">Left</td>
+            <td className="text-right font-mono tabular-nums pt-1 font-medium">{signed(d.Net)}</td>
+          </tr>
+        </tbody>
+      </table>
+      {short > 0.5 && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1.5">
+          {money(short)} short of the rent due
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -132,14 +224,82 @@ export default function DashboardPage() {
         if (row) { exp += row["Expected rent (€)"] || 0; act += row["Actual received (€)"] || 0; costs += row["Costs (€)"] || 0; }
       }
       return {
-        month,
+        // "Jan 2026" eleven times says the year eleven times; the title
+        // already does. Only the month belongs on the axis.
+        month: String(month).replace(/\s*\d{4}$/, ""),
+        fullMonth: month,
         Expected: +exp.toFixed(0),
         Received: +act.toFixed(0),
-        Costs: +costs.toFixed(0),
+        // Negative, because it is drawn below the line: money out. The
+        // tooltip puts the sign back the way a reader expects it.
+        Costs: -Math.abs(+costs.toFixed(0)),
         Net: +(act - costs).toFixed(0), // money in − money out
         isCurrent: month === thisMonthKey,
       };
     });
+  })();
+
+  // What the year comes to, for the figure that leads the card. The months
+  // already elapsed are the ones with anything in them, so they are the ones
+  // the average divides by — twelve would understate it for most of the year.
+  const chartNet = chartData.reduce((a: number, d: any) => a + d.Net, 0);
+  const chartMonths = chartData.length || 1;
+
+  // Left to itself Recharts squares the domain off around zero, which here
+  // reserved as much room below the line for costs that never reach it as
+  // above for rent — half an empty plot. This fits the range to the figures
+  // and then rounds out to a round number so the ticks stay readable.
+  // A fixed-width target mark is fine on a desktop and wrong on a phone: at
+  // 390px the months are 22px apart, so a 22px mark touches its neighbours
+  // and eleven of them read as one long line across the chart — the opposite
+  // of the per-month figure they are. So the mark is cut to the band it sits
+  // in, which means measuring the plot.
+  //
+  // A callback ref rather than useRef + useEffect: the card is only rendered
+  // once the figures have arrived, so on the mount the effect would run
+  // against a node that does not exist yet and, with no dependency to bring
+  // it back, would never measure anything at all.
+  const observer = useRef<ResizeObserver | null>(null);
+  const [plotWidth, setPlotWidth] = useState(0);
+  const plotRef = useCallback((el: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    setPlotWidth(el.getBoundingClientRect().width);
+    observer.current = new ResizeObserver(([e]) => setPlotWidth(e.contentRect.width));
+    observer.current.observe(el);
+  }, []);
+  useEffect(() => () => observer.current?.disconnect(), []);
+
+  // 56 for the Y axis, 12 for the chart's own margins.
+  const markHalf = plotWidth
+    ? Math.max(4, Math.min(11, ((plotWidth - 68) / chartMonths) * 0.31))
+    : 11;
+
+  const { chartDomain, chartTicks } = (() => {
+    if (!chartData.length) {
+      return { chartDomain: [0, 0] as [number, number], chartTicks: [0] };
+    }
+    const hi = Math.max(0, ...chartData.map((d: any) => Math.max(d.Received, d.Expected)));
+    const lo = Math.min(0, ...chartData.map((d: any) => d.Costs));
+    // The bounds hug the figures. Rounding them out to the tick step first
+    // is what left a quarter of the plot empty below costs that never got
+    // near it; the ticks can be round without the edges having to be.
+    const top = hi * 1.08;
+    const bottom = lo * 1.08;
+    // Then a round step for the labels, counted out from zero in both
+    // directions — so the line the whole chart is read against is one of the
+    // labelled ticks. Recharts divides a domain into equal parts wherever
+    // they happen to fall, and left to it the zero line here went unnamed.
+    const rough = (top - bottom) / 5;
+    const mag = Math.pow(10, Math.floor(Math.log10(Math.max(rough, 1))));
+    const step = [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10].map((m) => m * mag)
+      .find((v) => v >= rough) ?? 10 * mag;
+    const ticks: number[] = [];
+    for (let t = Math.ceil(bottom / step) * step; t <= top; t += step) {
+      ticks.push(Math.round(t));
+    }
+    return { chartDomain: [bottom, top] as [number, number], chartTicks: ticks };
   })();
 
   // An account with no tenancy has no cashflow, no yield and nothing let, and
@@ -165,9 +325,9 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Cashflow" icon={Wallet} href="/flat-economics"
-          value={m ? `${eur0(m.cashflow_monthly)}/mo` : "—"}
+          value={m ? `${money0(m.cashflow_monthly)}/mo` : "—"}
           tone={m ? (m.cashflow_monthly < 0 ? "bad" : "good") : undefined}
-          note={m ? `${eur0(m.operating_monthly)} earned, ${eur0(m.principal_monthly)} is Tilgung` : undefined}
+          note={m ? `${money0(m.operating_monthly)} earned, ${money0(m.principal_monthly)} is Tilgung` : undefined}
         />
         {/* Net yield goes to Flat Economics, which has the per-flat gross and
             net yield this summarises. Valuation holds the values the yield is
@@ -175,14 +335,14 @@ export default function DashboardPage() {
         <StatCard
           title="Net yield" icon={TrendingUp} href="/flat-economics"
           value={m?.net_yield != null ? `${m.net_yield.toLocaleString("de-DE")} %` : "—"}
-          note={m?.value ? `on ${eur0(m.value)} across ${m.valued_flats} flats` : "set a comparable €/m²"}
+          note={m?.value ? `on ${money0(m.value)} across ${m.valued_flats} flats` : "set a comparable €/m²"}
         />
         <StatCard
           title="Let" icon={DoorOpen} href="/contracts"
           value={ins ? `${letRooms} of ${rooms}` : "—"}
           tone={vacant.length ? "bad" : undefined}
           note={vacant.length
-            ? `${vacant.map((f) => f.property_name).join(", ")} — ${eur0(vacantCost)}/mo`
+            ? `${vacant.map((f) => f.property_name).join(", ")} — ${money0(vacantCost)}/mo`
             : rooms > 0 ? "every room let" : "no flats recorded yet"}
         />
         {/* Four unrelated jobs add up to this one number, and each is done on a
@@ -228,27 +388,72 @@ export default function DashboardPage() {
 
       {chartData.length > 0 && (
         <Card>
-          <CardHeader className="pb-1">
-            <CardTitle className="text-sm font-medium">Monthly Overview {currentYear}</CardTitle>
-            <p className="text-xs text-muted-foreground">Net line = Received − Costs</p>
+          <CardHeader className="pb-2">
+            <div className="flex items-end justify-between gap-4 flex-wrap">
+              <div>
+                <CardTitle className="text-sm font-medium">
+                  In and out, month by month · {currentYear}
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Rent above the line, costs below it; the line through them is
+                  what was left.
+                </p>
+                <div className="flex items-center gap-4 flex-wrap mt-1.5">
+                  <CashflowKey />
+                </div>
+              </div>
+              {/* Right of the title on a desktop, under it once the header
+                  wraps on a phone — otherwise the caption leaves its figure. */}
+              <div className="text-left sm:text-right">
+                <p className="text-2xl sm:text-3xl font-semibold leading-none">
+                  {signed(Math.round(chartNet / chartMonths))}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  left per month on average
+                </p>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={260}>
-              <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
+            <div ref={plotRef}>
+            <ResponsiveContainer width="100%" height={280}>
+              {/* stackOffset="sign" is what sends the negative half below the
+                  line; the default sums the stack instead, which draws the
+                  costs on top of the rent and the whole point is lost. */}
+              <ComposedChart data={chartData} margin={{ top: 10, right: 8, left: 4, bottom: 0 }}
+                barCategoryGap="22%" stackOffset="sign">
                 <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.5} vertical={false} />
-                <XAxis dataKey="month" tickLine={false} axisLine={false}
+                <XAxis dataKey="month" tickLine={false} axisLine={false} interval="preserveStartEnd"
                   tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <YAxis tickLine={false} axisLine={false} width={52} tickFormatter={fmtAxis}
+                <YAxis tickLine={false} axisLine={false} width={56} tickFormatter={fmtAxis}
+                  domain={chartDomain} ticks={chartTicks} allowDataOverflow={false}
                   tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--accent))", opacity: 0.35 }} />
-                <Legend content={<ChartLegend />} />
-                <Bar dataKey="Expected" name="Expected" fill={C.expected} fillOpacity={0.14} maxBarSize={24} />
-                <Bar dataKey="Received" name="Received" fill={C.actual} fillOpacity={0.9} maxBarSize={24} />
-                <Bar dataKey="Costs" name="Costs" fill={C.costs} fillOpacity={0.85} maxBarSize={24} />
-                <Line type="monotone" dataKey="Net" name="Net" stroke={C.net} strokeWidth={1.5}
-                  dot={false} activeDot={{ r: 3 }} />
+                <Tooltip content={<CashflowTooltip />}
+                  cursor={{ fill: "hsl(var(--accent))", opacity: 0.3 }} />
+                {/* One stack per month, so rent and costs share a centre and
+                    read as a single spine rather than as two neighbours: what
+                    came in above the line, what went out below it, and the
+                    gap between their ends is the month. */}
+                <Bar dataKey="Received" name="Received" stackId="m" fill={C.actual}
+                  maxBarSize={22} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Costs" name="Costs" stackId="m" fill={C.costs}
+                  fillOpacity={0.85} maxBarSize={22} radius={[0, 0, 4, 4]} />
+                {/* The rent that was due, as a mark across the bar rather than
+                    a second bar beside it: eleven near-identical grey slabs
+                    spent a third of the ink repeating a number that barely
+                    moves, and a bar short of its mark is read at a glance. */}
+                <Scatter dataKey="Expected" name="Expected" isAnimationActive={false}
+                  shape={<TargetMark half={markHalf} />} />
+                <ReferenceLine y={0} stroke="hsl(var(--border))" strokeWidth={1} />
+                {/* Straight segments between the months: these are twelve
+                    discrete figures, and a spline through them draws curves
+                    where the books have none. */}
+                <Line type="linear" dataKey="Net" name="Net" stroke={C.net} strokeWidth={1.5}
+                  dot={{ r: 2, fill: C.net, strokeWidth: 0 }}
+                  activeDot={{ r: 3.5 }} isAnimationActive={false} />
               </ComposedChart>
             </ResponsiveContainer>
+            </div>
           </CardContent>
         </Card>
       )}

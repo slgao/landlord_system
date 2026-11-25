@@ -32,6 +32,10 @@ import { CashflowYearChart } from "@/components/cashflow-year-chart";
 const FOREIGN_CURRENCIES = ["CNY", "USD", "GBP"];
 // The tender note shown next to a EUR amount when the tenant paid in another
 // currency, e.g. "(paid ¥5655)". Empty when the payment was made in EUR.
+/** How many rows the payments table draws. Everything is fetched — the
+ *  month filter can land on any month — but the table itself stops here. */
+const PAYMENT_ROWS = 200;
+
 function foreignNote(p: { orig_amount?: number | null; orig_currency?: string | null }) {
   if (!p.orig_currency || p.orig_amount == null) return "";
   return `paid ${amount(p.orig_amount, p.orig_currency)}`;
@@ -250,7 +254,18 @@ export default function RentTrackingPage() {
       {/* All payments table */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">All Payments</CardTitle>
+          {/* Named for what it shows. The table has always stopped at 200
+              rows, while the heading said "All Payments" — so a landlord
+              scrolling for an older one concluded it was never recorded. */}
+          <CardTitle className="text-sm font-medium">
+            {allPayments.length > PAYMENT_ROWS ? "Latest payments" : "All payments"}
+          </CardTitle>
+          {allPayments.length > PAYMENT_ROWS && (
+            <p className="text-xs text-muted-foreground">
+              The most recent {PAYMENT_ROWS} of {allPayments.length}. Pick a
+              month above to see that month in full.
+            </p>
+          )}
         </CardHeader>
         <Table className="stack-sm">
           <TableHeader>
@@ -268,7 +283,7 @@ export default function RentTrackingPage() {
             ) : allPayments.length === 0 ? (
               <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-10">No payments yet.</TableCell></TableRow>
             ) : (
-              allPayments.slice(0, 200).map((p) => (
+              allPayments.slice(0, PAYMENT_ROWS).map((p) => (
                 <TableRow key={p.id}>
                   <TableCell data-label="Date" className="text-muted-foreground">{fmtD(p.payment_date)}</TableCell>
                   <TableCell data-label="Tenant" className="font-medium">{p.tenant_name}</TableCell>

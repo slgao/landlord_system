@@ -35,6 +35,27 @@ export function money(n: number | null | undefined, opts?: { cents?: boolean }):
   return `${body.replace(/^-/, MINUS)}${NBSP}€`;
 }
 
+/** The symbols for the tenders this app accepts. A deposit or a payment can
+ *  be agreed in one of these; everything derived from it is in that same
+ *  currency, and no rate is stored, so nothing here converts. */
+export const CURRENCY_SYMBOLS: Record<string, string> = {
+  EUR: "€", CNY: "¥", USD: "$", GBP: "£",
+};
+
+/** `1.050,00 €`, `8.000,00 ¥` — an amount in the currency it was agreed in.
+ *
+ *  money() writes euros, which is right for everything the books are kept in
+ *  but wrong for the figures that carry a currency of their own: a deposit of
+ *  8.000 ¥ shown as "8.000,00 €" is not a rounding difference, it is a
+ *  different number. Those call this with the currency beside them.
+ */
+export function amount(n: number | null | undefined, currency?: string | null): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const code = (currency || "EUR").toUpperCase();
+  if (code === "EUR") return money(n);
+  return `${num(n)}${NBSP}${CURRENCY_SYMBOLS[code] ?? code}`;
+}
+
 /** `1.051 €` — a headline figure, where the cents are noise. */
 export const money0 = (n: number | null | undefined) => money(n, { cents: false });
 

@@ -15,7 +15,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { money, date as fmtD } from "@/lib/fmt";
+import { amount, money, date as fmtD } from "@/lib/fmt";
 
 export default function TenantLedgerPage() {
   const [tenantId, setTenantId] = useState<string>("");
@@ -43,19 +43,29 @@ export default function TenantLedgerPage() {
     enabled: !!tenantId,
   });
   const aptOf = new Map(contracts.map((c) => [c.id, c.apartment_name]));
+  // Money kept from a deposit is in the currency that deposit was agreed in,
+  // which is not always the euro the books are kept in. A payment's `amount`
+  // always is, whatever tender it arrived in.
+  const depositCurrencyOf = new Map(
+    contracts.map((c) => [c.id, c.kaution_currency || "EUR"]));
   const fromDeposit = deductions
     .filter((d) => isRentFromDeposit(d.category) || d.category === NK_CATEGORY || d.reference_type === "nk_settlement")
     .map((d) => ({
       key: `k${d.id}`, date: d.date, apartment: aptOf.get(d.contract_id) ?? "", amount: d.amount,
+      currency: depositCurrencyOf.get(d.contract_id) ?? "EUR",
       tag: rentFromDepositTag(d.category) ?? "NK Nachzahlung · from Kaution",
     }));
   const history = [
-    ...payments.map((p) => ({ key: `p${p.id}`, date: p.payment_date, apartment: p.apartment_name ?? "", amount: p.amount, payment: p, tag: null as string | null })),
+    ...payments.map((p) => ({ key: `p${p.id}`, date: p.payment_date, apartment: p.apartment_name ?? "", amount: p.amount, currency: "EUR", payment: p, tag: null as string | null })),
     ...fromDeposit.map((d) => ({ ...d, payment: null as Payment | null })),
   ].sort((a, b) => b.date.localeCompare(a.date));
-  const depositTotal = fromDeposit.reduce((sum, d) => sum + d.amount, 0);
-
-  const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "$", GBP: "£" };
+  // Per currency, because two tenancies of one tenant can have deposits in
+  // two tenders and a sum across them would be a number about nothing.
+  const depositByCurrency = fromDeposit.reduce((acc, d) => {
+    acc[d.currency] = (acc[d.currency] || 0) + d.amount;
+    return acc;
+  }, {} as Record<string, number>);
+  const depositTotal = Object.values(depositByCurrency).reduce((a, b) => a + b, 0);
   const perCurrency = payments.reduce((acc, p) => {
     const curr = p.currency || "EUR";
     acc[curr] = (acc[curr] || 0) + p.amount;
@@ -87,7 +97,7 @@ export default function TenantLedgerPage() {
               <Card key={curr}>
                 <CardContent className="p-4">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Total Paid ({curr})</p>
-                  <p className="text-2xl font-semibold mt-1">{CURRENCY_SYMBOLS[curr] || curr} {total.toFixed(2)}</p>
+                  <p className="text-2xl font-semibold mt-1">{amount(total, curr)}</p>
                 </CardContent>
               </Card>
             ))}
@@ -101,7 +111,9 @@ export default function TenantLedgerPage() {
               <Card>
                 <CardContent className="p-4">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Kept from Kaution</p>
-                  <p className="text-2xl font-semibold mt-1">{money(depositTotal)}</p>
+                  {Object.entries(depositByCurrency).map(([curr, total]) => (
+                    <p key={curr} className="text-2xl font-semibold mt-1">{amount(total, curr)}</p>
+                  ))}
                 </CardContent>
               </Card>
             )}
@@ -127,7 +139,7 @@ export default function TenantLedgerPage() {
                   {contracts.map((c) => (
                     <TableRow key={c.id}>
                       <TableCell>{c.apartment_name}<br /><span className="text-xs text-muted-foreground">{c.property_name}</span></TableCell>
-                      <TableCell>{c.rent.toFixed(2)} {c.currency}</TableCell>
+                      <TableCell className="font-mono">{amount(c.rent, c.currency)}</TableCell>
                       <TableCell className="text-muted-foreground">{fmtD(c.start_date)}</TableCell>
                       <TableCell className="text-muted-foreground">{c.end_date ? fmtD(c.end_date) : "—"}</TableCell>
                       <TableCell>
@@ -160,10 +172,10 @@ export default function TenantLedgerPage() {
                   ) : (
                     history.map((h) => (
                       <TableRow key={h.key}>
-                        <TableCell className="text-muted-foreground">{h.date}</TableCell>
+                        <TableCell className="text-muted-foreground">{fmtD(h.date)}</TableCell>
                         <TableCell>{h.apartment}</TableCell>
                         <TableCell className="font-mono">
-                          {money(h.amount)}
+                          {amount(h.amount, h.currency)}
                           {h.tag && (
                             <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{h.tag}</Badge>
                           )}
@@ -174,7 +186,7 @@ export default function TenantLedgerPage() {
                           )}
                           {h.payment?.orig_currency && h.payment.orig_amount != null && (
                             <span className="block text-xs text-muted-foreground">
-                              (paid {CURRENCY_SYMBOLS[h.payment.orig_currency] || h.payment.orig_currency}{h.payment.orig_amount.toFixed(2)})
+                              (paid {amount(h.payment.orig_amount, h.payment.orig_currency)})
                             </span>
                           )}
                         </TableCell>

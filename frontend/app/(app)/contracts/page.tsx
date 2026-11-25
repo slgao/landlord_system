@@ -30,7 +30,7 @@ import { ConfirmButton } from "@/components/confirm-button";
 import { SearchInput } from "@/components/search-input";
 import { HandoverCard } from "@/components/handover";
 import { Pencil, Trash2, Plus, Users, CreditCard, XCircle, RotateCcw, BarChart2, Check, X, TrendingUp } from "lucide-react";
-import { money, date as fmtD } from "@/lib/fmt";
+import { amount, money, date as fmtD } from "@/lib/fmt";
 
 const CURRENCIES = ["EUR", "CNY", "USD", "GBP"];
 
@@ -310,6 +310,11 @@ export default function ContractsPage() {
   }
 
   const totalDeducted = kautionDeductions.reduce((s, d) => s + d.amount, 0);
+  // Everything in the deposit panel — instalments, deductions, repayments —
+  // is in the currency the deposit was agreed in; none of those tables carry
+  // a currency of their own because they cannot be in a different one.
+  const kautionCurrency = selectedContract?.kaution_currency || "EUR";
+  const kaution = (n: number | null | undefined) => amount(n, kautionCurrency);
   const kautionBalance = (selectedContract?.kaution_amount || 0) - totalDeducted;
   const installmentsPaid = kautionPayments.reduce((s, p) => s + p.amount, 0);
   // Legacy deposits (from old contracts) have no installments but a paid date,
@@ -464,9 +469,9 @@ export default function ContractsPage() {
               <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><CreditCard className="size-4" />Kaution</CardTitle></CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-3 gap-3 text-sm">
-                  <div><p className="text-xs text-muted-foreground">Agreed amount</p><p className="font-semibold">{selectedContract?.kaution_amount?.toFixed(2) || "—"} {selectedContract?.kaution_currency}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Paid so far</p><p className="font-semibold text-primary">{totalPaid.toFixed(2)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Outstanding</p><p className={`font-semibold ${kautionOutstanding <= 0.001 ? "text-primary" : "text-amber-400"}`}>{kautionOutstanding.toFixed(2)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Agreed amount</p><p className="font-semibold">{kaution(selectedContract?.kaution_amount)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Paid so far</p><p className="font-semibold text-primary">{kaution(totalPaid)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Outstanding</p><p className={`font-semibold ${kautionOutstanding <= 0.001 ? "text-primary" : "text-amber-700 dark:text-amber-400"}`}>{kaution(kautionOutstanding)}</p></div>
                 </div>
                 {legacyFullyPaid && (
                   <p className="text-xs text-muted-foreground -mt-1">
@@ -495,10 +500,10 @@ export default function ContractsPage() {
                           <TableRow key={p.id}>
                             <TableCell className="text-muted-foreground">{fmtD(p.date)}</TableCell>
                             <TableCell className="text-muted-foreground text-xs">{p.note || "—"}</TableCell>
-                            <TableCell className="text-right font-mono">{p.amount.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-mono">{kaution(p.amount)}</TableCell>
                             <TableCell className="flex gap-1">
                               <Button variant="ghost" size="icon" onClick={() => setEditPay({ id: p.id, date: p.date, amount: p.amount, note: p.note || "" })}><Pencil className="size-3" /></Button>
-                              <ConfirmButton onConfirm={() => removePayment.mutate(p.id)} title="Delete installment?" message={`Delete the ${p.amount.toFixed(2)} installment?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
+                              <ConfirmButton onConfirm={() => removePayment.mutate(p.id)} title="Delete installment?" message={`Delete the ${kaution(p.amount)} installment?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -519,24 +524,24 @@ export default function ContractsPage() {
                 <div className="border-t border-border pt-3 space-y-1.5 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Deposit</span>
-                    <span className="font-mono tabular-nums">{(selectedContract?.kaution_amount || 0).toFixed(2)}</span>
+                    <span className="font-mono tabular-nums">{kaution(selectedContract?.kaution_amount || 0)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Deducted</span>
                     <span className={`font-mono tabular-nums ${totalDeducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                      {totalDeducted > 0 ? `−${totalDeducted.toFixed(2)}` : "0.00"}
+                      {totalDeducted > 0 ? `\u2212${kaution(totalDeducted)}` : kaution(0)}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Returned to tenant</span>
                     <span className="font-mono tabular-nums">
-                      {totalReturned > 0 ? `−${totalReturned.toFixed(2)}` : "0.00"}
+                      {totalReturned > 0 ? `\u2212${kaution(totalReturned)}` : kaution(0)}
                     </span>
                   </div>
                   <div className="flex justify-between border-t border-border pt-1.5 font-semibold">
                     <span>Still held</span>
                     <span className={`font-mono tabular-nums ${stillHeld <= 0.005 ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}`}>
-                      {stillHeld.toFixed(2)} {selectedContract?.kaution_currency}
+                      {kaution(stillHeld)}
                     </span>
                   </div>
                   {fullySettled ? (
@@ -585,10 +590,10 @@ export default function ContractsPage() {
                             )}
                           </TableCell>
                           <TableCell className="text-muted-foreground text-xs">{d.reason || "—"}</TableCell>
-                          <TableCell className="text-right font-mono">{d.amount.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-mono">{kaution(d.amount)}</TableCell>
                           <TableCell className="flex gap-1">
                             <Button variant="ghost" size="icon" onClick={() => setEditDed({ id: d.id, date: d.date, amount: d.amount, category: d.category, reason: d.reason || "" })}><Pencil className="size-3" /></Button>
-                            <ConfirmButton onConfirm={() => removeDeduction.mutate(d.id)} title="Delete deduction?" message={`Delete the ${d.amount.toFixed(2)} deduction (${d.category})?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
+                            <ConfirmButton onConfirm={() => removeDeduction.mutate(d.id)} title="Delete deduction?" message={`Delete the ${kaution(d.amount)} deduction (${d.category})?`}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -609,9 +614,9 @@ export default function ContractsPage() {
                             <TableRow key={r.id}>
                               <TableCell className="text-muted-foreground">{r.date}</TableCell>
                               <TableCell className="text-muted-foreground text-xs">{r.note || "—"}</TableCell>
-                              <TableCell className="text-right font-mono">{r.amount.toFixed(2)}</TableCell>
+                              <TableCell className="text-right font-mono">{kaution(r.amount)}</TableCell>
                               <TableCell>
-                                <ConfirmButton onConfirm={() => removeReturn.mutate(r.id)} title="Delete repayment?" message={`Delete the ${r.amount.toFixed(2)} repayment of ${r.date}?`}>
+                                <ConfirmButton onConfirm={() => removeReturn.mutate(r.id)} title="Delete repayment?" message={`Delete the ${kaution(r.amount)} repayment of ${fmtD(r.date)}?`}>
                                   <Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button>
                                 </ConfirmButton>
                               </TableCell>
@@ -639,12 +644,12 @@ export default function ContractsPage() {
                         <div className="flex flex-wrap gap-2">
                           <Button size="sm" variant="outline"
                             onClick={() => setKautionReturnForm((f) => ({ ...f, amount: Number(stillHeld.toFixed(2)), note: f.note || (totalReturned > 0 ? "Restbetrag nach Abrechnung" : "Vollständige Rückzahlung") }))}>
-                            Return everything still held ({stillHeld.toFixed(2)})
+                            Return everything still held ({kaution(stillHeld)})
                           </Button>
                           {totalReturned === 0 && stillHeld > 0.005 && (
                             <Button size="sm" variant="outline"
                               onClick={() => setKautionReturnForm((f) => ({ ...f, amount: Number((stillHeld / 2).toFixed(2)), note: f.note || "Teilrückzahlung nach Übergabe" }))}>
-                              Return half now ({(stillHeld / 2).toFixed(2)})
+                              Return half now ({kaution(stillHeld / 2)})
                             </Button>
                           )}
                         </div>
@@ -773,39 +778,43 @@ export default function ContractsPage() {
                     <TableRow key={r.contract_id} className="cursor-pointer" onClick={() => openContractById(r.contract_id)}>
                       <TableCell className="font-medium">{r.tenant_name}</TableCell>
                       <TableCell className="text-muted-foreground">{r.apartment_name}<br /><span className="text-xs">{r.property_name}</span></TableCell>
+                      {/* Every figure on this row is in the currency the
+                          deposit was agreed in — a deposit of 8.000 ¥ written
+                          as "8.000,00 €" is a different number, not a
+                          rounding difference. */}
                       <TableCell className="text-right font-mono">
-                        {money(r.kaution_amount)}
+                        {amount(r.kaution_amount, r.kaution_currency)}
                         {/* §551 Abs. 1 BGB: at most three Kaltmieten, measured
                             against the rent the tenancy began at. The excess is
                             not owed and the tenant can reclaim it at any time —
                             better known before they ask. */}
                         {r.kaution_over_cap != null && (
                           <span className="block text-xs text-amber-700 dark:text-amber-400 font-sans"
-                            title={`§551 BGB allows three Kaltmieten — ${money(r.kaution_cap ?? 0)}. The excess is not owed.`}>
-                            {money(r.kaution_over_cap)} over the §551 cap
+                            title={`§551 BGB allows three Kaltmieten — ${amount(r.kaution_cap ?? 0, r.kaution_currency)}. The excess is not owed.`}>
+                            {amount(r.kaution_over_cap, r.kaution_currency)} over the §551 cap
                           </span>
                         )}
                       </TableCell>
                       <TableCell className="text-right font-mono">
                         {(r.paid ?? 0) > 0 ? (
                           <>
-                            <span className="text-primary">{money(r.paid)}</span>
-                            {(r.outstanding ?? 0) > 0.001 && <span className="text-amber-400 text-xs block">−{money(r.outstanding)} offen</span>}
+                            <span className="text-primary">{amount(r.paid, r.kaution_currency)}</span>
+                            {(r.outstanding ?? 0) > 0.001 && <span className="text-amber-700 dark:text-amber-400 text-xs block">−{amount(r.outstanding, r.kaution_currency)} offen</span>}
                           </>
                         ) : (
                           <span className="text-muted-foreground text-xs">{r.kaution_paid_date || "—"}</span>
                         )}
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{money(r.deducted)}</TableCell>
-                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-primary" : "text-destructive"}`}>{money(r.balance)}</TableCell>
+                      <TableCell className={`text-right font-mono ${r.deducted > 0 ? "text-destructive" : "text-muted-foreground"}`}>{amount(r.deducted, r.kaution_currency)}</TableCell>
+                      <TableCell className={`text-right font-mono font-semibold ${r.balance >= 0 ? "text-primary" : "text-destructive"}`}>{amount(r.balance, r.kaution_currency)}</TableCell>
                       <TableCell className="text-muted-foreground">
                         {r.kaution_returned_date ? (
-                          <span className="text-primary text-xs">{money(r.kaution_returned_amount ?? 0)} on {fmtD(r.kaution_returned_date)}</span>
+                          <span className="text-primary text-xs">{amount(r.kaution_returned_amount ?? 0, r.kaution_currency)} on {fmtD(r.kaution_returned_date)}</span>
                         ) : (r.returned_total ?? 0) > 0 ? (
                           // Part-released: show what went back and what is left.
                           <span className="text-amber-700 dark:text-amber-400 text-xs">
-                            {money(r.returned_total)} returned<br />
-                            <span className="text-muted-foreground">{money(r.still_held)} still held</span>
+                            {amount(r.returned_total, r.kaution_currency)} returned<br />
+                            <span className="text-muted-foreground">{amount(r.still_held, r.kaution_currency)} still held</span>
                           </span>
                         ) : "—"}
                       </TableCell>
@@ -836,10 +845,10 @@ export default function ContractsPage() {
                           <TableCell colSpan={2} className="text-xs text-muted-foreground">
                             {i === 0 ? "Totals (not yet returned)" : ""}{currs.length > 1 ? ` · ${cur}` : ""}
                           </TableCell>
-                          <TableCell className="text-right font-mono">{b.kaution.toFixed(2)} {cur}</TableCell>
-                          <TableCell className="text-right font-mono text-amber-400">{b.outstanding > 0.001 ? `−${b.outstanding.toFixed(2)} offen` : "—"}</TableCell>
+                          <TableCell className="text-right font-mono">{amount(b.kaution, cur)}</TableCell>
+                          <TableCell className="text-right font-mono text-amber-700 dark:text-amber-400">{b.outstanding > 0.001 ? `\u2212${amount(b.outstanding, cur)} offen` : "—"}</TableCell>
                           <TableCell />
-                          <TableCell className="text-right font-mono text-primary">{b.balance.toFixed(2)} {cur}</TableCell>
+                          <TableCell className="text-right font-mono text-primary">{amount(b.balance, cur)}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">held now</TableCell>
                         </TableRow>
                       );

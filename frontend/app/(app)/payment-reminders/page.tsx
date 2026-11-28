@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import { ChevronDown, ChevronRight, FileDown, History, Check } from "lucide-react";
+import { amount, money, date as fmtD } from "@/lib/fmt";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -126,7 +127,7 @@ export default function PaymentRemindersPage() {
                   <div className="flex items-center gap-3">
                     {r.settled_until && <Badge variant="secondary" className="hidden sm:inline-flex">settled ≤ {r.settled_until}</Badge>}
                     <Badge variant="destructive">{r.months_due} month{r.months_due !== 1 ? "s" : ""} due</Badge>
-                    <span className="font-mono font-semibold text-destructive">{r.amount_due.toFixed(2)} {r.currency}</span>
+                    <span className="font-mono font-semibold text-destructive">{amount(r.amount_due, r.currency)}</span>
                     <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); generateMahnung(r); }}
                       disabled={generating === r.contract_id}>
                       <FileDown className="size-4 mr-1" />
@@ -139,20 +140,20 @@ export default function PaymentRemindersPage() {
                   <div className="border-t border-border">
                     {/* Headline balance */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-4">
-                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Rent / month</p><p className="text-sm font-semibold">{r.rent.toFixed(2)} {r.currency}</p></div>
-                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total due</p><p className="text-sm font-semibold">{r.expected_total.toFixed(2)}</p></div>
-                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total paid</p><p className="text-sm font-semibold text-primary">{r.paid_total.toFixed(2)}</p></div>
-                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Outstanding</p><p className="text-sm font-semibold text-destructive">{r.amount_due.toFixed(2)}</p></div>
+                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Rent / month</p><p className="text-sm font-semibold">{amount(r.rent, r.currency)}</p></div>
+                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total due</p><p className="text-sm font-semibold">{amount(r.expected_total, r.currency)}</p></div>
+                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total paid</p><p className="text-sm font-semibold text-primary">{amount(r.paid_total, r.currency)}</p></div>
+                      <div className="rounded-md bg-muted/40 p-2"><p className="text-[10px] text-muted-foreground uppercase tracking-wide">Outstanding</p><p className="text-sm font-semibold text-destructive">{amount(r.amount_due, r.currency)}</p></div>
                     </div>
                     {r.paid_from_deposit > 0 && (
                       <p className="px-4 -mt-2 pb-2 text-xs text-muted-foreground">
-                        Includes {r.paid_from_deposit.toFixed(2)} {r.currency} kept from the Kaution
+                        Includes {amount(r.paid_from_deposit, r.currency)} kept from the Kaution
                         (Mietrückstand or agreed Abwohnen), counted in the month of the deduction.
                       </p>
                     )}
                     {r.current_month_paid > 0 && (
                       <p className="px-4 -mt-2 pb-2 text-xs text-muted-foreground">
-                        Includes {r.current_month_paid.toFixed(2)} {r.currency} paid this month (counted as credit).
+                        Includes {amount(r.current_month_paid, r.currency)} paid this month (counted as credit).
                       </p>
                     )}
 
@@ -169,9 +170,9 @@ export default function PaymentRemindersPage() {
                         {r.months.map((m, j) => (
                           <TableRow key={j}>
                             <TableCell className="text-muted-foreground">{m.month}</TableCell>
-                            <TableCell className="text-right font-mono">{m.expected.toFixed(2)}</TableCell>
-                            <TableCell className={`text-right font-mono ${m.paid > 0 ? "text-primary" : ""}`}>{m.paid.toFixed(2)}</TableCell>
-                            <TableCell className={`text-right font-mono font-medium ${m.balance_after < -0.005 ? "text-destructive" : "text-muted-foreground"}`}>{m.balance_after.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-mono">{amount(m.expected, r.currency)}</TableCell>
+                            <TableCell className={`text-right font-mono ${m.paid > 0 ? "text-primary" : ""}`}>{amount(m.paid, r.currency)}</TableCell>
+                            <TableCell className={`text-right font-mono font-medium ${m.balance_after < -0.005 ? "text-destructive" : "text-muted-foreground"}`}>{amount(m.balance_after, r.currency)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -239,11 +240,11 @@ export default function PaymentRemindersPage() {
               <TableBody>
                 {history.map((h) => (
                   <TableRow key={h.id}>
-                    <TableCell className="text-muted-foreground">{h.sent_date}</TableCell>
+                    <TableCell className="text-muted-foreground">{fmtD(h.sent_date)}</TableCell>
                     <TableCell className="font-medium">{h.tenant_name}</TableCell>
                     <TableCell className="text-muted-foreground">{h.apartment_name}</TableCell>
                     <TableCell className="text-muted-foreground">{h.months_due}</TableCell>
-                    <TableCell className="text-right font-mono">{h.amount_due.toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-mono">{money(h.amount_due)}</TableCell>
                     <TableCell><span className="capitalize text-xs bg-muted px-2 py-0.5 rounded">{h.channel}</span></TableCell>
                     <TableCell className="text-muted-foreground text-sm">{h.note || "—"}</TableCell>
                   </TableRow>

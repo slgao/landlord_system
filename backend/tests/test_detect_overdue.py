@@ -232,3 +232,34 @@ def test_one_extreme_row_does_not_hide_the_others(monkeypatch):
     _install_fetch(monkeypatch, [_contract(settled="9999-12-31"), behind], [])
     res = logic.detect_overdue(default_months_back=3)
     assert [r["contract_id"] for r in res] == [2]
+
+
+def test_rent_paid_this_month_is_reported_as_this_month_s_credit(monkeypatch):
+    """`current_month_paid` is what the reminder shows as already caught up.
+
+    It is read from the same per-contract index as every other total, and a
+    reindexing once left it reading zero for every tenancy in the portfolio
+    while every other figure stayed right — which no test noticed.
+    """
+    from datetime import date
+    this_month = f"{date.today():%Y-%m}"
+    # Three months owed, with one month's rent paid during the current one.
+    _install_fetch(monkeypatch, [_contract()], [(1, this_month, 700)])
+    res = logic.detect_overdue(default_months_back=3)
+    assert len(res) == 1
+    r = res[0]
+    assert r["current_month_paid"] == 700.0
+    # And it is credit: the arrears fall by that much rather than ignoring it.
+    assert r["paid_total"] == 700.0
+    assert r["amount_due"] == 1400.0
+
+
+def test_this_month_s_credit_is_counted_per_tenancy(monkeypatch):
+    """Two tenancies, one payment: the other must not inherit it."""
+    from datetime import date
+    this_month = f"{date.today():%Y-%m}"
+    second = (2, "Bob", "b@x.de", "Apt 2", 700, "2020-01-01", None, "Haus A", "EUR", None)
+    _install_fetch(monkeypatch, [_contract(), second], [(2, this_month, 500)])
+    res = {r["contract_id"]: r for r in logic.detect_overdue(default_months_back=3)}
+    assert res[1]["current_month_paid"] == 0.0
+    assert res[2]["current_month_paid"] == 500.0

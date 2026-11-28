@@ -307,6 +307,15 @@ def betriebskosten_calc(cost_flat, tenants, months, bk_start, bk_end, limit_per_
     return cost_per_tenant, period_cost, limit_period, nachzahlung
 
 
+def _ym(d: _date) -> str:
+    """`2026-11` — the month a date falls in.
+
+    strftime for two fields goes through the whole C formatter; this is the
+    same string and showed up 12,000 times in one request's profile.
+    """
+    return f"{d.year:04d}-{d.month:02d}"
+
+
 def detect_overdue(default_months_back=12, owner=None):
     """
     For every active (non-terminated) contract, compare the total rent due over
@@ -333,7 +342,7 @@ def detect_overdue(default_months_back=12, owner=None):
     cur_first = today.replace(day=1)
     end_first = _add_months(cur_first, -1)                 # last complete month
     default_start = _add_months(cur_first, -default_months_back)
-    cur_ym = cur_first.strftime("%Y-%m")
+    cur_ym = _ym(cur_first)
 
     # Both reads go in one round trip. The payments side is not narrowed to the
     # look-back window: the window start depends on each contract's
@@ -416,13 +425,21 @@ def detect_overdue(default_months_back=12, owner=None):
                 s = None
         starts[cid] = _add_months(_month_first(s), 1) if s else default_start
 
+    # Keyed by contract, then by month. A single (contract, month) dict reads
+    # more naturally, but every contract below has to total its own months out
+    # of it, and the only way to do that is to walk the whole thing — once per
+    # contract. On a portfolio of 400 tenancies with eight years of rent
+    # behind them that is ten million comparisons to add up 26,000 figures,
+    # and it was the whole cost of the two slowest pages in the app.
     paid_by: dict = {}
     deposit_by: dict = {}
     for cid, ym, from_deposit, total in loaded["paid"]:
         total = Decimal(total)
-        paid_by[(cid, ym)] = paid_by.get((cid, ym), _ZERO) + total
+        months_paid = paid_by.setdefault(cid, {})
+        months_paid[ym] = months_paid.get(ym, _ZERO) + total
         if from_deposit:
-            deposit_by[(cid, ym)] = deposit_by.get((cid, ym), _ZERO) + total
+            months_kept = deposit_by.setdefault(cid, {})
+            months_kept[ym] = months_kept.get(ym, _ZERO) + total
 
     results = []
     for row in contracts:
@@ -457,13 +474,12 @@ def detect_overdue(default_months_back=12, owner=None):
 
         # Total paid across the window, INCLUDING the current (incomplete) month
         # so pre-payments and catch-up payments count as credit.
-        start_ym = starts[cid].strftime("%Y-%m")
-        paid_total = _ZERO
-        for (pc, ym), val in paid_by.items():
-            if pc == cid and start_ym <= ym <= cur_ym:
-                paid_total += val
-        from_deposit = sum((v for (pc, ym), v in deposit_by.items()
-                            if pc == cid and start_ym <= ym <= cur_ym), _ZERO)
+        start_ym = _ym(starts[cid])
+        months_paid = paid_by.get(cid, {})
+        paid_total = sum((v for ym, v in months_paid.items()
+                          if start_ym <= ym <= cur_ym), _ZERO)
+        from_deposit = sum((v for ym, v in deposit_by.get(cid, {}).items()
+                            if start_ym <= ym <= cur_ym), _ZERO)
 
         balance = paid_total - expected_total
         amount_due = -balance
@@ -474,7 +490,7 @@ def detect_overdue(default_months_back=12, owner=None):
         month_rows = []
         running = _ZERO
         for mm in months:
-            pm = paid_by.get((cid, mm.strftime("%Y-%m")), _ZERO)
+            pm = months_paid.get(_ym(mm), _ZERO)
             rent_mm = rent_by_month[mm]
             running += pm - rent_mm
             month_rows.append({
@@ -503,7 +519,7 @@ def detect_overdue(default_months_back=12, owner=None):
             "paid_from_deposit": float(round(from_deposit, 2)),
             "balance":           float(round(balance, 2)),
             "amount_due":        float(round(amount_due, 2)),
-            "current_month_paid": float(paid_by.get((cid, cur_ym), _ZERO)),
+            "current_month_paid": float(months_paid.get(cur_ym, _ZERO)),
             "months_due":        months_due,
             "months":            month_rows,
         })

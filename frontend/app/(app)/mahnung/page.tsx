@@ -14,6 +14,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { amount as inCurrency } from "@/lib/fmt";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -100,7 +101,7 @@ export default function MahnungPage() {
             <div className="p-3 rounded-md bg-muted/50 text-sm text-muted-foreground space-y-1">
               <p><span className="text-foreground font-medium">{selected.tenant_name}</span></p>
               <p>{selected.apartment_name} · {selected.property_name}</p>
-              <p>Monthly rent: {selected.rent.toFixed(2)} {selected.currency}</p>
+              <p>Monthly rent: {inCurrency(selected.rent, selected.currency)}</p>
               {inContractCoTenants.length > 0 && (
                 <p className="text-primary">Co-tenants (in contract): {inContractCoTenants.map((c) => c.name).join(", ")}</p>
               )}

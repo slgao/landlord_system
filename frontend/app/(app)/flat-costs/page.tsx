@@ -295,9 +295,9 @@ export default function FlatCostsPage() {
                                         <TrendingUp className="size-4" />
                                       </Button>
                                     )}
-                                    <Button variant="ghost" size="icon" aria-label={`Edit ${fc.cost_type}`} onClick={() => openEdit(fc)}><Pencil className="size-4" /></Button>
+                                    <Button variant="ghost" size="icon" title="Edit this cost" aria-label={`Edit ${fc.cost_type}`} onClick={() => openEdit(fc)}><Pencil className="size-4" /></Button>
                                     <ConfirmButton onConfirm={() => remove.mutate(fc.id)} title="Delete cost?" message={`Delete "${fc.cost_type}" (${money(fc.amount)})?`}>
-                                      <Button variant="ghost" size="icon" aria-label={`Delete ${fc.cost_type}`} className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
+                                      <Button variant="ghost" size="icon" title="Delete this cost" aria-label={`Delete ${fc.cost_type}`} className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
                                     </ConfirmButton>
                                   </div>
                                 </TableCell>

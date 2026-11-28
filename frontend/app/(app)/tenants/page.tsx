@@ -177,7 +177,9 @@ export default function TenantsPage() {
                   <TableCell data-label="Salutation" className="text-muted-foreground">{genderLabel(t.gender)}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(t)}>
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(t)}
+                        title="Edit this tenant"
+                        aria-label={`Edit ${t.name}`}>
                         <Pencil className="size-4" />
                       </Button>
                       <ConfirmButton
@@ -185,7 +187,9 @@ export default function TenantsPage() {
                         title="Delete tenant?"
                         message={`Delete "${t.name}"? Tenants with contracts can't be deleted.`}
                       >
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"
+                          title="Delete this tenant"
+                          aria-label={`Delete ${t.name}`}>
                           <Trash2 className="size-4" />
                         </Button>
                       </ConfirmButton>

@@ -191,7 +191,9 @@ export default function PropertiesPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(p)}>
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(p)}
+                        title="Edit this property"
+                        aria-label={`Edit ${p.name}`}>
                         <Pencil className="size-4" />
                       </Button>
                       <ConfirmButton
@@ -199,7 +201,9 @@ export default function PropertiesPage() {
                         title="Delete property?"
                         message={`Delete "${p.name}"? Properties with apartments can't be deleted.`}
                       >
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"
+                          title="Delete this property"
+                          aria-label={`Delete ${p.name}`}>
                           <Trash2 className="size-4" />
                         </Button>
                       </ConfirmButton>

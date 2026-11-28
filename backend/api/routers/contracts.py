@@ -448,12 +448,12 @@ def kaution_overview(owner: int):
             "returned_total": round(float(r[11]) if r[11] else 0.0, 2),
             # What is still with the landlord: owed back, less what has gone back.
             "still_held": round(k_amt - deducted - (float(r[11]) if r[11] else 0.0), 2),
-            **_kaution_cap_note(k_amt, r[12], r[13]),
+            **_kaution_cap_note(k_amt, r[5], r[12], r[13]),
         })
     return result
 
 
-def _kaution_cap_note(agreed: float, first_rent, first_nkv) -> dict:
+def _kaution_cap_note(agreed: float, currency, first_rent, first_nkv) -> dict:
     """What §551 Abs. 1 BGB allows, and whether this deposit exceeds it.
 
     Three Kaltmieten — the rent without the Nebenkosten prepayment. A deposit
@@ -461,8 +461,13 @@ def _kaution_cap_note(agreed: float, first_rent, first_nkv) -> dict:
     tenant can reclaim it at any time, which is worth knowing before they ask
     rather than after. Without a Kaltmiete on file there is nothing to measure
     against, and saying nothing is better than guessing.
+
+    Nor is there anything to measure when the deposit was agreed in another
+    tender. The rent is in euros and no exchange rate is on file, so 8.000 ¥
+    against a cap of 2.460 € is not a comparison — it would read as 5.540
+    over the limit, which is a number about nothing.
     """
-    if first_rent is None:
+    if first_rent is None or str(currency or "EUR").upper() != "EUR":
         return {"kaution_cap": None, "kaution_over_cap": None}
     cold = rent_periods.cold_rent(first_rent, first_nkv or 0)
     cap = float(rent_periods.kaution_cap(cold))

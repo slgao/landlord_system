@@ -479,6 +479,7 @@ function TariffSplit({ b, anchors, onChange }: {
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">New tariff valid from…</span>
             <Button variant="ghost" size="icon" className="size-7"
+              title="Remove this row" aria-label="Remove this row"
               onClick={() => onChange(list.filter((_, j) => j !== i))}>
               <Trash2 className="size-4 text-destructive" />
             </Button>
@@ -625,7 +626,8 @@ function BillingShell({ idx, count, b, set, onRemove, costLabel, preview, childr
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-muted-foreground">Billing {idx + 1}</span>
         {count > 1 && (
-          <Button variant="ghost" size="icon" className="size-7" onClick={onRemove}>
+          <Button variant="ghost" size="icon" className="size-7" onClick={onRemove}
+            title="Remove this cost" aria-label="Remove this cost">
             <Trash2 className="size-4 text-destructive" />
           </Button>
         )}
@@ -1415,7 +1417,9 @@ export default function NebenkostenabrechnungPage() {
                     <Num label="Persons" value={seg.persons} step="1" min="1"
                       onChange={(v) => setOccTimeline((a) => a.map((s, j) => (j === i ? { ...s, persons: v } : s)))} />
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => setOccTimeline((a) => a.filter((_, j) => j !== i))}>
+                  <Button variant="ghost" size="icon" title="Remove this period"
+                    aria-label="Remove this occupancy period"
+                    onClick={() => setOccTimeline((a) => a.filter((_, j) => j !== i))}>
                     <Trash2 className="size-4 text-destructive" />
                   </Button>
                 </div>
@@ -1550,6 +1554,7 @@ export default function NebenkostenabrechnungPage() {
                     onChange={(v) => updateAt(setWarmB, i, { meters: b.meters.map((mm: any, k: number) => k === mi ? { ...mm, end: v } : mm) })} />
                   {b.meters.length > 1 && (
                     <Button variant="ghost" size="icon" className="mb-0.5"
+                      title="Remove this meter" aria-label="Remove this meter"
                       onClick={() => updateAt(setWarmB, i, { meters: b.meters.filter((_: any, k: number) => k !== mi) })}>
                       <Trash2 className="size-4 text-destructive" />
                     </Button>
@@ -1600,6 +1605,7 @@ export default function NebenkostenabrechnungPage() {
                     onChange={(v) => updateAt(setHeizB, i, { meters: b.meters.map((mm: any, k: number) => k === mi ? { ...mm, conversion_factor: v } : mm) })} />
                   {b.meters.length > 1 && (
                     <Button variant="ghost" size="icon" className="mb-0.5"
+                      title="Remove this meter" aria-label="Remove this meter"
                       onClick={() => updateAt(setHeizB, i, { meters: b.meters.filter((_: any, k: number) => k !== mi) })}>
                       <Trash2 className="size-4 text-destructive" />
                     </Button>
@@ -1633,7 +1639,9 @@ export default function NebenkostenabrechnungPage() {
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-muted-foreground">Billing {i + 1}</span>
                 {bkB.length > 1 && (
-                  <Button variant="ghost" size="icon" className="size-7" onClick={() => setBkB((a) => a.filter((_, j) => j !== i))}>
+                  <Button variant="ghost" size="icon" className="size-7" title="Remove this cost"
+                    aria-label="Remove this Betriebskosten row"
+                    onClick={() => setBkB((a) => a.filter((_, j) => j !== i))}>
                     <Trash2 className="size-4 text-destructive" />
                   </Button>
                 )}
@@ -1708,7 +1716,9 @@ export default function NebenkostenabrechnungPage() {
               <Input type="number" step="0.01" className="h-8 text-sm" value={ex.amount}
                 onChange={(e) => setExtras((es) => es.map((ee, ii) => ii === i ? { ...ee, amount: Number(e.target.value) } : ee))} />
             </div>
-            <Button variant="ghost" size="icon" onClick={() => setExtras((es) => es.filter((_, ii) => ii !== i))} className="mb-0.5">
+            <Button variant="ghost" size="icon" title="Remove this item"
+              aria-label="Remove this extra item"
+              onClick={() => setExtras((es) => es.filter((_, ii) => ii !== i))} className="mb-0.5">
               <Trash2 className="size-4 text-destructive" />
             </Button>
           </div>

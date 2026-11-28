@@ -25,20 +25,20 @@ import { ConfirmButton } from "@/components/confirm-button";
 import { Trash2, Calendar } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { eur, fmtDate, invalidateSettlementViews, resultLabel } from "@/components/nk-settlements";
-import { money, date as fmtD } from "@/lib/fmt";
+import { amount, money, date as fmtD } from "@/lib/fmt";
 import { RentYearChart } from "@/components/rent-year-chart";
 import { CashflowYearChart } from "@/components/cashflow-year-chart";
 
 const FOREIGN_CURRENCIES = ["CNY", "USD", "GBP"];
-const CURRENCY_SYMBOLS: Record<string, string> = { EUR: "€", CNY: "¥", USD: "$", GBP: "£" };
-
 // The tender note shown next to a EUR amount when the tenant paid in another
 // currency, e.g. "(paid ¥5655)". Empty when the payment was made in EUR.
+/** How many rows the payments table draws. Everything is fetched — the
+ *  month filter can land on any month — but the table itself stops here. */
+const PAYMENT_ROWS = 200;
+
 function foreignNote(p: { orig_amount?: number | null; orig_currency?: string | null }) {
   if (!p.orig_currency || p.orig_amount == null) return "";
-  const amount = p.orig_amount.toLocaleString("de-DE",
-    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `paid ${amount}\u00A0${CURRENCY_SYMBOLS[p.orig_currency] || p.orig_currency}`;
+  return `paid ${amount(p.orig_amount, p.orig_currency)}`;
 }
 
 // Marks money that moved because of a Nebenkostenabrechnung, so it is not
@@ -193,8 +193,7 @@ export default function RentTrackingPage() {
                 <div key={curr}>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Rent {curr}</p>
                   <p className="text-2xl font-semibold">
-                    {curr === "EUR" ? money(total)
-                      : `${total.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u00A0${CURRENCY_SYMBOLS[curr] || curr}`}
+                    {amount(total, curr)}
                   </p>
                 </div>
               ))}
@@ -229,7 +228,9 @@ export default function RentTrackingPage() {
                     </TableCell>
                     <TableCell>
                       <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${money(p.amount)} payment from ${fmtDate(p.payment_date)}?`}>
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"
+                          title="Delete this payment"
+                          aria-label={`Delete the payment of ${money(p.amount)}`}>
                           <Trash2 className="size-4" />
                         </Button>
                       </ConfirmButton>
@@ -255,7 +256,18 @@ export default function RentTrackingPage() {
       {/* All payments table */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">All Payments</CardTitle>
+          {/* Named for what it shows. The table has always stopped at 200
+              rows, while the heading said "All Payments" — so a landlord
+              scrolling for an older one concluded it was never recorded. */}
+          <CardTitle className="text-sm font-medium">
+            {allPayments.length > PAYMENT_ROWS ? "Latest payments" : "All payments"}
+          </CardTitle>
+          {allPayments.length > PAYMENT_ROWS && (
+            <p className="text-xs text-muted-foreground">
+              The most recent {PAYMENT_ROWS} of {allPayments.length}. Pick a
+              month above to see that month in full.
+            </p>
+          )}
         </CardHeader>
         <Table className="stack-sm">
           <TableHeader>
@@ -273,7 +285,7 @@ export default function RentTrackingPage() {
             ) : allPayments.length === 0 ? (
               <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-10">No payments yet.</TableCell></TableRow>
             ) : (
-              allPayments.slice(0, 200).map((p) => (
+              allPayments.slice(0, PAYMENT_ROWS).map((p) => (
                 <TableRow key={p.id}>
                   <TableCell data-label="Date" className="text-muted-foreground">{fmtD(p.payment_date)}</TableCell>
                   <TableCell data-label="Tenant" className="font-medium">{p.tenant_name}</TableCell>
@@ -284,7 +296,9 @@ export default function RentTrackingPage() {
                   </TableCell>
                   <TableCell>
                     <ConfirmButton onConfirm={() => remove.mutate(p.id)} title="Delete payment?" message={`Delete the ${money(p.amount)} payment from ${fmtDate(p.payment_date)}?`}>
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"
+                        title="Delete this payment"
+                        aria-label={`Delete the payment of ${money(p.amount)}`}>
                         <Trash2 className="size-4" />
                       </Button>
                     </ConfirmButton>

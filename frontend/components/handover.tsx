@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
+import { money } from "@/lib/fmt";
 import {
   ClipboardList, Plus, Trash2, FileDown, KeyRound, Gauge, LogIn, LogOut,
   CheckCircle2, AlertTriangle, PenLine, Home,
@@ -63,11 +64,12 @@ const METER_LABEL: Record<string, string> = {
 
 const today = () => todayISO();
 
-// Matches the Kaution card this sits under. A de-DE locale format would be more
-// correct in isolation but puts "180,00" next to "1000.00" in the same view.
-function fmt(n: number) {
-  return n.toFixed(2);
-}
+// Matches the Kaution card this sits under, which now writes its figures the
+// German way — so this does too, where it once deliberately did not.
+//
+// A Mangel estimate is a euro cost: German repair work, priced in euros, even
+// where the deposit it may later be set against was agreed in another tender.
+const fmt = money;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Editing a row without losing the edit

@@ -116,13 +116,15 @@ const MeterBlock = memo(function MeterBlock({
             onClick={() => onEstimate(type, m, mrs)}>
             <Calculator className="size-4" />
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => onEditMeter(type, m)}><Pencil className="size-4" /></Button>
+          <Button variant="ghost" size="icon" onClick={() => onEditMeter(type, m)}
+            title="Edit this meter" aria-label="Edit this meter"><Pencil className="size-4" /></Button>
           <ConfirmButton
             onConfirm={() => onDeleteMeter(type, m.id)}
             title="Delete meter?"
             message={`Delete this ${TYPE_META[type].label} meter and all its readings?`}
           >
-            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"><Trash2 className="size-4" /></Button>
+            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"
+              title="Delete this meter" aria-label="Delete this meter"><Trash2 className="size-4" /></Button>
           </ConfirmButton>
         </div>
       </div>
@@ -174,7 +176,8 @@ const MeterBlock = memo(function MeterBlock({
                       )}
                     </TableCell>
                     <TableCell><ConfirmButton onConfirm={() => onDeleteReading(r.id)} title="Delete reading?" message={`Delete the reading of ${r.reading.toFixed(3)} from ${r.reading_date}?`
-  + (r.taken_at?.length ? ` It is the Zählerstand recorded on ${r.taken_at.join(" and ")}.` : "")}><Button variant="ghost" size="icon"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
+  + (r.taken_at?.length ? ` It is the Zählerstand recorded on ${r.taken_at.join(" and ")}.` : "")}><Button variant="ghost" size="icon" title="Delete this reading"
+    aria-label="Delete this reading"><Trash2 className="size-3 text-destructive" /></Button></ConfirmButton></TableCell>
                   </TableRow>
                 );
               })}

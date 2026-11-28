@@ -261,13 +261,13 @@ def test_a_carried_share_larger_than_the_new_rent_is_refused(store):
 # ── §551: what a deposit may be ──────────────────────────────────────────────
 
 def test_a_deposit_within_three_cold_rents_passes_unremarked():
-    note = cr._kaution_cap_note(2460.0, 1050.0, 230.0)      # 3 × 820
+    note = cr._kaution_cap_note(2460.0, "EUR", 1050.0, 230.0)      # 3 × 820
     assert note["kaution_cap"] == 2460.0
     assert note["kaution_over_cap"] is None
 
 
 def test_a_deposit_above_the_cap_says_by_how_much():
-    note = cr._kaution_cap_note(3000.0, 1050.0, 230.0)
+    note = cr._kaution_cap_note(3000.0, "EUR", 1050.0, 230.0)
     assert note["kaution_cap"] == 2460.0
     assert note["kaution_over_cap"] == 540.0
 
@@ -275,8 +275,8 @@ def test_a_deposit_above_the_cap_says_by_how_much():
 def test_the_cap_uses_the_cold_rent_not_the_warm_one():
     # Measuring against the warm rent would allow 3.150 € — a fifth too much,
     # and the tenant can reclaim the difference at any time.
-    assert cr._kaution_cap_note(3000.0, 1050.0, 230.0)["kaution_cap"] == 2460.0
-    assert cr._kaution_cap_note(3000.0, 1050.0, None)["kaution_cap"] == 3150.0
+    assert cr._kaution_cap_note(3000.0, "EUR", 1050.0, 230.0)["kaution_cap"] == 2460.0
+    assert cr._kaution_cap_note(3000.0, "EUR", 1050.0, None)["kaution_cap"] == 3150.0
 
 
 def test_the_cap_is_measured_against_the_rent_at_signing():
@@ -289,7 +289,7 @@ def test_the_cap_is_measured_against_the_rent_at_signing():
 
 
 def test_nothing_is_claimed_without_a_rent_on_file():
-    note = cr._kaution_cap_note(2000.0, None, None)
+    note = cr._kaution_cap_note(2000.0, "EUR", None, None)
     assert note == {"kaution_cap": None, "kaution_over_cap": None}
 
 
@@ -356,3 +356,18 @@ def test_an_unchanged_start_changes_nothing(store):
     cr._realign_first_period(1, None, "2024-06-01", owner=1)
     cr._realign_first_period(1, "None", "2024-06-01", owner=1)
     assert [p.valid_from for p in _p(cr.list_rent_periods(1, owner=1))] == ["2024-05-01"]
+
+
+def test_no_551_claim_about_a_deposit_agreed_in_another_tender():
+    # The rent is in euros and no exchange rate is on file, so comparing a
+    # ¥8.000 deposit with a €2.460 cap would report "5.540 over the limit" —
+    # a number about nothing.
+    assert cr._kaution_cap_note(8000.0, "CNY", 1050.0, 230.0) \
+        == {"kaution_cap": None, "kaution_over_cap": None}
+    assert cr._kaution_cap_note(8000.0, "USD", 1050.0, 230.0)["kaution_cap"] is None
+
+
+def test_a_euro_deposit_is_still_measured():
+    assert cr._kaution_cap_note(3000.0, "EUR", 1050.0, 230.0)["kaution_over_cap"] == 540.0
+    assert cr._kaution_cap_note(3000.0, None, 1050.0, 230.0)["kaution_over_cap"] == 540.0
+    assert cr._kaution_cap_note(3000.0, "eur", 1050.0, 230.0)["kaution_over_cap"] == 540.0

@@ -351,6 +351,7 @@ export default function AskPage() {
           />
           <Button
             size="icon"
+            title="Send"
             className="size-10 shrink-0"
             onClick={() => send(input)}
             disabled={pending || !input.trim()}

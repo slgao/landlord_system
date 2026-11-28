@@ -22,8 +22,9 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ConfirmButton } from "@/components/confirm-button";
-import { Pencil, Trash2 } from "lucide-react";
+import { History, Pencil, Trash2 } from "lucide-react";
 import { money } from "@/lib/fmt";
+import { TenancyHistoryPanel } from "@/components/tenancy-history";
 
 const EMPTY = { property_id: 0, name: "", flat: "", size_sqm: "" };
 
@@ -33,6 +34,9 @@ export default function ApartmentsPage() {
   const [editing, setEditing] = useState<Apartment | null>(null);
   const [form, setForm] = useState<typeof EMPTY>(EMPTY);
   const [filterProp, setFilterProp] = useState<string>("all");
+  // The unit whose tenancy history is open. A flat is let over and over,
+  // and the list only ever shows the tenant sitting in it today.
+  const [historyFor, setHistoryFor] = useState<Apartment | null>(null);
 
   const { data: properties = [] } = useQuery<Property[]>({
     queryKey: ["properties"],
@@ -108,6 +112,14 @@ export default function ApartmentsPage() {
     setOpen(true);
   }
 
+  if (historyFor) {
+    return (
+      <div className="max-w-5xl">
+        <TenancyHistoryPanel apartment={historyFor} onClose={() => setHistoryFor(null)} />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-4xl">
       <PageHeader title="Apartments" action={{ label: "New Apartment", onClick: openCreate }}>
@@ -133,7 +145,7 @@ export default function ApartmentsPage() {
               <TableHead>Flat/Unit</TableHead>
               <TableHead className="text-right">m²</TableHead>
               <TableHead className="text-right">Kalt / m²</TableHead>
-              <TableHead className="w-20" />
+              <TableHead className="w-28" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -149,7 +161,13 @@ export default function ApartmentsPage() {
               apartments.map((a) => (
                 <TableRow key={a.id}>
                   <TableCell data-label="Property" className="text-muted-foreground">{a.property_name}</TableCell>
-                  <TableCell data-label="Apartment" className="font-medium">{a.name}</TableCell>
+                  <TableCell data-label="Apartment" className="font-medium">
+                    <button type="button" onClick={() => setHistoryFor(a)}
+                      className="text-left hover:text-primary hover:underline"
+                      title={`Who has lived in ${a.name}`}>
+                      {a.name}
+                    </button>
+                  </TableCell>
                   <TableCell data-label="Flat/Unit" className="text-muted-foreground">{a.flat || "—"}</TableCell>
                   <TableCell data-label="m²" className="text-right font-mono text-muted-foreground">
                     {a.size_sqm != null ? a.size_sqm.toFixed(1) : "—"}
@@ -173,6 +191,11 @@ export default function ApartmentsPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
+                      <Button variant="ghost" size="icon" onClick={() => setHistoryFor(a)}
+                        title="Tenant history of this unit"
+                        aria-label={`Tenant history of ${a.name}`}>
+                        <History className="size-4" />
+                      </Button>
                       <Button variant="ghost" size="icon" onClick={() => openEdit(a)}
                         title="Edit this apartment"
                         aria-label={`Edit ${a.name}`}>

@@ -108,6 +108,56 @@ export interface Apartment {
   size_sqm?: number | null;
 }
 
+/** One tenancy in a unit's history — see backend/tenancy_history.py. */
+export interface Tenancy {
+  contract_id: number;
+  tenant_id: number | null;
+  tenant_name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  /** False when the tenancy is marked over but no end date was recorded. */
+  end_known: boolean;
+  terminated: boolean;
+  status: "current" | "past" | "upcoming";
+  months: number | null;
+  rent_start: number | null;
+  nkv_start: number | null;
+  rent_end: number | null;
+  nkv_end: number | null;
+  rent_changes: number;
+  kaution_amount: number | null;
+  kaution_currency: string;
+  kaution_returned: number | null;
+  kaution_returned_date: string | null;
+  co_tenants: { name: string; in_contract: boolean }[];
+  handovers: { kind: string; date: string | null; signed: boolean }[];
+  /** Days the unit stood empty before this tenancy; null for the first. */
+  gap_days_before: number | null;
+}
+
+export interface TenancyHistory {
+  apartment: Apartment;
+  /** The other rooms of the same WG flat — context, not part of the timeline. */
+  siblings: { id: number; name: string; size_sqm: number | null }[];
+  tenancies: Tenancy[];
+  summary: {
+    tenancies: number;
+    completed: number;
+    upcoming: number;
+    undated: number;
+    first_start: string | null;
+    vacant_since: string | null;
+    span_days: number | null;
+    let_days: number | null;
+    vacant_days: number | null;
+    occupancy_pct: number | null;
+    longest_gap_days: number | null;
+    avg_tenancy_months: number | null;
+    rent_first: number | null;
+    rent_now: number | null;
+  };
+}
+
 export interface Tenant {
   id: number;
   name: string;
